@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { auditBundle } from './licenses.mjs';
 import { patchReplicationBusy } from './patch-replication.mjs';
+import { patchCommunityOnboarding } from './patch-community-onboarding.mjs';
 import { patchTicketRelayLifecycle, patchFreeChunkRetries, patchTicketedPeerCleanup, patchTicketedRtcRelease, patchTicketedFreshJoin } from './patch-free-relay.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -108,7 +109,10 @@ if(configSyncSource.split(configSyncRibbon).length!==2)throw Error('Unexpected u
 await writeFile(configSyncPath,configSyncSource.replace(configSyncRibbon,''));
 
 for (const name of ['main.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','sync-parameters.mjs','sync-feedback.mjs','folders.ts','folder-model.mjs','telegram.ts','telegram-users.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
-  await copyFile(path.join(root, 'plugin', name), path.join(source, 'src', name));
+  const input = path.join(root, 'plugin', name), output = path.join(source, 'src', name);
+  if (communityRelease && ['free-relay.ts', 'workspaces.ts'].includes(name)) {
+    await writeFile(output, patchCommunityOnboarding(await readFile(input, 'utf8'), name));
+  } else await copyFile(input, output);
 }
 // Reuse the original ArcaLink tray assets; embed them for offline operation.
 const trayAssets={};
@@ -181,7 +185,7 @@ await writeFile(preflightPath,preflight.replace(seedHandler,'    let pilotSeedFa
             if (report) report(explanation, showMessage);
             errorManager.showError(explanation, report ? LOG_LEVEL_INFO : showMessage ? LOG_LEVEL_NOTICE : LOG_LEVEL_INFO);`).replace(seedCleared,seedCleared+'\n        if (pilotSeedFailure) errorManager.clearError(pilotSeedFailure);\n        pilotSeedFailure = undefined;'));
 const env = { ...process.env, PATHS_TEST_INSTALL: '' };
-execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: source, env, stdio: 'inherit' });
+execFileSync('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: source, env, stdio: 'inherit' });
 const replicatorPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/replication/couchdb/LiveSyncReplicator.js');
 const replicatorSource=await readFile(replicatorPath,'utf8');
 const seedCacheKey='const server = `${setting.couchDB_URI.replace(/\\/+$/, "")}/${setting.couchDB_DBNAME}`;';
@@ -260,7 +264,7 @@ const contentPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist
 const contentSource=await readFile(contentPath,'utf8'),contentMarker='function isTextDocument(doc) {';
 if(contentSource.split(contentMarker).length!==2)throw Error('Unexpected upstream content decoding boundary');
 await writeFile(contentPath,contentSource.replace(contentMarker,contentMarker+'\n  if (doc.type == "newnote" || doc.datatype == "newnote") return false;'));
-execFileSync('npm', ['ci','--ignore-scripts','--no-audit','--no-fund'],{cwd:path.join(root,'collaboration'),env,stdio:'inherit'});
+execFileSync('npm', ['ci','--include=dev','--ignore-scripts','--no-audit','--no-fund'],{cwd:path.join(root,'collaboration'),env,stdio:'inherit'});
 // Resolve the separate pinned collaboration tree without modifying upstream lock.
 for(const name of ['yjs','y-codemirror.next','y-indexeddb','@hocuspocus/provider']){const target=path.join(source,'node_modules',name);await mkdir(path.dirname(target),{recursive:true});await rm(target,{recursive:true,force:true});const {symlink}=await import('node:fs/promises');await symlink(path.join(root,'collaboration/node_modules',name),target,'dir');}
 execFileSync('npm', ['run', 'build'], { cwd: source, env, stdio: 'inherit' });
