@@ -1,6 +1,6 @@
 {
   "name": "arcalink-sync",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Sync notes between devices through ArcaLink, with shared folders and Telegram.",
   "license": "GPL-3.0-only",
