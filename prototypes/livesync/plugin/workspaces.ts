@@ -214,9 +214,8 @@ export class Workspaces {
                 await p.app.vault.adapter.write(this.sessionPath,JSON.stringify({email:session.email,deviceId:session.deviceId,workspaceId:space.id,workspaceTitle:space.title}));
                 await p.core.services.setting.applyPartial(settings,true);this.pending=null;
                 // An unconfigured startup generation cannot initialise its database.
-                // Reload at the same boundary as cloud and explicit Free onboarding.
-                await p.app.plugins.disablePlugin(p.manifest.id);
-                await p.app.plugins.enablePlugin(p.manifest.id);
+                // Ask the user to restart after saving the complete connection.
+                await p.core.services.appLifecycle.askRestart("Connection settings are saved. Restart Obsidian to start syncing. Restart now?");
                 return;
             }
         }
@@ -239,10 +238,9 @@ export class Workspaces {
         if (wasConfigured)
             await p.core.services.control.applySettings();
         else {
-            await p.app.plugins.disablePlugin(p.manifest.id);
-            await p.app.plugins.enablePlugin(p.manifest.id);
+            await p.core.services.appLifecycle.askRestart("Connection settings are saved. Restart Obsidian to start syncing. Restart now?");
         }
-        new Notice('Вход выполнен. Подключено хранилище «' + space.title + '».');
+        if (wasConfigured) new Notice('Вход выполнен. Подключено хранилище «' + space.title + '».');
     }
     get mergeJournal() { return this.plugin.pilotDirectory + '/workspace-merge.json'; }
     async pauseUnfinishedMerge() {

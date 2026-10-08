@@ -32,6 +32,7 @@ After ArcaLink Sync is accepted into the Obsidian Community directory:
 2. Select **Browse** and search for **ArcaLink Sync**.
 3. Install and enable the plugin.
 4. Open its settings, sign in, and explicitly connect the local vault using the mode available on your plan.
+5. After the first connection is saved, use the restart prompt to restart Obsidian and start synchronization. You can choose to restart later; the saved connection will be used on the next launch.
 
 Updates are installed by Obsidian from GitHub Releases. The plugin does not download or install its own updates.
 
