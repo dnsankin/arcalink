@@ -1,6 +1,10 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+['Connection settings are saved. Restart Obsidian to start syncing. Restart now?', 'Настройки подключения сохранены. Для начала синхронизации нужно перезапустить Obsidian. Перезапустить сейчас?'],
+['Yes, restart immediately', 'Да, перезапустить сейчас'],
+['Yes, schedule a restart after stabilisation', 'Да, перезапустить после завершения текущих операций'],
+['No, Leave it to me', 'Нет, я перезапущу позже'],
 ['Configured', 'Настроено'],
 ['Unavailable on the current plan', 'Недоступно на текущем тарифе'],
 ['Creating shared notes, shared folders and invitations requires Pro. Saved content and access management remain available.', 'Создание совместных заметок, общих папок и приглашений доступно на Pro. Сохранённые материалы и управление доступом остаются на месте.'],

@@ -65,10 +65,9 @@ export class FreeRelay {
       await this.plugin.app.vault.adapter.write(this.sessionPath,JSON.stringify(session));
       services.config.setSmallConfig('p2p_device_name',next.P2P_DevicePeerName);
       await services.setting.applyPartial(next,true);
-      // Same initialisation boundary as the existing ArcaLink cloud onboarding.
-      await this.plugin.app.plugins.disablePlugin(this.plugin.manifest.id);
-      await this.plugin.app.plugins.enablePlugin(this.plugin.manifest.id);
-      new Notice('Free подключён. Откройте второй клиент с тем же аккаунтом, кодом группы и парольной фразой.');
+      // Settings are saved; the user decides when to start the new app lifecycle.
+      await this.plugin.core.services.appLifecycle.askRestart("Connection settings are saved. Restart Obsidian to start syncing. Restart now?");
+
     } finally {this.busy=false;}
   }
   async renew(force=false){
