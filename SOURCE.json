@@ -1,5 +1,5 @@
 {
-  "projectCommit": "4895408c2b49318e3915700a3d37b207d295ce7b",
+  "projectCommit": "20019e953e83b991792e68491d6e5a009994c07a",
   "workingTreeModified": false,
   "pluginId": "arcalink-sync",
   "version": "1.0.2",
@@ -46,7 +46,7 @@
     "plugin/arcalink-sync/arcalink-tray.png": "f15f08daaf673870e86c6fdc1c58e7b104f845596469caa2cc107d0cc657c415",
     "plugin/arcalink-sync/arcalink-tray-template.png": "b8f8b647d6c6cb1798bf43e8a16499abccfe06e1dc20ed0dab13606ebae7ac72",
     "control-plane-java/src/main/resources/static/assets/arcalink-mark.svg": "6b37a57ea56b783c2b78236bad9c085830a22deff530801a17249dbebd4556aa",
-    "README.md": "bad3d9dc5548c34df90fb2cdc9aa1d532aca3d0b131b1b9e6701bcdaafca92af",
+    "README.md": "a4393cc0531af5377478518bea51fa15049223b1a56b47e0df00848efdbdca3f",
     "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
     "COPYRIGHT.md": "a9753d3404f7a2ac136aa9b29d3e74ff4e93a64785c00098c5a6755067d7942f",
     "PUBLISHING.md": "6c016a6e9e4e354aecf634ab66d5bee1c170c085a5015c115ca58c6972e33931",

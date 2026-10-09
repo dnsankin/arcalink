@@ -42,10 +42,6 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 4. Откройте его настройки, войдите в аккаунт и явно подключите локальное хранилище в режиме, доступном на вашем тарифе.
 5. После сохранения первого подключения перезапустите Obsidian через предложенный диалог, чтобы начать синхронизацию. Можно перезапустить позже: сохранённое подключение будет использовано при следующем запуске.
 
-Обновления устанавливает Obsidian из GitHub Releases. Плагин не скачивает и не устанавливает собственные обновления.
-
-Старый HTTP-прототип (0.1.x) использует другой механизм синхронизации. Перед переходом сохраните резервную копию локального хранилища. После установки войдите и явно подключите хранилище: старые настройки подключения автоматически не переносятся. Внутренняя сборка `arcalink-livesync-prototype` имеет другой ID. Отключите другой плагин синхронизации всего хранилища перед подключением этого.
-
 ### Сборка из исходников
 
 Публичный репозиторий содержит только плагин и необходимые для сборки ресурсы. Сборка скачивает закреплённую версию исходников Self-hosted LiveSync, проверяет SHA-256 архива и устанавливает зависимости по сохранённым lock-файлам. Исходники сервера и сайта ArcaLink в этот репозиторий не входят.
@@ -111,10 +107,6 @@ After ArcaLink Sync is accepted into the Obsidian Community directory:
 3. Install and enable the plugin.
 4. Open its settings, sign in, and explicitly connect the local vault using the mode available on your plan.
 5. After the first connection is saved, use the restart prompt to restart Obsidian and start synchronization. You can choose to restart later; the saved connection will be used on the next launch.
-
-Updates are installed by Obsidian from GitHub Releases. The plugin does not download or install its own updates.
-
-The old HTTP prototype (0.1.x) uses a different synchronization engine. Before upgrading, back up the local vault. Sign in and connect the vault explicitly after installation; old prototype connection settings are not automatically migrated. The internal `arcalink-livesync-prototype` build uses a separate plugin ID. Disable another whole-vault sync plugin before connecting this one.
 
 ## Build from source
 
