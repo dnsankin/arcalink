@@ -165,7 +165,7 @@ export class TelegramInbox {
             const spaces = r.workspaces || [];
             for (const space of spaces) if (space.selected) selected.add(space.id);
             const describe = () => targetInfo.setText(selected.size ? 'Получатели после сохранения: ' + spaces.filter((s: any) => selected.has(s.id)).map((s: any) => s.title).join(', ') : 'Не выбрано ни одного получателя. Сохранение отключит доставку во все серверные хранилища.');
-            for (const space of spaces) new Setting(destinations).setName(space.title).addToggle(t => t.setValue(selected.has(space.id)).onChange(value => { if (value) selected.add(space.id); else selected.delete(space.id); describe(); }));
+            for (const space of spaces) new Setting(destinations).setName(space.title).addToggle(t => t.setValue(selected.has(space.id)).onChange(value => { if (value) selected.add(space.id); else selected.delete(space.id); describe(); })).nameEl.setAttribute('data-arcalink-user-content','');
             describe();
             const active = spaces.filter((s: any) => s.selected).map((s: any) => s.title);
             state.setDesc(bot.configured ? '@' + bot.bot_username + (active.length ? '. Получатели: ' + active.join(', ') : '. Получатели нового сервиса не подключены.') + (bot.status === 'error' ? ' Бот сообщает об ошибке. Проверьте токен и доступность Telegram.' : '') : 'Бот не настроен');

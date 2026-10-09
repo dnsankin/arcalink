@@ -7,6 +7,8 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { safeRelative, folderPaths, bytesToBase64, base64ToBytes, MAX_FILE_BYTES, MAX_FOLDER_BYTES, MAX_FILES } from './folder-model.mjs';
 import { textChange } from './collab-diff.mjs';
+import { createSyncFeedback, folderSyncFailure } from './sync-feedback.mjs';
+import { Logger, LOG_LEVEL_VERBOSE } from 'octagonal-wheels/common/logger';
 const uuid = () => crypto.randomUUID().replace(/-/g, '');
 export class SharedFolders {
     plugin: any;
@@ -17,6 +19,8 @@ export class SharedFolders {
     disposed = false;
     queue = Promise.resolve();
     lastRefresh = 0;
+    refreshAttempt = 0;
+    syncFeedback = createSyncFeedback({ diagnose: async () => null, notify: (message: string) => new Notice(message, 10000) });
     constructor(plugin: any) { this.plugin = plugin; this.app = plugin.app; }
     get registry() { return this.plugin.pilotDirectory + '/shared-folders.json'; }
     contains(path: string) { return this.records.some(r => path.toLowerCase() === r.mount.toLowerCase() || path.toLowerCase().startsWith(r.mount.toLowerCase() + '/')); }
@@ -51,14 +55,21 @@ export class SharedFolders {
         this.validateMount(r.mount);
         this.records.push(r);
     } await this.save(); this.lastRefresh = Date.now(); }
-    async refreshBeforeSync() { if (Date.now() - this.lastRefresh < 10000)
-        return true; try {
+    async refreshBeforeSync() { if (this.disposed) return false; if (Date.now() - this.lastRefresh < 10000 && !this.syncFeedback.messages.length)
+        return true; const attempt = ++this.refreshAttempt; try {
         await this.discover();
+        if (this.disposed || attempt !== this.refreshAttempt) return false;
+        this.syncFeedback.clear();
         for (const r of this.records)
             void this.ensure(r).catch(e => new Notice(e.message));
         return true;
     }
-    catch {
+    catch (e: any) {
+        if (!this.disposed && attempt === this.refreshAttempt) {
+            Logger('Shared-folder discovery failed before synchronisation', LOG_LEVEL_VERBOSE);
+            Logger(e, LOG_LEVEL_VERBOSE);
+            this.syncFeedback.report(folderSyncFailure(e));
+        }
         return false;
     } }
     async copyBindings() { for (const r of this.records) {
@@ -415,6 +426,7 @@ export class SharedFolders {
     render(el: HTMLElement, gate:(control:HTMLElement)=>void=()=>{}) { new Setting(el).setName('Общие папки').setDesc('Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Пилот: до 100 файлов, 1 МБ на файл, 4 МБ на папку.').addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => this.plugin.collaboration.prompt('Поделиться папкой', 'Путь существующей папки (сервер будет видеть её содержимое)', async (path: string) => this.create(path))); gate(b.buttonEl); }).addButton(b => b.setButtonText('Присоединиться').onClick(() => this.plugin.collaboration.prompt('Общая папка', 'Код приглашения', async (code: string) => { const r = await this.plugin.collaboration.api('join', { code }); if (r.kind !== 'folder')
         throw Error('Это приглашение в заметку'); this.mountDialog(r); }))); for (const r of this.records) {
         const row = new Setting(el).setName(r.mount).setDesc(r.role === 'owner' ? 'Вы владелец' : r.role === 'viewer' ? 'Только чтение' : 'Редактирование разрешено');
+        row.nameEl.setAttribute('data-arcalink-user-content','');
         if (r.role === 'owner')
             row.addButton(b => { b.setButtonText('Пригласить редактора').onClick(() => void this.invite(r, 'editor'));gate(b.buttonEl); }).addButton(b => { b.setButtonText('Пригласить читателя').onClick(() => void this.invite(r, 'viewer'));gate(b.buttonEl); }).addButton(b => b.setButtonText('Отозвать доступ').onClick(() => this.plugin.collaboration.prompt('Отозвать доступ ко всей папке', 'Введите ОТОЗВАТЬ', async (value: string) => { if (value !== 'ОТОЗВАТЬ')
                 throw Error('Отзыв отменён'); await this.plugin.collaboration.api('revoke', { id: r.id }); new Notice('Доступ участников и приглашения отозваны. Их локальные копии остаются у них.'); })));
@@ -430,7 +442,7 @@ export class SharedFolders {
     catch (e: any) {
         new Notice(e.message);
     } }
-    dispose() { this.disposed = true; for (const [view, info] of this.views) if (info.added) try { view.dispatch({ effects: info.c.reconfigure([]) }); } catch { /* An editor being destroyed needs no binding. */ } for (const e of this.entries.values()) {
+    dispose() { this.disposed = true; this.syncFeedback.clear(); for (const [view, info] of this.views) if (info.added) try { view.dispatch({ effects: info.c.reconfigure([]) }); } catch { /* An editor being destroyed needs no binding. */ } for (const e of this.entries.values()) {
         e.provider?.destroy();
         e.persistence?.destroy();
         for (const undo of e.undo.values())

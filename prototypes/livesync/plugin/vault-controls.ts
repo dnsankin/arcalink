@@ -28,6 +28,7 @@ export class VaultControls {
         const label=peer.name.replace(/\s[0-9a-f]{6}$/i,'');
         const accepted=peer.isAccepted||peer.isTemporaryAccepted||(peer.isAccepted!==false&&p.core.services.setting.currentSettings().P2P_AutoAccepting===1);
         const row=new Setting(devices).setName(label).setDesc(accepted?'Доверенное устройство':peer.isAccepted===false?'Доступ отозван':'Требуется подтверждение');
+        row.nameEl.setAttribute('data-arcalink-user-content','');
         row.addButton(b=>b.setButtonText(accepted?'Отозвать':'Подтвердить').setDisabled(busy).onClick(()=>void execute(async()=>{if(accepted)await p2p.peerAdmission.makeDecision({peerId:peer.peerId,name:peer.name,decision:false,isTemporary:false});else await p2p.peerAdmission.makeDecision({peerId:peer.peerId,name:peer.name,decision:true,isTemporary:false});})));
         if(!accepted)continue;
         row.addButton(b=>b.setButtonText('Синхронизировать').setDisabled(busy).onClick(()=>void execute(async()=>{const result=await p2p.targetedTransfer.synchroniseWithPeer(peer.peerId,true);if(!result.ok)throw Error(result.status==='cancelled'?'Обмен отменён':'Не удалось завершить обмен');new Notice('Обмен с «'+label+'» завершён');})));
