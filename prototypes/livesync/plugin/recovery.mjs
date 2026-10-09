@@ -1,5 +1,17 @@
 /** A settled failed Continuous operation has no owner to retry it upstream.
  * Retry through admission, never through private controllers or data rebuilds. */
+export async function nativeConnectionReachable(request,url,headers,timeoutMs=8000) {
+ let timeout;
+ try {
+  // requestUrl does not support AbortSignal. Bound the probe's wait and ignore
+  // late completion; never treat an HTTP/auth failure as a reachable connection.
+  return await Promise.race([
+   Promise.resolve().then(()=>request(url,{headers})).then(response=>response.ok,()=>false),
+   new Promise(resolve=>{timeout=setTimeout(()=>resolve(false),timeoutMs);})
+  ]);
+ }finally{clearTimeout(timeout);}
+}
+
 export function createRecoveryLoop(host) {
   let disposed = false, busy = false, unavailable = false;
   let attempts = 0, lastOutcome = null;
