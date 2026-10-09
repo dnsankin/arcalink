@@ -1,7 +1,7 @@
 {
   "id": "arcalink-sync",
   "name": "ArcaLink Sync",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "minAppVersion": "1.7.2",
   "description": "Sync notes between devices through ArcaLink, with shared folders and Telegram.",
   "author": "ArcaLink",

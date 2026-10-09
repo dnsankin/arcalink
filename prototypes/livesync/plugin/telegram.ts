@@ -2,6 +2,7 @@ import { requestPilot, responseData, responseError } from './pilot-http.mjs';
 import { Notice, Modal, Setting, requestUrl } from 'obsidian';
 import { safeRelative } from './folder-model.mjs';
 import {telegramUserLabel,telegramUserDescription} from './telegram-users.mjs';
+import {remoteDeletionStatus} from './remote-deletion.mjs';
 const BASE = 'https://arcalink.ru/sync/api/telegram/';
 const hash = async (bytes: ArrayBuffer) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
 export class TelegramInbox {
@@ -36,8 +37,18 @@ export class TelegramInbox {
         let count = 0;
         try {
             if (await this.plugin.workspaces.pendingMerge()) return 0;
-            const authorization = this.plugin.collaboration.auth(), workspace = this.plugin.core.services.setting.currentSettings().couchDB_DBNAME, received = await this.receipts();
-            const connected = () => { if (this.disposed || this.plugin.workspaces.busy || this.plugin.collaboration.auth() !== authorization || this.plugin.core.services.setting.currentSettings().couchDB_DBNAME !== workspace) throw Error('Подключение изменилось. Импорт Telegram продолжится в выбранном хранилище.'); };
+            const authorization = this.plugin.collaboration.auth(), settings = this.plugin.core.services.setting.currentSettings(), workspace = settings.couchDB_DBNAME, received = await this.receipts();
+            const connection = {uri:settings.couchDB_URI,database:workspace,authorization};
+            const connected = () => { const current=this.plugin.core.services.setting.currentSettings(); if (this.disposed || this.plugin.workspaces.busy || this.plugin.collaboration.auth() !== authorization || current.couchDB_DBNAME !== workspace || current.couchDB_URI !== connection.uri) throw Error('Подключение изменилось. Импорт Telegram продолжится в выбранном хранилище.'); };
+            const deleted = async (path: string) => {
+                connected();
+                if (await this.wasDeleted(path)) { connected(); return true; }
+                const id = await this.plugin.core.services.path.path2id(path);
+                connected();
+                const result = await remoteDeletionStatus(this.plugin.core.services.API.nativeFetch.bind(this.plugin.core.services.API), connection, id);
+                connected();
+                return result;
+            };
             let offset = 0, index: any = null;
             while (!this.disposed) {
                 connected();
@@ -54,7 +65,7 @@ export class TelegramInbox {
                     const digest = String(f.current_content_hash).split(':').pop()!.toLowerCase(), key = workspace + ':' + f.id + ':' + digest;
                     if (received[key])
                         continue;
-                    if (await this.wasDeleted(f.path)) {
+                    if (await deleted(f.path)) {
                         connected();
                         continue;
                     }
@@ -77,7 +88,7 @@ export class TelegramInbox {
                     if (!file) {
                         await this.parents(path);
                         connected();
-                        if (await this.wasDeleted(f.path) || (path !== f.path && await this.wasDeleted(path))) {
+                        if (await deleted(f.path) || (path !== f.path && await deleted(path))) {
                             connected();
                             continue;
                         }
