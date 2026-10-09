@@ -108,7 +108,7 @@ const configSyncRibbon=`        this.addRibbonIcon("custom-sync", $msg("cmdConfi
 if(configSyncSource.split(configSyncRibbon).length!==2)throw Error('Unexpected upstream customization ribbon registration');
 await writeFile(configSyncPath,configSyncSource.replace(configSyncRibbon,''));
 
-for (const name of ['main.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','sync-parameters.mjs','sync-feedback.mjs','folders.ts','folder-model.mjs','telegram.ts','telegram-users.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
+for (const name of ['main.ts','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','sync-parameters.mjs','sync-feedback.mjs','folders.ts','folder-model.mjs','telegram.ts','telegram-users.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
   const input = path.join(root, 'plugin', name), output = path.join(source, 'src', name);
   if (communityRelease && ['free-relay.ts', 'workspaces.ts'].includes(name)) {
     await writeFile(output, patchCommunityOnboarding(await readFile(input, 'utf8'), name));
@@ -287,5 +287,7 @@ await writeFile(path.join(dist, 'UPSTREAM.json'), JSON.stringify(upstream, null,
 execFileSync(process.execPath, ['--check', path.join(dist, 'main.js')]);
 const zip = path.join(root, 'dist', manifest.id + '.zip');
 await rm(zip, { force: true });
-execFileSync('zip', ['-qr', zip, manifest.id], { cwd: path.join(root, 'dist') });
-console.log(`Built ${zip}; license audit: ${audit.inventory.length} bundled packages.`);
+// Community installs individual release assets; its clean build must not
+// require an OS archive utility. Internal release ZIPs retain their workflow.
+if (!communityRelease) execFileSync('zip', ['-qr', zip, manifest.id], { cwd: path.join(root, 'dist') });
+console.log(`Built ${communityRelease ? dist : zip}; license audit: ${audit.inventory.length} bundled packages.`);
