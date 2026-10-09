@@ -1,4 +1,5 @@
 import {isFreeRelayConnection,FREE_SIGNAL_URL} from './free-relay-settings.mjs';
+import {accountClientVersion} from './client-version.mjs';
 import { requestPilot, responseData, responseError } from './pilot-http.mjs';
 import { Modal, Notice, Setting, requestUrl, Platform } from 'obsidian';
 import { VER } from '@vrtmrz/livesync-commonlib/compat/common/types';
@@ -49,7 +50,7 @@ export class Workspaces {
             }
             throw Error('Введите пароль для входа в аккаунт');
         }
-        const r = await requestPilot(requestUrl, { url: BASE + '/auth/password/login', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, device_name: 'Pilot ' + this.plugin.app.vault.getName(), platform: Platform.isMobile ? 'mobile' : 'desktop', app_version: this.plugin.manifest.version, ...(old.email === email && old.deviceId ? { device_id: old.deviceId } : {}) }), throw: false });
+        const r = await requestPilot(requestUrl, { url: BASE + '/auth/password/login', method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, device_name: 'Pilot ' + this.plugin.app.vault.getName(), platform: Platform.isMobile ? 'mobile' : 'desktop', app_version: accountClientVersion(this.plugin.manifest), ...(old.email === email && old.deviceId ? { device_id: old.deviceId } : {}) }), throw: false });
         if (r.status < 200 || r.status >= 300 || !responseData(r)?.access_token || !responseData(r)?.device?.id)
             throw Error(responseError(r, 'Не удалось войти: проверьте почту и пароль'));
         const previousPending = this.pending;

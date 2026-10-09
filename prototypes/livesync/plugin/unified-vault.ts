@@ -1,10 +1,12 @@
 import {Notice,requestUrl,Setting} from 'obsidian';
 import {isFreeRelayConnection as isFreeRelay,FREE_SIGNAL_URL} from './free-relay-settings.mjs';
 import {upsertRemoteConfigurationInPlace} from '@vrtmrz/livesync-commonlib/remote-configurations';
+import {accountClientVersion,announceClientVersion} from './client-version.mjs';
 const PAUSE={liveSync:false,periodicReplication:false,syncOnSave:false,syncOnEditorSave:false,syncOnStart:false,syncOnFileOpen:false,syncAfterMerge:false};
 const CLOUD_KEYS=['remoteType','liveSync','periodicReplication','syncOnSave','syncOnEditorSave','syncOnStart','syncOnFileOpen','syncAfterMerge'];
 export class UnifiedVault {
   busy=false;state:any=null;lastWarning='';
+  announcedVersion='';
   constructor(private plugin:any){}
   get path(){return this.plugin.pilotDirectory+'/unified-vault.json';}
   get base(){return this.plugin.manifest.id==='arcalink-free-lab'?'https://arcalink.ru/sync-lab/unified/api':'https://arcalink.ru/sync/api';}
@@ -23,6 +25,8 @@ export class UnifiedVault {
       let auth:string;
       if(free?.refreshToken){if(free.accessExpiresAt<=Date.now()+120000)free=await p.freeRelay.refresh(free);auth='Bearer '+free.accessToken;saved={...saved,auth:free};}
       else auth='Basic '+btoa(s.couchDB_USER+':'+s.couchDB_PASSWORD);
+      const versionKey=free?.deviceId+':'+accountClientVersion(p.manifest);
+      if(this.announcedVersion!==versionKey&&await announceClientVersion(requestUrl,p.manifest,free))this.announcedVersion=versionKey;
       const response=await requestUrl({url:this.base+'/workspaces/state',method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify(id?{id}:{}),throw:false});
       if(response.status!==200)return;
       const state=response.json;if(state.policy_version!==1||!state.relay_free_enabled)return;

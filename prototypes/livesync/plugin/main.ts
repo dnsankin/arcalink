@@ -11,7 +11,7 @@ import {diagnosticMessage,parameterFailure} from './diagnostic.mjs';
 import {createSyncFeedback,syncLampState,syncUserMessages} from './sync-feedback.mjs';
 import {requestPilot,responseData,responseError,connectionFailure} from './pilot-http.mjs';
 import {Logger,LOG_LEVEL_INFO} from 'octagonal-wheels/common/logger';
-import { createRecoveryLoop } from './recovery.mjs';
+import { createRecoveryLoop,nativeConnectionReachable } from './recovery.mjs';
 import { createStorageWarning } from './storage-warning.mjs';
 import { createNewVaultSettings } from '@vrtmrz/livesync-commonlib/settings';
 import { upsertRemoteConfigurationInPlace } from '@vrtmrz/livesync-commonlib/remote-configurations';
@@ -163,16 +163,9 @@ export default class ArcaLinkPilot extends LiveSync {
       },
       reachable: async () => {
         const s = services.setting.currentSettings();
-        // Authentication/config errors retain upstream admission requirements.
-        const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 8000);
-        try {
-          const response = await fetch(s.couchDB_URI.replace(/\/$/, '') + '/' + encodeURIComponent(s.couchDB_DBNAME), {
-            headers: { Authorization: 'Basic ' + btoa(unescape(encodeURIComponent(s.couchDB_USER + ':' + s.couchDB_PASSWORD))) },
-            signal: controller.signal,
-          });
-          return response.ok;
-        } finally { window.clearTimeout(timeout); }
+        return nativeConnectionReachable(services.API.nativeFetch.bind(services.API),s.couchDB_URI.replace(/\/$/, '') + '/' + encodeURIComponent(s.couchDB_DBNAME),{
+          Authorization:'Basic '+btoa(unescape(encodeURIComponent(s.couchDB_USER+':'+s.couchDB_PASSWORD)))
+        });
       },
       resume: () => services.control.applySettings(),
       start: () => services.replication.startContinuous({ trigger: 'resume', interaction: { kind: 'forbidden' } }),

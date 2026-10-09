@@ -1,4 +1,5 @@
 import {Notice,requestUrl,Setting,Platform} from 'obsidian';
+import {accountClientVersion} from './client-version.mjs';
 import {createNewVaultSettings} from '@vrtmrz/livesync-commonlib/settings';
 import {upsertRemoteConfigurationInPlace} from '@vrtmrz/livesync-commonlib/remote-configurations';
 import {FREE_RELAY_BASE,FREE_SIGNAL_URL,isFreeRelayConnection as isFreeRelay,runtimeRelaySettings,freeRelayDiscoveryRecoveryDue} from './free-relay-settings.mjs';
@@ -50,7 +51,7 @@ export class FreeRelay {
     try {
       let old:any=null;
       try {old=await this.session();}catch {/* Explicit login can repair a damaged local session. */}
-      const response=await requestUrl({url:'https://arcalink.ru/auth/password/login',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.trim().toLowerCase(),password,device_name:'Free '+this.plugin.app.vault.getName(),platform:Platform.isMobile?'mobile':'desktop',app_version:this.plugin.manifest.version,...(old?.email===email.trim().toLowerCase()?{device_id:old.deviceId}:{})}),throw:false});
+      const response=await requestUrl({url:'https://arcalink.ru/auth/password/login',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.trim().toLowerCase(),password,device_name:'Free '+this.plugin.app.vault.getName(),platform:Platform.isMobile?'mobile':'desktop',app_version:accountClientVersion(this.plugin.manifest),...(old?.email===email.trim().toLowerCase()?{device_id:old.deviceId}:{})}),throw:false});
       if(![200,201].includes(response.status)||!response.json.access_token)throw Error('Не удалось войти в ArcaLink');
       const session={email:email.trim().toLowerCase(),accessToken:response.json.access_token,refreshToken:response.json.refresh_token,accessExpiresAt:Date.parse(response.json.auth_session?.access_expires_at||'')||Date.now()+50*60*1000,deviceId:response.json.device.id,group};
       const credentials=await this.credentials(session);
