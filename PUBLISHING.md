@@ -2,6 +2,8 @@
 
 The Community release is intentionally separate from the internal `arcalink-livesync-prototype` release line. The initial public version is `1.0.0`; the Community plugin ID is `arcalink-sync`.
 
+Development takes place in GitLab. GitHub is used only for release publication, which requires a separate explicit command from the project owner. An ordinary development push or deployment does not authorize updating GitHub.
+
 ## Build the Community artifact
 
 From the product monorepo root (in the exported GitHub repository use `npm run build` instead):
@@ -10,7 +12,7 @@ From the product monorepo root (in the exported GitHub repository use `npm run b
 ARCALINK_RELEASE_CHANNEL=community node prototypes/livesync/scripts/build-plugin.mjs
 ```
 
-The build writes the installable directory to `prototypes/livesync/dist/arcalink-sync/` and the ZIP to `prototypes/livesync/dist/arcalink-sync.zip`.
+The Community build writes the installable directory to `prototypes/livesync/dist/arcalink-sync/`. It does not create a ZIP or require the OS `zip` utility: Obsidian installs the individual release assets.
 
 From the product monorepo, export only the plugin, corresponding build source, pinned dependency lockfiles, and required visual assets to a **new** absolute directory. This export helper is not needed in the GitHub repository:
 
@@ -32,17 +34,25 @@ The root manifest and built files are the Community release, not the internal `a
 
 Before release, verify all of the following:
 
-- `manifest.json` has ID `arcalink-sync` and version `1.0.1`.
-- `versions.json` maps `1.0.1` to the tested minimum Obsidian version.
+- `manifest.json` has ID `arcalink-sync` and version `1.0.2`.
+- `versions.json` maps `1.0.2` to the tested minimum Obsidian version.
 - `main.js` contains no self-update downloader, installer, update journal, or update controls.
 - The release includes `main.js`, `manifest.json`, and `styles.css` as individual GitHub Release assets.
 - The public repository root contains `README.md`, `LICENSE`, `manifest.json`, `versions.json`, the corresponding source, build instructions, and third-party notices.
 - The public source preserves the Self-hosted LiveSync MIT notice and identifies the pinned upstream revision.
 - The public README discloses the required account, network use, paid features, and handling of unencrypted/shared content.
 
+## Repository description and languages
+
+Use this bilingual GitHub About description, with Russian first:
+
+> Синхронизация заметок Obsidian через ArcaLink: Free, облачные хранилища и Telegram. / Obsidian note sync through ArcaLink: Free, cloud storage, and Telegram.
+
+The README presents Russian first and retains the English documentation. The manifest description remains English for the Obsidian catalogue. Update the GitHub About field only as part of separately authorized release publication.
+
 ## GitHub release
 
-Create a GitHub release with tag `1.0.1` — without a `v` prefix — and attach these files individually:
+Create a GitHub release with tag `1.0.2` — without a `v` prefix — and attach these files individually:
 
 - `main.js`
 - `manifest.json`
