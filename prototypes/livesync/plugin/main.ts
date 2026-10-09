@@ -8,7 +8,7 @@ import {openObsidianSettings} from './common/obsidianSettings';
 import {VIEW_TYPE_LOG} from './modules/features/Log/LogPaneView';
 import { Notice, requestUrl, PluginSettingTab, Setting, Platform, setTooltip, setIcon } from 'obsidian';
 import {diagnosticMessage,parameterFailure} from './diagnostic.mjs';
-import {createSyncFeedback,syncLampState} from './sync-feedback.mjs';
+import {createSyncFeedback,syncLampState,syncUserMessages} from './sync-feedback.mjs';
 import {requestPilot,responseData,responseError,connectionFailure} from './pilot-http.mjs';
 import {Logger,LOG_LEVEL_INFO} from 'octagonal-wheels/common/logger';
 import { createRecoveryLoop } from './recovery.mjs';
@@ -20,7 +20,8 @@ import {TelegramInbox} from './telegram';
 import {SharedFolders} from './folders';
 import {Workspaces} from './workspaces';
 import {pluginSyncSettings} from './plugin-sync.mjs';
-import {localizeMessage,setMessageLanguageSource} from './localized-obsidian';
+import {localizeMessage,messageLanguage,setMessageLanguageSource,observeLocalizedUI} from './localized-obsidian';
+import {renderLanguageSetting} from './language-settings';
 import {getStoragePathFromUXFileInfo} from '@vrtmrz/livesync-commonlib/compat/common/typeUtils';
 import {DesktopControls} from './desktop';
 import {brandLogo} from './brand-logo';
@@ -94,7 +95,7 @@ export default class ArcaLinkPilot extends LiveSync {
     this.app.workspace.onLayoutReady(()=>{for(const type of ['p2p-server-status','p2p-replicator'])for(const leaf of this.app.workspace.getLeavesOfType(type))leaf.detach();});
     const services = this.core.services;
     this.pilotSyncFeedback=createSyncFeedback({diagnose:()=>this.syncDiagnostic(),notify:(message:string)=>{Logger(message,LOG_LEVEL_INFO);return new Notice(message,10000);}});
-    services.appLifecycle.getUnresolvedMessages.addHandler(async()=>this.pilotSyncFeedback.messages);
+    services.appLifecycle.getUnresolvedMessages.addHandler(async()=>[...this.pilotSyncFeedback.messages,...this.folders.syncFeedback.messages]);
     // Preparation succeeded. Clear only our previous diagnostic, never other
     // modules' unresolved errors, and hide its still-visible notification.
     services.replication.onBeforeReplicate.addHandler(async()=>{this.pilotSyncFeedback.clear();return true;},-10);
@@ -140,7 +141,7 @@ export default class ArcaLinkPilot extends LiveSync {
         lamp.dataset.state=kind;
         const label=kind==='idle'&&paused?'Синхронизация приостановлена':kind==='idle'&&automaticOff?'Автоматическая синхронизация выключена':{error:'Ошибка синхронизации',offline:'Нет подключения к интернету',ready:'Синхронизация подключена',active:'Синхронизация выполняется',idle:'Синхронизация ожидает'}[kind];
         // setTooltip owns aria-label; resetting it would erase the detailed hover text.
-        const tooltip=[label,summary,...errors,lastMessage].filter(Boolean).map(localizeMessage).join('\n');if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
+        const tooltip=[label,summary,...syncUserMessages([...errors,lastMessage].filter(Boolean),this.folders.syncFeedback.messages)].filter(Boolean).map(localizeMessage).join('\n');if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
       } catch {lamp.dataset.state='idle';setTooltip(lamp,localizeMessage('Синхронизация запускается'),{placement:'top'});}
       finally {lampBusy=false;}
     };
@@ -212,8 +213,10 @@ class PilotTab extends PluginSettingTab {
     let updateSectionStates=()=>{};
     let accountStatus:any=null,signedIn=!!this.pilot.workspaces.pending;
     const initialMode=this.pilot.core.services.setting.currentSettings()?.remoteType;
-    const modeTimer=window.setInterval(()=>{if(!el.isConnected){window.clearInterval(modeTimer);return;}if(this.pilot.core.services.setting.currentSettings()?.remoteType!==initialMode){this.renderInto(el);return;}updateSectionStates();},1000);
-    (el as any).__arcalinkModeCleanup=()=>window.clearInterval(modeTimer);this.pilot.register(()=>window.clearInterval(modeTimer));
+    let stopLocalization=()=>{};
+    const cleanup=()=>{window.clearInterval(modeTimer);stopLocalization();};
+    const modeTimer=window.setInterval(()=>{if(!el.isConnected){cleanup();return;}if(this.pilot.core.services.setting.currentSettings()?.remoteType!==initialMode){this.renderInto(el);return;}updateSectionStates();},1000);
+    (el as any).__arcalinkModeCleanup=cleanup;this.pilot.register(cleanup);
     if(this.pilot.pilotSettingsTab==='free')this.pilot.pilotSettingsTab='vaults';
     el.empty();
     const heading=new Setting(el).setName('').setHeading();
@@ -221,6 +224,7 @@ class PilotTab extends PluginSettingTab {
     const brand=heading.nameEl.createEl('a',{cls:'arcalink-brand-link',href:BASE,attr:{target:'_blank',rel:'noopener noreferrer','aria-label':'ArcaLink — перейти на сайт'}});
     brand.createEl('img',{attr:{src:brandLogo,alt:'',width:'36',height:'36'}});
     brand.createSpan({text:'ArcaLink'});setTooltip(brand,'Открыть сайт ArcaLink',{placement:'top'});
+    renderLanguageSetting(el,this.pilot.core.services.setting,()=>this.renderInto(el));
     el.createEl('p',{text:'Синхронизация заметок между устройствами. На всех устройствах используйте один аккаунт. Не включайте одновременно другие плагины синхронизации.'});
     const tabs=[
       {id:'account',label:'Аккаунт',icon:'user-round'},
@@ -333,10 +337,10 @@ class PilotTab extends PluginSettingTab {
       const me=outcomes[0];
       if(me.status==='fulfilled'&&me.value.status===200&&responseData(me.value)){const user=responseData(me.value);accountStatus=user;signedIn=true;authenticatedEmail=user.email||authenticatedEmail;if(!emailEdited){email=authenticatedEmail;emailInput?.setValue(email);}account.setDesc('Вход выполнен: '+authenticatedEmail);
         const plans:any={free:'Free',begin:'Begin',solo:'Pro',team:'Pro',personal_cloud:'Pro',pro:'Pro'};const states:any={active:'активна',grace:'льготный период',past_due:'ожидается оплата',suspended:'приостановлена',canceled:'отменена',cancelled:'отменена'};
-        subscription.setDesc('Тариф: '+(plans[user.plan]||user.plan||'не указан')+'. Статус: '+(states[user.billing_status]||'не определён')+'.');
+        subscription.setDesc('Тариф: '+localizeMessage(plans[user.plan]||user.plan||'не указан')+'. Статус: '+localizeMessage(states[user.billing_status]||'не определён')+'.');
       }else{const reason=me.status==='fulfilled'?responseError(me.value):connectionFailure(me.reason);account.setDesc('Не удалось проверить вход'+(authenticatedEmail?': '+authenticatedEmail:'')+'. '+reason);subscription.setDesc('Не удалось загрузить подписку. Повторите проверку позже.');}
       const space=outcomes[1];
-      if(space.status==='fulfilled'&&space.value.status===200&&responseData(space.value)){const {used_bytes:used,limit_bytes:limit}=responseData(space.value);if(Number.isFinite(used)&&used>=0&&limit===0){storage.setDesc('Free не хранит файлы на сервере. Облачная синхронизация отключена. Срок хранения прежней копии указан в настройках хранилища. Для облачной синхронизации продлите Begin или Pro.');meter.hidden=true;}else if(Number.isFinite(used)&&used>=0&&Number.isFinite(limit)&&limit>0){const size=(n:number)=>(n/1024/1024).toLocaleString('ru-RU',{maximumFractionDigits:1})+' МБ';storage.setDesc('Занято '+size(used)+' из '+size(limit)+'. Свободно '+size(Math.max(0,limit-used))+'.');meter.value=Math.min(100,used/limit*100);meter.hidden=false;meter.setAttribute('aria-valuetext',Math.round(used/limit*100)+'% занято');}else storage.setDesc('Сервер вернул некорректные данные о хранилище');}
+      if(space.status==='fulfilled'&&space.value.status===200&&responseData(space.value)){const {used_bytes:used,limit_bytes:limit}=responseData(space.value);if(Number.isFinite(used)&&used>=0&&limit===0){storage.setDesc('Free не хранит файлы на сервере. Облачная синхронизация отключена. Срок хранения прежней копии указан в настройках хранилища. Для облачной синхронизации продлите Begin или Pro.');meter.hidden=true;}else if(Number.isFinite(used)&&used>=0&&Number.isFinite(limit)&&limit>0){const size=(n:number)=>(n/1024/1024).toLocaleString(messageLanguage()==='ru'?'ru-RU':'en-US',{maximumFractionDigits:1})+' '+localizeMessage('МБ');storage.setDesc('Занято '+size(used)+' из '+size(limit)+'. Свободно '+size(Math.max(0,limit-used))+'.');meter.value=Math.min(100,used/limit*100);meter.hidden=false;meter.setAttribute('aria-valuetext',Math.round(used/limit*100)+'% занято');}else storage.setDesc('Сервер вернул некорректные данные о хранилище');}
       else storage.setDesc('Не удалось загрузить данные о свободном месте.');
       }finally{updateSectionStates();accountBusy=false;retryAccount?.setDisabled(false);retryStorage?.setDisabled(false);}
     };
@@ -392,5 +396,6 @@ class PilotTab extends PluginSettingTab {
     }));
     tariffGate(diagnostic.controlEl,'cloud');diagnostic.settingEl.setAttribute('data-arcalink-capability','cloud');
     updateSectionStates();
+    stopLocalization=observeLocalizedUI(el);
   }
 }

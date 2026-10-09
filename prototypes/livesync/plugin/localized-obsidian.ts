@@ -41,6 +41,12 @@ function localizeNodes(root:Node,notification=false){
     }
   }
 }
+export function observeLocalizedUI(root:HTMLElement){
+  localizeNodes(root);
+  const observer=new MutationObserver(()=>localizeNodes(root));
+  observer.observe(root,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['title','placeholder','aria-label']});
+  return ()=>observer.disconnect();
+}
 function localizeNotice(message:string|DocumentFragment){
   if(typeof message==='string'){
     const friendly=formatNotice(message,messageLanguage());
