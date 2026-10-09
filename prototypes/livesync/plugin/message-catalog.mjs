@@ -1,6 +1,7 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+["Could not check deleted notes on the server. Telegram import will resume when the connection is restored.", "Не удалось проверить удалённые заметки на сервере. Импорт Telegram продолжится после восстановления связи."],
 ["The server does not accept this version of ArcaLink. Update the plugin and sign in again. If no update is available, contact support.", "Сервер не принимает эту версию ArcaLink. Обновите плагин и повторно войдите в аккаунт. Если обновления нет, обратитесь в поддержку."],
 ["Synchronisation paused. Your local notes are preserved. The server does not accept this version of ArcaLink. Update the plugin and sign in again. If no update is available, contact support.", "Синхронизация приостановлена. Локальные заметки сохранены. Сервер не принимает эту версию ArcaLink. Обновите плагин и повторно войдите в аккаунт. Если обновления нет, обратитесь в поддержку."],
 ["Synchronisation paused. Your local notes are preserved. Sign in again in the ArcaLink settings.", "Синхронизация приостановлена. Локальные заметки сохранены. Повторно войдите в аккаунт в настройках ArcaLink."],
