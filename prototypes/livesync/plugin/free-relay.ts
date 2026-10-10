@@ -8,6 +8,7 @@ import {FREE_RELAY_BASE,FREE_SIGNAL_URL,isFreeRelayConnection as isFreeRelay,run
 export class FreeRelay {
   busy=false;
   refreshing:Promise<any>|null=null;
+  sessionWrites:Promise<any>=Promise.resolve();
   renewing:Promise<void>|null=null;
   nextRenewAt=0;
   noPeersSince=0;
@@ -20,20 +21,60 @@ export class FreeRelay {
     try {const value=JSON.parse(await adapter.read(this.sessionPath));if(!value.accessToken||!/^[a-f0-9]{32}$/.test(value.group))throw Error();return value;}
     catch {throw Error('Не удалось прочитать подключение Free. Войдите заново.');}
   }
-  async refresh(session:any){
-    if(!session.refreshToken)throw Error('Войдите в Free заново');
-    if(!this.refreshing)this.refreshing=(async()=>{
-      const response=await requestUrl({url:'https://arcalink.ru/auth/refresh',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({refresh_token:session.refreshToken}),throw:false});
-      if(response.status!==200||!response.json.access_token||!response.json.refresh_token)throw Error('Войдите в Free заново');
-      const next={...session,accessToken:response.json.access_token,refreshToken:response.json.refresh_token,accessExpiresAt:Date.parse(response.json.auth_session?.access_expires_at||'')||Date.now()+50*60*1000};
-      await this.plugin.app.vault.adapter.write(this.sessionPath,JSON.stringify(next));return next;
-    })().finally(()=>{this.refreshing=null;});
-    return this.refreshing;
+  async writeSession(value:any,guard?:()=>Promise<any>){
+    const write=this.sessionWrites.then(async()=>{
+      const newer=await guard?.();if(newer)return newer;
+      try{await this.plugin.app.vault.adapter.write(this.sessionPath,JSON.stringify(value));}
+      catch{throw Error('Не удалось сохранить подключение ArcaLink. Проверьте доступ к папке хранилища и повторите попытку.');}
+      return value;
+    });
+    this.sessionWrites=write.catch(()=>{});return write;
   }
+  async refresh(session:any){
+    const sameAccount=(a:any,b:any)=>a?.deviceId===b?.deviceId&&a?.email===b?.email&&a?.group===b?.group;
+    const readCurrent=async()=>{
+      const common=await this.session();if(common)return common;
+      const saved=await this.plugin.unifiedVault?.saved();
+      return saved?.auth?{...saved.auth,group:saved.auth.group||saved.workspaceId||session.group}:null;
+    };
+    const current=await readCurrent();
+    if(current){
+      if(!sameAccount(current,session))throw Error('Подключение ArcaLink изменилось. Повторите действие.');
+      if(current.accessToken!==session.accessToken||current.refreshToken!==session.refreshToken)return current;
+      session=current;
+    }
+    if(!session.refreshToken)throw this.authError(401);
+    const newerSession=async()=>{
+      const latest=await readCurrent();
+      if(latest){
+        if(!sameAccount(latest,session))throw Error('Подключение ArcaLink изменилось. Повторите действие.');
+        if(latest.accessToken!==session.accessToken||latest.refreshToken!==session.refreshToken)return latest;
+      }else if(current)throw Error('Подключение ArcaLink изменилось. Повторите действие.');
+      return null;
+    };
+    if(!this.refreshing)this.refreshing=(async()=>{
+      let response:any;
+      try{response=await requestUrl({url:'https://arcalink.ru/auth/refresh',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({refresh_token:session.refreshToken,access_token:session.accessToken,rotate_refresh_token:false}),throw:false});}
+      catch{throw this.authError(503);}
+      const newer=await newerSession();if(newer)return newer;
+      if(response.status!==200)throw this.authError(response.status);
+      let data:any;try{data=response.json;}catch{throw this.authError(503);}
+      if(typeof data?.access_token!=='string'||!data.access_token||typeof data.refresh_token!=='string'||!data.refresh_token)throw this.authError(503);
+      const next={...session,accessToken:data.access_token,refreshToken:data.refresh_token,accessExpiresAt:Date.parse(data.auth_session?.access_expires_at||'')||Date.now()+50*60*1000};
+      return this.writeSession(next,newerSession);
+    })().finally(()=>{this.refreshing=null;});
+    const result=await this.refreshing;
+    if(!sameAccount(result,session))throw Error('Подключение ArcaLink изменилось. Повторите действие.');
+    return result;
+  }
+  authError(status:number){return Object.assign(Error(status===401?'Сессия ArcaLink завершена. Войдите снова в настройках. Локальные заметки сохранены.':status===403?'Нет доступа к аккаунту ArcaLink. Проверьте аккаунт в личном кабинете.':status===429?'ArcaLink временно ограничил запросы. Подождите немного.':'Не удалось связаться с ArcaLink. Повторим подключение автоматически. Локальные заметки сохранены.'),{status});}
   async credentials(session:any,retry=true):Promise<{room:string;relayUrl:string;turnUrls:string[];username:string;credential:string;expiresAt:number}>{
-    const response=await requestUrl({url:FREE_RELAY_BASE+'/credentials',method:'POST',headers:{Authorization:'Bearer '+session.accessToken,'Content-Type':'application/json'},body:JSON.stringify({group:session.group}),throw:false});
+    let response:any;
+    try{response=await requestUrl({url:FREE_RELAY_BASE+'/credentials',method:'POST',headers:{Authorization:'Bearer '+session.accessToken,'Content-Type':'application/json'},body:JSON.stringify({group:session.group}),throw:false});}
+    catch{throw this.authError(503);}
     if(response.status===401&&retry&&session.refreshToken)return this.credentials(await this.refresh(session),false);
-    if(response.status!==200)throw Error(response.status===401?'Войдите в Free заново':response.status===429?'Лимит подключений Free. Закройте лишний клиент и повторите попытку.':'Сервер Free временно недоступен');
+    if(response.status===401||response.status===403)throw this.authError(response.status);
+    if(response.status!==200)throw Error(response.status===429?'Лимит подключений Free. Закройте лишний клиент и повторите попытку.':'Сервер Free временно недоступен');
     return response.json;
   }
   async prepare(settings:any,signal:AbortSignal){
@@ -63,7 +104,7 @@ export class FreeRelay {
         P2P_turnServers:credentials.turnUrls.join(','),P2P_turnUsername:'',P2P_turnCredential:'',P2P_connectionPath:'relay',P2P_useDiagRTC:true};
       runtimeRelaySettings(next,credentials);
       upsertRemoteConfigurationInPlace(next as any,'p2p',{id:'arcalink-free',name:'ArcaLink Free',activate:true,activateForP2P:true});
-      await this.plugin.app.vault.adapter.write(this.sessionPath,JSON.stringify(session));
+      await this.writeSession(session);
       services.config.setSmallConfig('p2p_device_name',next.P2P_DevicePeerName);
       await services.setting.applyPartial(next,true);
       // Settings are saved; the user decides when to start the new app lifecycle.
@@ -77,8 +118,6 @@ export class FreeRelay {
     if(!force&&Date.now()<this.nextRenewAt)return;
     this.nextRenewAt=Date.now()+15000;
     this.renewing=(async()=>{
-      const session=await this.session();
-      if(session?.refreshToken&&session.accessExpiresAt<=Date.now()+120000){await this.refresh(session);await this.plugin.arcalinkP2P?.transportLifecycle.disconnect();}
       const peers=this.plugin.arcalinkP2P?.peerDirectory.getPeers()||[];
       if(peers.length)this.noPeersSince=0;else this.noPeersSince ||= Date.now();
       if(freeRelayDiscoveryRecoveryDue(this.plugin.core.services.setting.currentSettings(),peers.length,this.noPeersSince)){this.noPeersSince=Date.now();await this.plugin.arcalinkP2P?.transportLifecycle.disconnect();}

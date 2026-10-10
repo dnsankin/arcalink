@@ -1,6 +1,12 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+["The ArcaLink connection changed. Try the action again.", "Подключение ArcaLink изменилось. Повторите действие."],
+["Your ArcaLink session has ended. Sign in again in settings. Your local notes are preserved.", "Сессия ArcaLink завершена. Войдите снова в настройках. Локальные заметки сохранены."],
+["Access to your ArcaLink account was denied. Check your account on the website.", "Нет доступа к аккаунту ArcaLink. Проверьте аккаунт в личном кабинете."],
+["ArcaLink has temporarily limited requests. Wait a little.", "ArcaLink временно ограничил запросы. Подождите немного."],
+["Could not reach ArcaLink. The connection will retry automatically. Your local notes are preserved.", "Не удалось связаться с ArcaLink. Повторим подключение автоматически. Локальные заметки сохранены."],
+["Could not save the ArcaLink connection. Check access to the vault folder and try again.", "Не удалось сохранить подключение ArcaLink. Проверьте доступ к папке хранилища и повторите попытку."],
 ["Could not check deleted notes on the server. Telegram import will resume when the connection is restored.", "Не удалось проверить удалённые заметки на сервере. Импорт Telegram продолжится после восстановления связи."],
 ["The server does not accept this version of ArcaLink. Update the plugin and sign in again. If no update is available, contact support.", "Сервер не принимает эту версию ArcaLink. Обновите плагин и повторно войдите в аккаунт. Если обновления нет, обратитесь в поддержку."],
 ["Synchronisation paused. Your local notes are preserved. The server does not accept this version of ArcaLink. Update the plugin and sign in again. If no update is available, contact support.", "Синхронизация приостановлена. Локальные заметки сохранены. Сервер не принимает эту версию ArcaLink. Обновите плагин и повторно войдите в аккаунт. Если обновления нет, обратитесь в поддержку."],

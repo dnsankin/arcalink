@@ -32,9 +32,13 @@ export class Workspaces {
         throw Error('Сначала войдите в аккаунт'); return 'Basic ' + btoa(s.couchDB_USER + ':' + s.couchDB_PASSWORD); }
     async api(action: string, body: any = {}) {
         let free=!this.pending&&isFreeRelayConnection(this.plugin.core.services.setting.currentSettings())?await this.plugin.freeRelay.session():null;
-        if(free?.refreshToken&&free.accessExpiresAt<=Date.now()+120000)free=await this.plugin.freeRelay.refresh(free);
         const authorization=free?.accessToken?'Bearer '+free.accessToken:this.auth();
-        const r = await requestPilot(requestUrl, { url: this.plugin.unifiedVault.base + '/workspaces/' + action, method: 'POST', headers: { Authorization: authorization, 'Content-Type': 'application/json' }, body: JSON.stringify(body), throw: false }); if (r.status !== 200)
+        const options={ url: this.plugin.unifiedVault.base + '/workspaces/' + action, method: 'POST', headers: { Authorization: authorization, 'Content-Type': 'application/json' }, body: JSON.stringify(body), throw: false };
+        const send=async(value:any)=>{try{return await requestPilot(requestUrl,value);}catch{throw this.plugin.freeRelay.authError(503);}};
+        let r = await send(options);
+        if(r.status===401&&free?.refreshToken){free=await this.plugin.freeRelay.refresh(free);r=await send({...options,headers:{...options.headers,Authorization:'Bearer '+free.accessToken}});}
+        if(r.status===401&&free)throw this.plugin.freeRelay.authError(401);
+        if (r.status !== 200)
         throw Object.assign(Error(responseError(r, 'Хранилища временно недоступны')), {status:r.status}); return responseData(r); }
     async login(email: string, password: string) {
         email = email.trim().toLowerCase();
@@ -65,7 +69,7 @@ export class Workspaces {
             }
             await this.plugin.unifiedVault.rememberAuth(this.pending,email);
             const existing=await this.plugin.freeRelay.session();
-            if(existing)await this.plugin.app.vault.adapter.write(this.plugin.freeRelay.sessionPath,JSON.stringify({...existing,email,deviceId:this.pending.device.id,accessToken:this.pending.access_token,refreshToken:this.pending.refresh_token,accessExpiresAt:Date.parse(this.pending.auth_session?.access_expires_at)}));
+            if(existing)await this.plugin.freeRelay.writeSession({...existing,email,deviceId:this.pending.device.id,accessToken:this.pending.access_token,refreshToken:this.pending.refresh_token,accessExpiresAt:Date.parse(this.pending.auth_session?.access_expires_at)});
             if(isFreeRelayConnection(settings))this.pending=null;
             return true;
         }
@@ -210,7 +214,7 @@ export class Workspaces {
                 const credentials=await p.freeRelay.credentials(session);
                 const settings={...createNewVaultSettings(),isConfigured:true,remoteType:'ONLY_P2P',liveSync:false,syncOnSave:false,syncOnStart:false,encrypt:!!space.encrypted,passphrase:space.encrypted?passphrase:'',P2P_Enabled:true,P2P_AutoStart:true,P2P_AutoBroadcast:true,P2P_AutoAccepting:1,P2P_AutoSyncPeers:'~.*',P2P_AutoWatchPeers:'~.*',P2P_relays:FREE_SIGNAL_URL,P2P_roomID:credentials.room,P2P_passphrase:state.relay_passphrase,P2P_AppID:'self-hosted-livesync',P2P_connectionPath:'relay'};
                 upsertRemoteConfigurationInPlace(settings as any,'p2p',{id:'arcalink-free',name:space.title,activate:true,activateForP2P:true});
-                await p.app.vault.adapter.write(p.freeRelay.sessionPath,JSON.stringify(session));
+                await p.freeRelay.writeSession(session);
                 const saved=await p.unifiedVault.saved();await p.unifiedVault.save({...saved,workspaceId:space.id,title:space.title});
                 await p.app.vault.adapter.write(this.sessionPath,JSON.stringify({email:session.email,deviceId:session.deviceId,workspaceId:space.id,workspaceTitle:space.title}));
                 await p.core.services.setting.applyPartial(settings,true);this.pending=null;
