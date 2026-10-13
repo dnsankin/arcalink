@@ -1,7 +1,7 @@
 import {Notice, Platform, Setting} from 'obsidian';
 import {localizeMessage} from './localized-obsidian';
 import {safeRelative} from './folder-model.mjs';
-import {trayImage, trayTemplateImage} from './tray-images';
+import {trayImage, trayWhiteImage} from './tray-images';
 
 // Electron is optional: Obsidian mobile and builds without remote stay usable.
 export function desktopRuntime() {
@@ -64,7 +64,12 @@ export class DesktopControls {
   constructor(public plugin:any,private resolveRuntime=desktopRuntime){}
   get path(){return this.plugin.pilotDirectory+'/desktop-settings.json';}
   async init(){
-    try{this.settings=normalizeDesktopSettings(JSON.parse(await this.plugin.app.vault.adapter.read(this.path)));}catch{/* Defaults cover a fresh or damaged optional settings file. */}
+    let saved:any;
+    try{saved=JSON.parse(await this.plugin.app.vault.adapter.read(this.path));this.settings=normalizeDesktopSettings(saved);}catch{/* Defaults cover a fresh or damaged optional settings file. */}
+    if(!safeRelative(saved?.exchangeFolder))try{
+      const legacy=JSON.parse(await this.plugin.app.vault.adapter.read(this.plugin.pilotDirectory+'/data.json'));
+      if(safeRelative(legacy?.exchangeFolderPath))this.settings.exchangeFolder=legacy.exchangeFolderPath;
+    }catch{/* Old plugin settings may no longer exist. */}
     if(this.disposed||Platform.isMobileApp)return;
     this.plugin.addCommand({id:'desktop-show-hide',name:'Показать или скрыть окно',callback:()=>this.toggle()});
     this.plugin.addCommand({id:'desktop-quick-note',name:'Создать быструю заметку',callback:()=>void this.quickNote()});
@@ -95,20 +100,19 @@ export class DesktopControls {
       try{
         const {Tray,Menu,nativeImage}=this.runtime;
         if(!Tray||!Menu||!nativeImage)throw Error();
-        let image=nativeImage.createFromDataURL(Platform.isMacOS?trayTemplateImage:trayImage);
+        let image=nativeImage.createFromDataURL(Platform.isMacOS?trayWhiteImage:trayImage);
         if(image.isEmpty())throw Error();
         image=image.resize({width:Platform.isMacOS?18:16,height:Platform.isMacOS?18:16});
-        if(Platform.isMacOS)image.setTemplateImage(true);
         this.tray=new Tray(image);
         this.tray.setToolTip('ArcaLink · '+this.plugin.app.vault.getName());
         const t=localizeMessage;
         this.tray.setContextMenu(Menu.buildFromTemplate([
           {label:t('Показать или скрыть окно'),click:()=>this.toggle()},
           {label:t('Создать быструю заметку'),click:()=>void this.quickNote()},
-          {label:t('Открыть папку обмена'),click:()=>void this.openExchangeFolder()},
           {label:t('Синхронизировать сейчас'),click:()=>void this.plugin.core.services.replication.replicateUserInitiated()},
-          {label:t('Настройки ArcaLink'),click:()=>{this.show();this.plugin.openDesktopSettings();}},
+          {label:t('Открыть папку обменника'),click:()=>void this.openExchangeFolder()},
           {type:'separator'},
+          {label:t('Настройки ArcaLink'),click:()=>{this.show();this.plugin.openDesktopSettings();}},
           {label:t('Закрыть это хранилище'),click:()=>{this.quitting=true;this.runtime.window.close();}}
         ]));
         if(!Platform.isMacOS)this.tray.on('click',()=>this.toggle());
@@ -180,7 +184,10 @@ export class DesktopControls {
   async openExchangeFolder(){
     const folder=this.settings.exchangeFolder,adapter=this.plugin.app.vault.adapter;
     try{
-      if(!safeRelative(folder)||!await adapter.exists(folder))throw Error();
+      if(!safeRelative(folder))throw Error();
+      if(!await adapter.exists(folder)){
+        new Notice('Папка обменника ещё не создана: '+folder);return false;
+      }
       const fullPath=adapter.getFullPath?.(folder);
       if(!fullPath)throw Error();
       const error=this.runtime?.shell?.openPath?await this.runtime.shell.openPath(fullPath):'Shell unavailable';
@@ -188,8 +195,9 @@ export class DesktopControls {
         if(!this.plugin.app.openWithDefaultApp)throw Error(error);
         await this.plugin.app.openWithDefaultApp(folder);
       }
+      new Notice('Папка обменника открыта: '+folder);
       return true;
-    }catch{new Notice(localizeMessage('Не удалось открыть папку обмена: '+folder));return false;}
+    }catch{new Notice('Не удалось открыть папку обменника: '+folder);return false;}
   }
   save(patch:any){
     this.saveQueue=this.saveQueue.then(()=>this.persist(patch));return this.saveQueue;
