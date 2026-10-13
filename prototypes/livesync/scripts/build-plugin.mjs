@@ -108,7 +108,7 @@ const configSyncRibbon=`        this.addRibbonIcon("custom-sync", $msg("cmdConfi
 if(configSyncSource.split(configSyncRibbon).length!==2)throw Error('Unexpected upstream customization ribbon registration');
 await writeFile(configSyncPath,configSyncSource.replace(configSyncRibbon,''));
 
-for (const name of ['main.ts','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','sync-parameters.mjs','sync-feedback.mjs','folders.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
+for (const name of ['main.ts','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','sync-parameters.mjs','sync-feedback.mjs','startup-notices.mjs','folders.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
   const input = path.join(root, 'plugin', name), output = path.join(source, 'src', name);
   if (communityRelease && ['free-relay.ts', 'workspaces.ts'].includes(name)) {
     await writeFile(output, patchCommunityOnboarding(await readFile(input, 'utf8'), name));
@@ -137,8 +137,9 @@ const displayMarker='        addDisplayLog(newMessage);',statusMarker='this.stat
 const logRibbon=`        this.addRibbonIcon("view-log", $msg("moduleLog.showLog"), () => {
             void this.services.API.showWindow(VIEW_TYPE_LOG);
         }).addClass("livesync-ribbon-showlog");`;
-if(logSource.split(displayMarker).length!==2||logSource.split(statusMarker).length!==2||logSource.split(activityMarker).length!==2||logSource.split(logRibbon).length!==2)throw Error('Unexpected upstream display log renderer');
-await writeFile(logPath,"import {localizeMessage} from '@/localized-obsidian';\n"+logSource.replace(logRibbon,'').replace(displayMarker,'        addDisplayLog(timestamp + "->" + localizeMessage(messageContent));').replace(statusMarker,'this.statusLog.value = localizeMessage(messageContent);').replace('message: newMessage });','message: timestamp + "->" + localizeMessage(messageContent) });').replace(activityMarker,'message: `${networkActivity}${localizeMessage("Sync: ")}${w}'));
+const noticeMarker='        if (level >= LOG_LEVEL_NOTICE) {';
+if(logSource.split(displayMarker).length!==2||logSource.split(statusMarker).length!==2||logSource.split(activityMarker).length!==2||logSource.split(logRibbon).length!==2||logSource.split(noticeMarker).length!==2)throw Error('Unexpected upstream display log renderer');
+await writeFile(logPath,"import {localizeMessage,deferStartupSyncNotice} from '@/localized-obsidian';\n"+logSource.replace(logRibbon,'').replace(displayMarker,'        addDisplayLog(timestamp + "->" + localizeMessage(messageContent));').replace(statusMarker,'this.statusLog.value = localizeMessage(messageContent);').replace('message: newMessage });','message: timestamp + "->" + localizeMessage(messageContent) });').replace(activityMarker,'message: `${networkActivity}${localizeMessage("Sync: ")}${w}').replace(noticeMarker,'        if (level >= LOG_LEVEL_NOTICE && !deferStartupSyncNotice(messageContent)) {'));
 // Modal translation must never translate the user's diff fragments or filename.
 const conflictPath=path.join(source,'src/modules/features/InteractiveConflictResolving/ConflictResolveModal.ts');
 let conflictSource=await readFile(conflictPath,'utf8');
