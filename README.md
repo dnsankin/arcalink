@@ -6,6 +6,18 @@
 
 ArcaLink Sync синхронизирует заметки Obsidian между устройствами через сервис ArcaLink. Плагин поддерживает личные хранилища, общие папки, совместное редактирование, шифрование личных заметок и получение сообщений и вложений из Telegram.
 
+### История версий
+
+Текущая версия: **[1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7)**. После обновления перезапустите Obsidian.
+
+| Версия | Дата | Изменения |
+| --- | --- | --- |
+| [1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7) | 13.10.2026 | Белый значок трея на macOS. Восстановлен пункт «Открыть папку обменника»: используется ранее сохранённый путь, добавлены понятные сообщения об открытии и отсутствии папки. |
+| [1.0.6](https://github.com/dnsankin/arcalink/releases/tag/1.0.6) | 13.10.2026 | Стартовые уведомления о сбоях связи на мобильном ждут 15 секунд; восстановившиеся ошибки не показываются. Исправлено закрытие окна в трей на Windows, добавлено управление значком Dock и папкой обмена. |
+| [1.0.5](https://github.com/dnsankin/arcalink/releases/tag/1.0.5) | 10.10.2026 | Исправлено восстановление авторизации после сетевых сбоев и параллельных запросов. Улучшены сообщения об ошибках входа; временные сбои сохраняют настройки подключения. |
+
+Подробности каждого выпуска доступны по ссылке версии. В 1.0.6 и 1.0.7 механизм синхронизации заметок не менялся.
+
 ### Аккаунт, подключение и тарифы
 
 Для работы нужны аккаунт ArcaLink и интернет. Плагин подключается к `https://arcalink.ru` для входа, обнаружения устройств, управления серверными хранилищами, синхронизации, проверки занятого места, совместной работы и получения сообщений из Telegram. На Free сервер помогает устройствам найти друг друга и при необходимости передаёт данные между двумя устройствами онлайн, без сохранения содержимого заметок в облачном хранилище.
@@ -71,6 +83,18 @@ ArcaLink Sync использует и изменяет код [Self-hosted LiveS
 ## English
 
 ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink service. It supports personal vaults, shared folders, collaborative editing, optional encryption for personal notes, and importing messages and attachments from Telegram.
+
+## Version history
+
+Current version: **[1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7)**. Restart Obsidian after updating.
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| [1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7) | 2026-10-13 | White tray icon on macOS. Restored the exchange-folder menu action, including the previously saved path and clear messages when the folder opens or does not exist. |
+| [1.0.6](https://github.com/dnsankin/arcalink/releases/tag/1.0.6) | 2026-10-13 | Mobile startup connection warnings wait 15 seconds and disappear if the connection recovers. Fixed closing the window to the tray on Windows; added Dock visibility and exchange-folder controls. |
+| [1.0.5](https://github.com/dnsankin/arcalink/releases/tag/1.0.5) | 2026-10-10 | Fixed authentication recovery after network failures and concurrent requests. Improved sign-in errors; temporary failures preserve connection settings. |
+
+Follow each version link for full release notes. Versions 1.0.6 and 1.0.7 do not change the note synchronisation mechanism.
 
 ## Account, network, and paid features
 
