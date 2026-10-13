@@ -116,7 +116,7 @@ for (const name of ['main.ts','language-settings.ts','settings-state.mjs','vault
 }
 // Reuse the original ArcaLink tray assets; embed them for offline operation.
 const trayAssets={};
-for(const [key,name] of [['trayImage','arcalink-tray.png'],['trayTemplateImage','arcalink-tray-template.png']])trayAssets[key]='data:image/png;base64,'+(await readFile(path.resolve(root,'../../plugin/arcalink-sync',name))).toString('base64');
+for(const [key,name] of [['trayImage','arcalink-tray.png'],['trayWhiteImage','arcalink-tray-white.png']])trayAssets[key]='data:image/png;base64,'+(await readFile(path.resolve(root,'../../plugin/arcalink-sync',name))).toString('base64');
 await writeFile(path.join(source,'src/tray-images.ts'),Object.entries(trayAssets).map(([key,value])=>'export const '+key+'='+JSON.stringify(value)+';').join('\n'));
 // Embed the existing website mark so branding also works offline.
 const brandMark=await readFile(path.resolve(root,'../../control-plane-java/src/main/resources/static/assets/arcalink-mark.svg'),'utf8');
