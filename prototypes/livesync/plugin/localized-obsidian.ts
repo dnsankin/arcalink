@@ -8,11 +8,15 @@ import {createNoticeFormatter} from './notice-message.mjs';
 const translate=createMessageTranslator({...allMessages,...Object.fromEntries(Object.entries(extraMessages).map(([key,entry])=>[key,{...(allMessages as any)[key],...entry}]))});
 let languageSource:(()=>string|undefined)|undefined;
 export function setMessageLanguageSource(source?:()=>string|undefined){languageSource=source;}
+let startupNoticeGate:((message:string)=>boolean)|undefined;
+export function setStartupNoticeGate(gate?:(message:string)=>boolean){startupNoticeGate=gate;}
+export function deferStartupSyncNotice(message:string){return startupNoticeGate?.(message)??false;}
 export function messageLanguage(){
   try{const selected=languageSource?.();if(selected)return selected;}catch{/* Settings may still be loading. */}
   try{return getLanguage();}catch{return localStorage.getItem('language')||'en';}
 }
 export function localizeMessage(message:string){return translate(message,messageLanguage());}
+export function messageInEnglish(message:string){return translate(message,'en');}
 const formatNotice=createNoticeFormatter(translate);
 export class Plugin extends NativePlugin {
   override addCommand(command:Command){return super.addCommand({...command,name:localizeMessage(command.name)});}

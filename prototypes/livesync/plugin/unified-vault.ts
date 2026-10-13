@@ -77,7 +77,8 @@ export class UnifiedVault {
       const warning=state.sync_mode==='relay'?(deadlines[0]||''):'';
       if(state.sync_mode==='cloud'&&state.paid_until){const left=Date.parse(state.paid_until)-Date.now();const key='expires:'+state.paid_until+':'+Math.ceil(left/86400000);if(left>0&&left<=3*86400000&&saved.notified!==key){saved.notified=key;await this.save(saved);new Notice('Оплата закончится '+new Date(state.paid_until).toLocaleString()+'. Затем включится Free; облачная копия хранится ещё 14 суток. Для Free оба устройства должны быть открыты.',20000);}}
       if(warning&&saved.notified!==warning){saved.notified=warning;await this.save(saved);new Notice('Вы перешли на Free. Оба устройства должны быть открыты. Облачная копия будет удалена '+new Date(warning).toLocaleString()+'. Локальные заметки сохранятся. Продлите тариф до этой даты.',20000);}
-    }catch(e:any){new Notice(e.message,10000);}finally{this.busy=false;}
+      p.startupSyncNotices?.clear('vault-state');
+    }catch(e:any){if(!p.startupSyncNotices?.record('vault-state',e.message))new Notice(e.message,10000);}finally{this.busy=false;}
   }
   async setConnectionPreference(value:boolean){const saved=await this.saved();await this.save({...saved,connectionEnabled:value});}
   render(el:HTMLElement){
