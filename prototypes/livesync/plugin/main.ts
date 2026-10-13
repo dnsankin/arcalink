@@ -20,7 +20,8 @@ import {TelegramInbox} from './telegram';
 import {SharedFolders} from './folders';
 import {Workspaces} from './workspaces';
 import {pluginSyncSettings} from './plugin-sync.mjs';
-import {localizeMessage,messageLanguage,setMessageLanguageSource,observeLocalizedUI} from './localized-obsidian';
+import {localizeMessage,messageLanguage,messageInEnglish,setMessageLanguageSource,observeLocalizedUI,setStartupNoticeGate} from './localized-obsidian';
+import {createStartupNoticeGate} from './startup-notices.mjs';
 import {renderLanguageSetting} from './language-settings';
 import {getStoragePathFromUXFileInfo} from '@vrtmrz/livesync-commonlib/compat/common/typeUtils';
 import {DesktopControls} from './desktop';
@@ -76,6 +77,16 @@ export default class ArcaLinkPilot extends LiveSync {
   }
   async connectPilot(email:string,password:string){return this.workspaces.login(email,password);}
   pilotSyncFeedback: any;
+  startupSyncNotices: any;
+  async startupSyncNoticeState(){
+    const services=this.core.services;
+    const errors=(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean);
+    const settings=services.setting.currentSettings(),free=isFreeRelay(settings);
+    return {configured:settings.isConfigured,enabled:free?settings.P2P_AutoStart:settings.liveSync||settings.syncOnStart,
+      paused:services.appLifecycle.isSuspended(),online:navigator.onLine,free,
+      connected:!!this.arcalinkP2P?.transportLifecycle.isConnected,ready:services.appLifecycle.isReady(),
+      status:String(services.replicator.replicationStatics.value.syncStatus||''),errors};
+  }
   async syncDiagnostic(){
     const s=this.core.services.setting.currentSettings();
     if(isFreeRelay(s)||!s.isConfigured||!s.couchDB_USER.startsWith('pilot_'))return null;
@@ -84,6 +95,11 @@ export default class ArcaLinkPilot extends LiveSync {
   // Upstream currently declares onload as void even though Obsidian supports an async hook.
   // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Upstream still declares this supported Obsidian lifecycle hook as void.
   override async onload() {
+    this.startupSyncNotices=createStartupNoticeGate({enabled:Platform.isMobileApp,
+      readState:()=>this.startupSyncNoticeState(),translate:messageInEnglish,
+      notify:(message:string)=>new Notice(message,10000)});
+    setStartupNoticeGate(message=>this.startupSyncNotices.defer(message));
+    this.register(()=>{setStartupNoticeGate();this.startupSyncNotices.dispose();});
     setMessageLanguageSource(()=>this.core?.services?.setting?.currentSettings()?.displayLanguage);
     this.register(()=>setMessageLanguageSource());
     try{this.folders.records=JSON.parse(await this.app.vault.adapter.read(this.folders.registry));}catch{/* No registry exists on a fresh install. */}

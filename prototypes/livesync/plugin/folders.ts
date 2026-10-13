@@ -20,7 +20,9 @@ export class SharedFolders {
     queue = Promise.resolve();
     lastRefresh = 0;
     refreshAttempt = 0;
-    syncFeedback = createSyncFeedback({ diagnose: async () => null, notify: (message: string) => new Notice(message, 10000) });
+    syncFeedback = createSyncFeedback({ diagnose: async () => null, notify: (message: string) => {
+        if (!this.plugin.startupSyncNotices?.defer(message)) return new Notice(message, 10000);
+    } });
     constructor(plugin: any) { this.plugin = plugin; this.app = plugin.app; }
     get registry() { return this.plugin.pilotDirectory + '/shared-folders.json'; }
     contains(path: string) { return this.records.some(r => path.toLowerCase() === r.mount.toLowerCase() || path.toLowerCase().startsWith(r.mount.toLowerCase() + '/')); }

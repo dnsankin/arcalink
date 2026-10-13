@@ -11,21 +11,22 @@ export function desktopRuntime() {
     const electron=load('electron');
     let remote=electron.remote;
     if(!remote){try{remote=load('@electron/remote');}catch{/* Optional compatibility bridge. */}}
-    return {window:remote?.getCurrentWindow?.(),app:remote?.app||electron.app,
+    return {window:remote?.getCurrentWindow?.(),app:remote?.app||electron.app,shell:electron.shell||remote?.shell,
       Tray:remote?.Tray||electron.Tray,Menu:remote?.Menu||electron.Menu,
       nativeImage:remote?.nativeImage||electron.nativeImage,globalShortcut:remote?.globalShortcut||electron.globalShortcut};
   }catch{return null;}
 }
 export function desktopDefaults(mac=Platform.isMacOS) {
-  return {tray:false,closeToTray:false,globalHotkeys:false,
+  return {tray:false,closeToTray:false,globalHotkeys:false,hideDock:false,
     showHideHotkey:mac?'Command+Option+O':'Ctrl+Shift+Tab',
-    quickNoteHotkey:mac?'Command+Option+Q':'Ctrl+Shift+Q',quickNoteFolder:'Быстрые заметки'};
+    quickNoteHotkey:mac?'Command+Option+Q':'Ctrl+Shift+Q',quickNoteFolder:'Быстрые заметки',exchangeFolder:'Exchange'};
 }
 export function normalizeDesktopSettings(input:any,mac=Platform.isMacOS) {
   const defaults=desktopDefaults(mac),settings={...defaults};
-  for(const key of ['tray','closeToTray','globalHotkeys'] as const)if(typeof input?.[key]==='boolean')settings[key]=input[key];
+  for(const key of ['tray','closeToTray','globalHotkeys','hideDock'] as const)if(typeof input?.[key]==='boolean')settings[key]=input[key];
   for(const key of ['showHideHotkey','quickNoteHotkey'] as const)if(typeof input?.[key]==='string')settings[key]=input[key].replace(/\s+/g,'').slice(0,120);
   if(typeof input?.quickNoteFolder==='string'&&(input.quickNoteFolder===''||safeRelative(input.quickNoteFolder)))settings.quickNoteFolder=input.quickNoteFolder;
+  if(typeof input?.exchangeFolder==='string'&&safeRelative(input.exchangeFolder))settings.exchangeFolder=input.exchangeFolder;
   return settings;
 }
 // Keep shortcuts responsive inside Obsidian too: some input methods deliver
@@ -57,6 +58,7 @@ export class DesktopControls {
   errors:string[]=[];
   disposed=false;
   quitting=false;
+  dockHidden=false;
   noteQueue:Promise<any>=Promise.resolve();
   saveQueue:Promise<any>=Promise.resolve();
   constructor(public plugin:any,private resolveRuntime=desktopRuntime){}
@@ -79,6 +81,7 @@ export class DesktopControls {
     for(const key of this.shortcuts){try{this.runtime?.globalShortcut?.unregister(key);}catch{/* Continue releasing remaining shortcuts. */}}
     this.shortcuts.clear();this.shortcutCallbacks.clear();
     try{this.tray?.destroy();}catch{/* The native object may already be gone. */}this.tray=null;
+    if(this.dockHidden){try{this.runtime?.app?.dock?.show?.();}catch{/* Restore the Dock when available. */}this.dockHidden=false;}
   }
   apply(){
     this.release();this.errors=[];
@@ -102,6 +105,7 @@ export class DesktopControls {
         this.tray.setContextMenu(Menu.buildFromTemplate([
           {label:t('Показать или скрыть окно'),click:()=>this.toggle()},
           {label:t('Создать быструю заметку'),click:()=>void this.quickNote()},
+          {label:t('Открыть папку обмена'),click:()=>void this.openExchangeFolder()},
           {label:t('Синхронизировать сейчас'),click:()=>void this.plugin.core.services.replication.replicateUserInitiated()},
           {label:t('Настройки ArcaLink'),click:()=>{this.show();this.plugin.openDesktopSettings();}},
           {type:'separator'},
@@ -120,8 +124,22 @@ export class DesktopControls {
         }catch{this.errors.push('Горячая клавиша недоступна или занята: '+key);}
       }
     }
+    if(Platform.isMacOS&&this.settings.hideDock){
+      if(!this.recovery())this.errors.push('Чтобы скрыть значок в Dock, включите значок в трее или клавишу показа окна.');
+      else try{
+        if(!this.runtime.app?.dock?.hide)throw Error();
+        this.runtime.app.dock.hide();this.dockHidden=true;
+      }catch{this.errors.push('Не удалось скрыть значок Obsidian в Dock.');}
+    }
     const quitAware=this.listen(this.runtime.app,'before-quit',()=>{this.quitting=true;});
     if(this.settings.closeToTray&&!quitAware)this.errors.push('Сворачивание при закрытии недоступно: Obsidian не сообщает о выходе из приложения.');
+    if(Platform.isWin&&this.settings.closeToTray&&quitAware)this.listen(this.runtime.window,'close',(event:any)=>{
+      if(this.quitting||!this.recovery()||!this.availableWindow())return;
+      try{
+        // Obsidian also checks the native close event after a delay on Windows.
+        event.preventDefault();
+      }catch{/* The renderer beforeunload handler remains the primary guard. */}
+    });
     const close=(event:any)=>{
       if(this.settings.closeToTray&&quitAware&&!this.quitting&&this.recovery()&&this.hide(false)){
         event.preventDefault();
@@ -159,6 +177,20 @@ export class DesktopControls {
     try{this.runtime.window.hide();return true;}catch{return false;}
   }
   toggle(){if(this.runtime?.window?.isVisible?.())this.hide();else this.show();}
+  async openExchangeFolder(){
+    const folder=this.settings.exchangeFolder,adapter=this.plugin.app.vault.adapter;
+    try{
+      if(!safeRelative(folder)||!await adapter.exists(folder))throw Error();
+      const fullPath=adapter.getFullPath?.(folder);
+      if(!fullPath)throw Error();
+      const error=this.runtime?.shell?.openPath?await this.runtime.shell.openPath(fullPath):'Shell unavailable';
+      if(error){
+        if(!this.plugin.app.openWithDefaultApp)throw Error(error);
+        await this.plugin.app.openWithDefaultApp(folder);
+      }
+      return true;
+    }catch{new Notice(localizeMessage('Не удалось открыть папку обмена: '+folder));return false;}
+  }
   save(patch:any){
     this.saveQueue=this.saveQueue.then(()=>this.persist(patch));return this.saveQueue;
   }
@@ -201,16 +233,19 @@ export class DesktopControls {
     const status=el.createEl('p',{text:this.errors.join('\n')||'Настройки готовы к использованию.'});
     const refresh=()=>status.setText(this.errors.join('\n')||'Настройки готовы к использованию.');
     for(const [key,name,desc] of [
-      ['tray','Значок в трее','Меню показа окна, быстрой заметки, синхронизации и настроек. На macOS значок находится в строке меню.'],
+      ['tray','Значок в трее','Меню показа окна, папки обмена, быстрой заметки, синхронизации и настроек. На macOS значок находится в строке меню.'],
       ['closeToTray','Сворачивать при закрытии окна','Закрытие окна оставляет это хранилище работать в фоне. Для выхода выберите «Закрыть это хранилище» в меню трея.'],
       ['globalHotkeys','Глобальные горячие клавиши','Не заменяют горячие клавиши Obsidian. Занятые сочетания показаны ниже.']
     ])new Setting(el).setName(name).setDesc(desc).addToggle(t=>t.setValue((this.settings as any)[key]).onChange(async value=>{await this.save({[key]:value});t.setValue((this.settings as any)[key]);refresh();}));
+    if(Platform.isMacOS)new Setting(el).setName('Скрывать значок Obsidian в Dock').setDesc('Для возврата окна нужен значок в строке меню или горячая клавиша.').addToggle(t=>t.setValue(this.settings.hideDock).onChange(async value=>{await this.save({hideDock:value});t.setValue(this.settings.hideDock);refresh();}));
     for(const [key,name] of [['showHideHotkey','Показать или скрыть окно'],['quickNoteHotkey','Создать быструю заметку']]){
       let value=(this.settings as any)[key];
       new Setting(el).setName(name).setDesc('Сочетание сохраняется кнопкой «Применить». Пустое поле отключает эту клавишу.').addText(t=>t.setValue(value).onChange(v=>{value=v;})).addButton(b=>b.setButtonText('Применить').onClick(async()=>{await this.save({[key]:value});refresh();}));
     }
     let folder=this.settings.quickNoteFolder;
     new Setting(el).setName('Папка быстрых заметок').setDesc('Путь внутри локального хранилища. Пустое поле — корень хранилища.').addText(t=>t.setValue(folder).onChange(v=>{folder=v.trim();})).addButton(b=>b.setButtonText('Применить').onClick(async()=>{if(folder&&!safeRelative(folder)){new Notice('Недопустимая папка для быстрых заметок.');return;}await this.save({quickNoteFolder:folder});refresh();}));
+    let exchange=this.settings.exchangeFolder;
+    new Setting(el).setName('Папка обмена').setDesc('Существующая папка внутри хранилища для пункта меню трея.').addText(t=>t.setValue(exchange).onChange(v=>{exchange=v.trim();})).addButton(b=>b.setButtonText('Применить').onClick(async()=>{if(!safeRelative(exchange)){new Notice('Недопустимая папка обмена.');return;}await this.save({exchangeFolder:exchange});refresh();}));
     new Setting(el).setName('Проверка управления окном').addButton(b=>b.setButtonText('Свернуть в трей').onClick(()=>this.hide())).addButton(b=>b.setButtonText('Создать быструю заметку').onClick(()=>void this.quickNote()));
     new Setting(el).setName('Горячие клавиши Obsidian').setDesc('Эти команды также доступны в палитре команд. Для сочетаний внутри Obsidian используйте его раздел «Горячие клавиши».').addButton(b=>b.setButtonText('Открыть горячие клавиши').onClick(()=>this.plugin.openDesktopHotkeys()));
   }
