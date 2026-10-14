@@ -8,15 +8,16 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.8](https://github.com/dnsankin/arcalink/releases/tag/1.0.8)**. После обновления перезапустите Obsidian.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.8](https://github.com/dnsankin/arcalink/releases/tag/1.0.8) | 14.10.2026 | Восстановлена кнопка папки обменника в строке состояния. Отсутствующая папка создаётся при открытии, включая вложенные папки. Добавлен пункт «Выйти из приложения» в меню трея. |
 | [1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7) | 13.10.2026 | Белый значок трея на macOS. Восстановлен пункт «Открыть папку обменника»: используется ранее сохранённый путь, добавлены понятные сообщения об открытии и отсутствии папки. |
 | [1.0.6](https://github.com/dnsankin/arcalink/releases/tag/1.0.6) | 13.10.2026 | Стартовые уведомления о сбоях связи на мобильном ждут 15 секунд; восстановившиеся ошибки не показываются. Исправлено закрытие окна в трей на Windows, добавлено управление значком Dock и папкой обмена. |
 | [1.0.5](https://github.com/dnsankin/arcalink/releases/tag/1.0.5) | 10.10.2026 | Исправлено восстановление авторизации после сетевых сбоев и параллельных запросов. Улучшены сообщения об ошибках входа; временные сбои сохраняют настройки подключения. |
 
-Подробности каждого выпуска доступны по ссылке версии. В 1.0.6 и 1.0.7 механизм синхронизации заметок не менялся.
+Подробности каждого выпуска доступны по ссылке версии. В 1.0.6–1.0.8 механизм синхронизации заметок не менялся.
 
 ### Аккаунт, подключение и тарифы
 
@@ -86,15 +87,16 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7)**. Restart Obsidian after updating.
+Current version: **[1.0.8](https://github.com/dnsankin/arcalink/releases/tag/1.0.8)**. Restart Obsidian after updating.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.8](https://github.com/dnsankin/arcalink/releases/tag/1.0.8) | 2026-10-14 | Restored the exchange-folder status-bar button. Missing folders, including nested folders, are created when opened. Added a Quit application tray action. |
 | [1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7) | 2026-10-13 | White tray icon on macOS. Restored the exchange-folder menu action, including the previously saved path and clear messages when the folder opens or does not exist. |
 | [1.0.6](https://github.com/dnsankin/arcalink/releases/tag/1.0.6) | 2026-10-13 | Mobile startup connection warnings wait 15 seconds and disappear if the connection recovers. Fixed closing the window to the tray on Windows; added Dock visibility and exchange-folder controls. |
 | [1.0.5](https://github.com/dnsankin/arcalink/releases/tag/1.0.5) | 2026-10-10 | Fixed authentication recovery after network failures and concurrent requests. Improved sign-in errors; temporary failures preserve connection settings. |
 
-Follow each version link for full release notes. Versions 1.0.6 and 1.0.7 do not change the note synchronisation mechanism.
+Follow each version link for full release notes. Versions 1.0.6–1.0.8 do not change the note synchronisation mechanism.
 
 ## Account, network, and paid features
 

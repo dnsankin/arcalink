@@ -1,4 +1,4 @@
-import {Notice, Platform, Setting} from 'obsidian';
+import {Notice, Platform, Setting, setIcon} from 'obsidian';
 import {localizeMessage} from './localized-obsidian';
 import {safeRelative} from './folder-model.mjs';
 import {trayImage, trayWhiteImage} from './tray-images';
@@ -51,6 +51,7 @@ export class DesktopControls {
   settings=desktopDefaults();
   runtime:any;
   tray:any;
+  statusBarButton:any;
   shortcuts=new Set<string>();
   shortcutCallbacks=new Map<string,()=>void>();
   lastActivation=new Map<string,number>();
@@ -73,7 +74,22 @@ export class DesktopControls {
     if(this.disposed||Platform.isMobileApp)return;
     this.plugin.addCommand({id:'desktop-show-hide',name:'Показать или скрыть окно',callback:()=>this.toggle()});
     this.plugin.addCommand({id:'desktop-quick-note',name:'Создать быструю заметку',callback:()=>void this.quickNote()});
+    const button=this.plugin.addStatusBarItem?.();
+    if(button){
+      this.statusBarButton=button;
+      button.setAttribute('role','button');button.tabIndex=0;setIcon(button,'folder-open');
+      const open=(event:any)=>{event.preventDefault();event.stopPropagation();void this.openExchangeFolder();};
+      button.addEventListener('click',open);
+      button.addEventListener('keydown',(event:any)=>{if(event.key==='Enter'||event.key===' '||event.key==='Spacebar')open(event);});
+      this.updateExchangeButton();
+    }
     this.apply();
+  }
+  updateExchangeButton(){
+    if(!this.statusBarButton)return;
+    const label=localizeMessage('Открыть папку обменника: '+this.settings.exchangeFolder);
+    this.statusBarButton.setAttribute('aria-label',label);
+    this.statusBarButton.setAttribute('title',label);
   }
   listen(target:any,event:string,callback:(...args:any[])=>void){
     if(!target?.on)return false;
@@ -90,6 +106,7 @@ export class DesktopControls {
   }
   apply(){
     this.release();this.errors=[];
+    this.updateExchangeButton();
     if(this.disposed||Platform.isMobileApp)return;
     this.runtime=this.resolveRuntime();
     if(!this.availableWindow()){
@@ -113,7 +130,8 @@ export class DesktopControls {
           {label:t('Открыть папку обменника'),click:()=>void this.openExchangeFolder()},
           {type:'separator'},
           {label:t('Настройки ArcaLink'),click:()=>{this.show();this.plugin.openDesktopSettings();}},
-          {label:t('Закрыть это хранилище'),click:()=>{this.quitting=true;this.runtime.window.close();}}
+          {label:t('Закрыть это хранилище'),click:()=>{this.quitting=true;this.runtime.window.close();}},
+          {label:t('Выйти из приложения'),click:()=>{this.quitting=true;this.runtime.app.quit();}}
         ]));
         if(!Platform.isMacOS)this.tray.on('click',()=>this.toggle());
       }catch{try{this.tray?.destroy();}catch{/* Ignore cleanup of a partially created tray. */}this.tray=null;this.errors.push('Не удалось создать значок в трее.');}
@@ -185,8 +203,13 @@ export class DesktopControls {
     const folder=this.settings.exchangeFolder,adapter=this.plugin.app.vault.adapter;
     try{
       if(!safeRelative(folder))throw Error();
-      if(!await adapter.exists(folder)){
-        new Notice('Папка обменника ещё не создана: '+folder);return false;
+      let parent='';
+      for(const part of folder.split('/')){
+        parent=parent?parent+'/'+part:part;
+        if(!await adapter.exists(parent)){
+          try{await this.plugin.app.vault.createFolder(parent);}
+          catch(error){if(!await adapter.exists(parent))throw error;}
+        }
       }
       const fullPath=adapter.getFullPath?.(folder);
       if(!fullPath)throw Error();
@@ -233,7 +256,7 @@ export class DesktopControls {
       }catch{new Notice('Не удалось создать быструю заметку. Проверьте папку и доступ к хранилищу.');}
     });return this.noteQueue;
   }
-  dispose(){this.disposed=true;if(this.availableWindow()&&!this.runtime.window.isVisible?.())this.show();this.release();}
+  dispose(){this.disposed=true;if(this.availableWindow()&&!this.runtime.window.isVisible?.())this.show();this.release();this.statusBarButton?.remove();this.statusBarButton=null;}
   render(el:HTMLElement){
     el.createEl('h3',{text:'Трей и горячие клавиши'});
     if(Platform.isMobileApp){el.createEl('p',{text:'Трей и глобальные горячие клавиши доступны только на компьютере.'});return;}
@@ -253,7 +276,7 @@ export class DesktopControls {
     let folder=this.settings.quickNoteFolder;
     new Setting(el).setName('Папка быстрых заметок').setDesc('Путь внутри локального хранилища. Пустое поле — корень хранилища.').addText(t=>t.setValue(folder).onChange(v=>{folder=v.trim();})).addButton(b=>b.setButtonText('Применить').onClick(async()=>{if(folder&&!safeRelative(folder)){new Notice('Недопустимая папка для быстрых заметок.');return;}await this.save({quickNoteFolder:folder});refresh();}));
     let exchange=this.settings.exchangeFolder;
-    new Setting(el).setName('Папка обмена').setDesc('Существующая папка внутри хранилища для пункта меню трея.').addText(t=>t.setValue(exchange).onChange(v=>{exchange=v.trim();})).addButton(b=>b.setButtonText('Применить').onClick(async()=>{if(!safeRelative(exchange)){new Notice('Недопустимая папка обмена.');return;}await this.save({exchangeFolder:exchange});refresh();}));
+    new Setting(el).setName('Папка обмена').setDesc('Путь внутри хранилища. Если папки нет, она создаётся при открытии.').addText(t=>t.setValue(exchange).onChange(v=>{exchange=v.trim();})).addButton(b=>b.setButtonText('Применить').onClick(async()=>{if(!safeRelative(exchange)){new Notice('Недопустимая папка обмена.');return;}await this.save({exchangeFolder:exchange});refresh();}));
     new Setting(el).setName('Проверка управления окном').addButton(b=>b.setButtonText('Свернуть в трей').onClick(()=>this.hide())).addButton(b=>b.setButtonText('Создать быструю заметку').onClick(()=>void this.quickNote()));
     new Setting(el).setName('Горячие клавиши Obsidian').setDesc('Эти команды также доступны в палитре команд. Для сочетаний внутри Obsidian используйте его раздел «Горячие клавиши».').addButton(b=>b.setButtonText('Открыть горячие клавиши').onClick(()=>this.plugin.openDesktopHotkeys()));
   }
