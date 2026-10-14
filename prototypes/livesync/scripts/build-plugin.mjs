@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { auditBundle } from './licenses.mjs';
 import { patchReplicationBusy } from './patch-replication.mjs';
+import { patchContentRetryProcessor, patchContentRetryLifecycle, patchContentRetryFixture } from './patch-content-retry.mjs';
 import { patchCommunityOnboarding } from './patch-community-onboarding.mjs';
 import { patchTicketRelayLifecycle, patchFreeChunkRetries, patchTicketedPeerCleanup, patchTicketedRtcRelease, patchTicketedFreshJoin } from './patch-free-relay.mjs';
 
@@ -108,7 +109,7 @@ const configSyncRibbon=`        this.addRibbonIcon("custom-sync", $msg("cmdConfi
 if(configSyncSource.split(configSyncRibbon).length!==2)throw Error('Unexpected upstream customization ribbon registration');
 await writeFile(configSyncPath,configSyncSource.replace(configSyncRibbon,''));
 
-for (const name of ['main.ts','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','sync-parameters.mjs','sync-feedback.mjs','startup-notices.mjs','folders.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
+for (const name of ['main.ts','content-retry.mjs','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','sync-parameters.mjs','sync-feedback.mjs','startup-notices.mjs','folders.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
   const input = path.join(root, 'plugin', name), output = path.join(source, 'src', name);
   if (communityRelease && ['free-relay.ts', 'workspaces.ts'].includes(name)) {
     await writeFile(output, patchCommunityOnboarding(await readFile(input, 'utf8'), name));
@@ -186,6 +187,17 @@ await writeFile(preflightPath,preflight.replace(seedHandler,'    let pilotSeedFa
             if (report) report(explanation, showMessage);
             errorManager.showError(explanation, report ? LOG_LEVEL_INFO : showMessage ? LOG_LEVEL_NOTICE : LOG_LEVEL_INFO);`).replace(seedCleared,seedCleared+'\n        if (pilotSeedFailure) errorManager.clearError(pilotSeedFailure);\n        pilotSeedFailure = undefined;'));
 const env = { ...process.env, PATHS_TEST_INSTALL: '' };
+// Retain cloud metadata after a failed content read, using the existing
+// processor and its revision/deletion checks for every delayed attempt.
+const resultProcessorPath=path.join(source,'src/serviceFeatures/replication/ReplicateResultProcessor.ts');
+await writeFile(resultProcessorPath,patchContentRetryProcessor(await readFile(resultProcessorPath,'utf8')));
+const replicationFeaturePath=path.join(source,'src/serviceFeatures/replication/index.ts');
+await writeFile(replicationFeaturePath,patchContentRetryLifecycle(await readFile(replicationFeaturePath,'utf8')));
+for(const name of ['receivedChangeReadiness.unit.spec.ts','replicationFeature.unit.spec.ts']){
+ const fixturePath=path.join(source,'src/serviceFeatures/replication',name);
+ await writeFile(fixturePath,patchContentRetryFixture(await readFile(fixturePath,'utf8')));
+}
+await copyFile(path.join(root,'tests/content-retry.integration.unit.spec.ts'),path.join(source,'src/content-retry.integration.unit.spec.ts'));
 execFileSync('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: source, env, stdio: 'inherit' });
 const replicatorPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/replication/couchdb/LiveSyncReplicator.js');
 const replicatorSource=await readFile(replicatorPath,'utf8');
