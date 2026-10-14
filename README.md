@@ -8,10 +8,11 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.8](https://github.com/dnsankin/arcalink/releases/tag/1.0.8)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.9](https://github.com/dnsankin/arcalink/releases/tag/1.0.9)**. После обновления перезапустите Obsidian.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.9](https://github.com/dnsankin/arcalink/releases/tag/1.0.9) | 14.10.2026 | Облачные файлы, недогруженные после обрыва сети, остаются в очереди и повторно загружаются с увеличением интервала. Очередь сохраняется при перезапуске. Перед повтором проверяется актуальная ревизия; новая версия или удаление отменяют старую попытку. |
 | [1.0.8](https://github.com/dnsankin/arcalink/releases/tag/1.0.8) | 14.10.2026 | Восстановлена кнопка папки обменника в строке состояния. Отсутствующая папка создаётся при открытии, включая вложенные папки. Добавлен пункт «Выйти из приложения» в меню трея. |
 | [1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7) | 13.10.2026 | Белый значок трея на macOS. Восстановлен пункт «Открыть папку обменника»: используется ранее сохранённый путь, добавлены понятные сообщения об открытии и отсутствии папки. |
 | [1.0.6](https://github.com/dnsankin/arcalink/releases/tag/1.0.6) | 13.10.2026 | Стартовые уведомления о сбоях связи на мобильном ждут 15 секунд; восстановившиеся ошибки не показываются. Исправлено закрытие окна в трей на Windows, добавлено управление значком Dock и папкой обмена. |
@@ -87,10 +88,11 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.8](https://github.com/dnsankin/arcalink/releases/tag/1.0.8)**. Restart Obsidian after updating.
+Current version: **[1.0.9](https://github.com/dnsankin/arcalink/releases/tag/1.0.9)**. Restart Obsidian after updating.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.9](https://github.com/dnsankin/arcalink/releases/tag/1.0.9) | 2026-10-14 | Cloud files left incomplete after a network interruption remain queued and retry with increasing delays. The queue survives restarts. Each attempt checks the current revision; a newer revision or deletion cancels the old attempt. |
 | [1.0.8](https://github.com/dnsankin/arcalink/releases/tag/1.0.8) | 2026-10-14 | Restored the exchange-folder status-bar button. Missing folders, including nested folders, are created when opened. Added a Quit application tray action. |
 | [1.0.7](https://github.com/dnsankin/arcalink/releases/tag/1.0.7) | 2026-10-13 | White tray icon on macOS. Restored the exchange-folder menu action, including the previously saved path and clear messages when the folder opens or does not exist. |
 | [1.0.6](https://github.com/dnsankin/arcalink/releases/tag/1.0.6) | 2026-10-13 | Mobile startup connection warnings wait 15 seconds and disappear if the connection recovers. Fixed closing the window to the tray on Windows; added Dock visibility and exchange-folder controls. |
