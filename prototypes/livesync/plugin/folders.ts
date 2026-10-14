@@ -20,6 +20,8 @@ export class SharedFolders {
     queue = Promise.resolve();
     lastRefresh = 0;
     refreshAttempt = 0;
+    refreshedScope: unknown[] | undefined;
+    pendingRefresh: { scope: unknown[]; promise: Promise<boolean> } | undefined;
     syncFeedback = createSyncFeedback({ diagnose: async () => null, notify: (message: string) => {
         if (!this.plugin.startupSyncNotices?.defer(message)) return new Notice(message, 10000);
     } });
@@ -50,31 +52,65 @@ export class SharedFolders {
         for (const r of this.records)
             void this.ensure(r).catch(e => new Notice(e.message));
     }
-    async discover() { if (!this.plugin.core.services.setting.currentSettings().isConfigured)
-        return; const result = await this.plugin.collaboration.api('folders', {}); for (const r of result.folders) {
-        if (this.records.some(x => x.id === r.id))
-            continue;
-        this.validateMount(r.mount);
-        this.records.push(r);
-    } await this.save(); this.lastRefresh = Date.now(); }
-    async refreshBeforeSync() { if (this.disposed) return false; if (Date.now() - this.lastRefresh < 10000 && !this.syncFeedback.messages.length)
-        return true; const attempt = ++this.refreshAttempt; try {
-        await this.discover();
-        if (this.disposed || attempt !== this.refreshAttempt) return false;
-        this.syncFeedback.clear();
-        for (const r of this.records)
-            void this.ensure(r).catch(e => new Notice(e.message));
-        return true;
+    refreshScope() {
+        const s = this.plugin.core.services.setting.currentSettings();
+        return [s.isConfigured, s.remoteType, s.couchDB_URI, s.couchDB_DBNAME, s.couchDB_USER,
+            s.couchDB_PASSWORD, s.additionalSuffixOfDatabaseName, this.plugin.unifiedVault.base];
     }
-    catch (e: any) {
-        if (!this.disposed && attempt === this.refreshAttempt) {
-            Logger('Shared-folder discovery failed before synchronisation', LOG_LEVEL_VERBOSE);
-            Logger(e, LOG_LEVEL_VERBOSE);
-            this.syncFeedback.report(folderSyncFailure(e));
+    sameRefreshScope(scope: unknown[]) { return this.refreshScope().every((value, index) => value === scope[index]); }
+    async discover(isCurrent?: () => boolean) {
+        const scope = this.refreshScope();
+        const current = () => !this.disposed && this.sameRefreshScope(scope) && (!isCurrent || isCurrent());
+        if (!scope[0] || !current()) return;
+        const result = await this.plugin.collaboration.api('folders', {});
+        if (!current()) return;
+        for (const r of result.folders) {
+            if (this.records.some(x => x.id === r.id))
+                continue;
+            this.validateMount(r.mount);
+            this.records.push(r);
         }
-        return false;
-    } }
-    async copyBindings() { for (const r of this.records) {
+        await this.save();
+        if (current()) { this.lastRefresh = Date.now(); this.refreshedScope = scope; }
+    }
+    async refreshBeforeSync() {
+        if (this.disposed) return false;
+        const scope = this.refreshScope();
+        // Concurrent admission checks must share the result, not invalidate each other.
+        if (this.pendingRefresh && this.sameRefreshScope(this.pendingRefresh.scope)) return this.pendingRefresh.promise;
+        if (this.refreshedScope && this.sameRefreshScope(this.refreshedScope)
+            && Date.now() - this.lastRefresh < 10000 && !this.syncFeedback.messages.length) return true;
+        const attempt = ++this.refreshAttempt;
+        const current = () => !this.disposed && attempt === this.refreshAttempt && this.sameRefreshScope(scope);
+        const promise = (async () => {
+            try {
+                await this.discover(current);
+                if (!current()) return false;
+                this.syncFeedback.clear();
+                for (const r of this.records)
+                    void this.ensure(r).catch(e => new Notice(e.message));
+                return true;
+            }
+            catch (e: any) {
+                if (current()) {
+                    Logger('Shared-folder discovery failed before synchronisation', LOG_LEVEL_VERBOSE);
+                    Logger(e, LOG_LEVEL_VERBOSE);
+                    this.syncFeedback.report(folderSyncFailure(e));
+                }
+                return false;
+            }
+            finally { if (attempt === this.refreshAttempt) this.pendingRefresh = undefined; }
+        })();
+        this.pendingRefresh = { scope, promise };
+        return promise;
+    }
+    async copyBindings() {
+        // Previously admitted discovery cannot validate a newly selected workspace.
+        this.refreshAttempt++;
+        this.pendingRefresh = undefined;
+        this.refreshedScope = undefined;
+        this.lastRefresh = 0;
+        for (const r of this.records) {
         if (this.entries.get(r.id)?.denied)
             continue;
         try {
