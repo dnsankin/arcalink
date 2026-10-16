@@ -384,6 +384,14 @@ class PilotTab extends PluginSettingTab {
       try{if(value&&(this.pilot.workspaces.busy||await this.pilot.workspaces.pendingMerge())){new Notice('Сначала завершите слияние хранилищ');this.renderInto(el);return;}await this.pilot.core.services.setting.applyPartial({liveSync:value,syncOnSave:value,syncOnStart:value} as any,true);await this.pilot.core.services.control.applySettings();}
       catch{new Notice('Не удалось изменить режим синхронизации. Проверьте подключение и повторите попытку.');this.renderInto(el);}
     }));
+    new Setting(panels.sync).setName('Фоновый режим на Android').setDesc('При выключении экрана или сворачивании Obsidian синхронизация может приостановиться. Разрешение работы в фоне не гарантирует непрерывную передачу. При первой синхронизации и отправке крупных файлов держите Obsidian открытым и экран включённым до завершения передачи.');
+    const fileSizeLimit=settings.syncMaxSizeInMB;
+    new Setting(panels.sync).setName('Размер синхронизируемого файла').setDesc(
+      Number.isFinite(fileSizeLimit)&&fileSizeLimit>0
+        ? 'До '+fileSizeLimit+' МиБ на один файл. Более крупные файлы не синхронизируются. Этот предел действует на данном устройстве отдельно от общей квоты хранилища. Для общих папок и Telegram действуют отдельные ограничения.'
+        : fileSizeLimit===0
+          ? 'Ограничение размера одного файла в плагине отключено. Общая квота хранилища и отдельные ограничения общих папок и Telegram сохраняются. Возможность передачи крупных файлов зависит от устройства и подключения.'
+          : 'Не удалось определить ограничение размера файла. Общая квота хранилища и отдельные ограничения общих папок и Telegram сохраняются.');
     new Setting(panels.sync).setName('Синхронизировать плагины').setDesc('Передавать файлы и настройки сторонних плагинов между устройствами. Включите на каждом устройстве. Настройки подключения и служебные файлы ArcaLink не передаются. Новые плагины включайте вручную; после обновления файлов перезапустите Obsidian.').addToggle(t=>t.setValue(!!settings.syncInternalFiles).onChange(async value=>{
       t.setDisabled(true);
       try{
