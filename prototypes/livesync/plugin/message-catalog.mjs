@@ -1,6 +1,12 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+['Background operation on Android', 'Фоновый режим на Android'],
+['Sync may pause when the screen turns off or Obsidian goes into the background. Allowing background activity does not guarantee uninterrupted transfers. For the first sync and large file transfers, keep Obsidian open and the screen on until the transfer finishes.', 'При выключении экрана или сворачивании Obsidian синхронизация может приостановиться. Разрешение работы в фоне не гарантирует непрерывную передачу. При первой синхронизации и отправке крупных файлов держите Obsidian открытым и экран включённым до завершения передачи.'],
+['Synced file size', 'Размер синхронизируемого файла'],
+['Up to ${p0} MiB per file. Larger files are not synced. This limit applies on this device separately from the total storage quota. Shared folders and Telegram have separate limits.', 'До ${p0} МиБ на один файл. Более крупные файлы не синхронизируются. Этот предел действует на данном устройстве отдельно от общей квоты хранилища. Для общих папок и Telegram действуют отдельные ограничения.'],
+['The plugin has no per-file size limit configured. The total storage quota and separate limits for shared folders and Telegram still apply. Large file transfers depend on the device and connection.', 'Ограничение размера одного файла в плагине отключено. Общая квота хранилища и отдельные ограничения общих папок и Telegram сохраняются. Возможность передачи крупных файлов зависит от устройства и подключения.'],
+['Could not determine the file size limit. The total storage quota and separate limits for shared folders and Telegram still apply.', 'Не удалось определить ограничение размера файла. Общая квота хранилища и отдельные ограничения общих папок и Telegram сохраняются.'],
 ["Could not connect synchronisation. Check your internet connection. ArcaLink will keep trying to connect.", "Не удалось подключить синхронизацию. Проверьте интернет. ArcaLink продолжит попытки подключения."],
 ["The server is temporarily unavailable. Try again.", "Сервер временно недоступен. Повторите попытку."],
 ["The ArcaLink connection changed. Try the action again.", "Подключение ArcaLink изменилось. Повторите действие."],
