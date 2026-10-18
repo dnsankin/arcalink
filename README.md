@@ -8,10 +8,14 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.11](https://github.com/dnsankin/arcalink/releases/tag/1.0.11)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13)**. После обновления перезапустите Obsidian.
+
+Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.13; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13) | 19.10.2026 | Восстановлены запуск и доступ к настройкам у существующих хранилищ. Выбор папок представлен деревом с поиском: зелёная галочка включает обмен на устройстве, красная — облачную копию и обмен на всех устройствах. Снятие галочки исключает папку; облачное изменение требует подтверждения. Сохранённые настройки и независимые локальные исключения сохраняются. |
+| [1.0.12](https://github.com/dnsankin/arcalink/releases/tag/1.0.12) | 18.10.2026 | В настройках синхронизации добавлен выбор папок: исключить только на этом устройстве или исключить на всех устройствах и удалить облачную копию. Перед удалением показан расчёт и запрашивается подтверждение; локальные файлы сохраняются. Общее правило действует на Free и платных тарифах, сохраняется при смене тарифа и может быть отменено. |
 | [1.0.11](https://github.com/dnsankin/arcalink/releases/tag/1.0.11) | 16.10.2026 | На вкладке «Синхронизация» добавлены пояснения о фоновой работе Android и текущем пределе размера одного файла на устройстве. Уточнены отличие от квоты хранилища и отдельные ограничения общих папок/Telegram. Поддерживаются русский и английский; механизм синхронизации и настройки не меняются. |
 | [1.0.10](https://github.com/dnsankin/arcalink/releases/tag/1.0.10) | 14.10.2026 | Исправлена ложная отмена синхронизации с сообщением «сбой модуля» при одновременных запусках. Параллельные запуски ждут общую проверку подключения; настоящие ошибки продолжают блокировать запуск. Старые ответы после смены подключения или выгрузки плагина игнорируются. |
 | [1.0.9](https://github.com/dnsankin/arcalink/releases/tag/1.0.9) | 14.10.2026 | Облачные файлы, недогруженные после обрыва сети, остаются в очереди и повторно загружаются с увеличением интервала. Очередь сохраняется при перезапуске. Перед повтором проверяется актуальная ревизия; новая версия или удаление отменяют старую попытку. |
@@ -43,6 +47,21 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 Для личных хранилищ доступно сквозное шифрование, если оно включено при настройке. При выключенном шифровании сервер может читать содержимое личных заметок. Совместные заметки, общие папки и сообщения, получаемые из Telegram, не защищены сквозным шифрованием личного хранилища и доступны серверу.
 
 Сохраняйте собственные резервные копии важных заметок: **восстановление предыдущей версии заметки не предоставляется**. Не включайте одновременно другой плагин синхронизации всего хранилища.
+
+### Исключение папок
+
+В разделе **Синхронизация → Исключённые папки → Выбрать папки** папки показаны деревом с поиском и двумя галочками:
+
+- **Зелёная «Локально»** — включён обмен на этом устройстве. Снимите её, чтобы исключить папку только здесь; остальные устройства продолжают обмен.
+- **Красная «Облако»** — включены облачная копия и обмен на всех устройствах. Снятие требует расчёта и отдельного подтверждения: серверные копии выбранной папки удаляются, локальные файлы на устройствах сохраняются.
+
+Без ранее сохранённых исключений обе галочки включены. Вложенные папки наследуют исключение родителя; для возврата в обмен измените правило родителя. Общее исключение временно отключает локальную галочку, сохраняя независимый локальный выбор. Недоступные галочки показаны серыми.
+
+Общее правило применяется и к устройствам, которые были отключены: перед следующим обменом они получают актуальные исключения. Обновите плагин на всех устройствах; старые версии не смогут продолжить обмен хранилища с общими исключениями. Во время применения правил обмен может быть временно приостановлен.
+
+Выбор можно изменить. После снятия общего исключения локальные файлы снова участвуют в синхронизации и могут занять место в облаке. Независимые локальные исключения других устройств сохраняются. Общие папки и совместные заметки управляются отдельно; пересекающуюся с ними папку выбрать для общей очистки нельзя. Общее исключение также приостанавливает импорт соответствующих файлов из Telegram, но не удаляет оригиналы Telegram.
+
+Для некоторых существующих хранилищ перед первым общим исключением требуется проверка режима шифрования. Если сервер не может её выполнить, изменение не применяется и облачная копия не удаляется. Локальные исключения остаются доступны.
 
 ### Язык интерфейса
 
@@ -90,10 +109,14 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.11](https://github.com/dnsankin/arcalink/releases/tag/1.0.11)**. Restart Obsidian after updating.
+Current version: **[1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13)**. Restart Obsidian after updating.
+
+Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.13; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13) | 2026-10-19 | Restored startup and settings access for existing vaults. Folder selection is now a searchable tree: green enables sync on this device, red enables the cloud copy and sync on all devices. Clearing a checkbox excludes the folder; cloud changes require confirmation. Saved settings and independent local exclusions are retained. |
+| [1.0.12](https://github.com/dnsankin/arcalink/releases/tag/1.0.12) | 2026-10-18 | Added folder selection in Sync settings: exclude on this device, or exclude everywhere and remove the cloud copy. Removal requires a preview and confirmation; local files are kept. Workspace-wide rules work on Free and paid plans, survive plan changes, and can be removed. |
 | [1.0.11](https://github.com/dnsankin/arcalink/releases/tag/1.0.11) | 2026-10-16 | Added guidance in Sync settings about Android background operation and the current per-file size limit on this device. Clarified the difference from the storage quota and separate limits for shared folders/Telegram. Available in Russian and English; sync behavior and settings are unchanged. |
 | [1.0.10](https://github.com/dnsankin/arcalink/releases/tag/1.0.10) | 2026-10-14 | Fixed a false “module failure” cancellation during simultaneous sync starts. Concurrent starts share one connection preflight; real failures still block sync. Late results after a connection change or plugin unload are ignored. |
 | [1.0.9](https://github.com/dnsankin/arcalink/releases/tag/1.0.9) | 2026-10-14 | Cloud files left incomplete after a network interruption remain queued and retry with increasing delays. The queue survives restarts. Each attempt checks the current revision; a newer revision or deletion cancels the old attempt. |
@@ -125,6 +148,21 @@ The plugin contains no client-side analytics or advertising. Account, device, su
 Personal vaults can use end-to-end encryption when encryption is enabled during setup. If encryption is disabled, the server can read personal note contents. Shared notes, shared folders, and Telegram imports are not covered by personal-vault end-to-end encryption and can be read by the server.
 
 Keep your own backups of important notes: restoring a previous version of a note is not provided. Do not enable another whole-vault synchronization plugin for the same vault at the same time.
+
+## Folder exclusions
+
+Open **Sync → Excluded folders → Choose folders** for a searchable folder tree with two checkboxes:
+
+- **Green “On this device”** — sync is enabled on this device. Clear it to exclude the folder here; other devices keep syncing it.
+- **Red “Cloud”** — the cloud copy and sync on all devices are enabled. Clearing it requires a preview and explicit confirmation: selected server copies are removed and local files on devices are kept.
+
+Both checkboxes start enabled unless exclusions were already saved. Children inherit their parent's exclusion; change the parent rule to include them again. A common exclusion disables the effective local checkbox while retaining the independent local preference. Unavailable checkboxes are grey.
+
+Offline devices receive the current rules before exchanging data again. Update the plugin on every device: older versions cannot keep exchanging data for a workspace with common exclusions. Synchronization may pause briefly while rules are applied.
+
+Rules can be changed. Removing a common exclusion lets local files sync again and consume cloud space. Independent local exclusions on other devices are kept. Shared folders and collaborative notes are managed separately; folders overlapping them cannot be selected for workspace-wide cleanup. A common exclusion also pauses import of matching Telegram files, without deleting Telegram originals.
+
+Some existing vaults need their encryption mode verified before the first workspace-wide exclusion. If the server cannot complete that check, the change is not applied and the cloud copy is not removed. Local exclusions remain available.
 
 ## Interface language
 
