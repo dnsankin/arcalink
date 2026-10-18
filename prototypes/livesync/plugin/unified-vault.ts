@@ -1,3 +1,4 @@
+import {pluginEnvironment} from './environment.mjs';
 import {Notice,requestUrl,Setting} from 'obsidian';
 import {isFreeRelayConnection as isFreeRelay,FREE_SIGNAL_URL} from './free-relay-settings.mjs';
 import {upsertRemoteConfigurationInPlace} from '@vrtmrz/livesync-commonlib/remote-configurations';
@@ -9,7 +10,7 @@ export class UnifiedVault {
   announcedVersion='';
   constructor(private plugin:any){}
   get path(){return this.plugin.pilotDirectory+'/unified-vault.json';}
-  get base(){return this.plugin.manifest.id==='arcalink-free-lab'?'https://arcalink.ru/sync-lab/unified/api':'https://arcalink.ru/sync/api';}
+  get base(){return pluginEnvironment(this.plugin.manifest).api;}
   async saved(){try{return JSON.parse(await this.plugin.app.vault.adapter.read(this.path));}catch{return null;}}
   async save(data:any){await this.plugin.app.vault.adapter.write(this.path,JSON.stringify(data));}
   async poll(){
@@ -42,6 +43,7 @@ export class UnifiedVault {
       if(response.status!==200)return;
       const state=response.json;if(state.policy_version!==1||!state.relay_free_enabled)return;
       if(!/^[a-f0-9]{32}$/.test(state.workspace_id)||(id&&state.workspace_id!==id)||!['cloud','relay'].includes(state.sync_mode)||typeof state.relay_passphrase!=='string'||state.relay_passphrase.length<16||!/^[a-f0-9]{32}$/.test(state.relay_group))throw Error('Некорректная привязка хранилища');
+      if(state.sync_mode==='cloud')await p.folderPolicies?.ensureCloudAccess(state.workspace_id);
       // Refresh the gateway binding too: account token rotation invalidates its
       // previous token even while the transport remains cloud.
       if(state.sync_mode==='cloud'&&!isFreeRelay(s)&&auth.startsWith('Bearer ')){
@@ -58,7 +60,7 @@ export class UnifiedVault {
         if(!session?.accessToken)throw Error('Обновите вход в аккаунт для автоматического обмена Free. Настройки и заметки сохранены.');
         session.group=state.relay_group;await p.freeRelay.writeSession(session);
         const credentials=await p.freeRelay.credentials(session);
-        const next={...s,...PAUSE,remoteType:'ONLY_P2P',P2P_Enabled:true,P2P_AutoStart:saved.connectionEnabled!==false,P2P_AutoBroadcast:true,P2P_AutoAccepting:1,P2P_AutoSyncPeers:s.P2P_AutoSyncPeers||(s.liveSync?'~.*':''),P2P_AutoWatchPeers:s.P2P_AutoWatchPeers||(s.liveSync?'~.*':''),P2P_relays:FREE_SIGNAL_URL,P2P_roomID:credentials.room,P2P_passphrase:state.relay_passphrase,P2P_AppID:'self-hosted-livesync',P2P_connectionPath:'relay'};
+        const next={...s,...PAUSE,remoteType:'ONLY_P2P',P2P_Enabled:true,P2P_AutoStart:saved.connectionEnabled!==false,P2P_AutoBroadcast:true,P2P_AutoAccepting:1,P2P_AutoSyncPeers:s.P2P_AutoSyncPeers||(s.liveSync?'~.*':''),P2P_AutoWatchPeers:s.P2P_AutoWatchPeers||(s.liveSync?'~.*':''),P2P_relays:pluginEnvironment(p.manifest).freeSignal,P2P_roomID:credentials.room,P2P_passphrase:state.relay_passphrase,P2P_AppID:'self-hosted-livesync',P2P_connectionPath:'relay'};
         upsertRemoteConfigurationInPlace(next as any,'p2p',{id:'arcalink-free',name:state.title,activate:true,activateForP2P:true});
         await p.core.services.setting.applyPartial(next,true);await p.core.services.control.applySettings();saved.transition=null;await this.save(saved);
       }else if(state.sync_mode==='cloud'&&isFreeRelay(s)){
@@ -86,7 +88,18 @@ export class UnifiedVault {
     const retention=new Setting(el).setName('Облачная копия');
     new Setting(el).setName('Срок хранения серверных копий').setDesc('После перехода на Free серверные копии хранятся 14 суток, включая совместные заметки и общие папки. Затем они удаляются. Локальные файлы и настройки сохраняются.');
     const update=()=>{const state=this.state,s=this.plugin.core.services.setting.currentSettings();tariff.setDesc(state?(state.plan==='begin'?'Begin':state.plan==='free'?'Free':'Pro')+' — '+(state.sync_mode==='relay'?'обмен между двумя открытыми устройствами':'серверное хранилище')+(state.paid_until&&state.sync_mode==='cloud'?'. Оплачено до '+new Date(state.paid_until).toLocaleString():''):isFreeRelay(s)?'Free — обмен между двумя открытыми устройствами':'Проверяем тариф');retention.setDesc(state?.cloud_state==='retained'?'Облачная копия будет удалена '+new Date(state.cloud_retained_until).toLocaleString()+'. Продление до этой даты сохранит её. Локальные заметки не удаляются.':state?.cloud_state==='purged'?'Облачная копия удалена. Локальные заметки и настройки сохранены.':isFreeRelay(s)?'Облачная копия не используется. После окончания оплаты она хранится 14 суток.':'После окончания оплаты включится Free. Облачная копия хранится 14 суток, затем удаляется; локальные заметки сохраняются.');};
-    tariff.addButton(b=>b.setButtonText('Продлить тариф').onClick(()=>window.open('https://arcalink.ru/cabinet','_blank')));
+    if(pluginEnvironment(this.plugin.manifest).lab){
+      new Setting(el).setName('Испытательный тариф').setDesc('Только для этого стенда. Оплата не производится. Облачные данные сохраняются при переключении на Free.')
+        .addDropdown(d=>d.addOption('free','Free').addOption('begin','Begin').addOption('pro','Pro').setValue(this.state?.plan||'begin').onChange(async plan=>{
+          d.setDisabled(true);
+          try{
+            const {auth}=await this.plugin.folderPolicies.credentialsAuth();
+            const response=await requestUrl({url:this.base+'/lab/plan',method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({plan}),throw:false});
+            if(response.status!==200)throw Error('Не удалось переключить испытательный тариф. Повторите попытку.');
+            await this.poll();update();
+          }catch(e:any){new Notice(e.message);}finally{d.setDisabled(false);}
+        }));
+    }else tariff.addButton(b=>b.setButtonText('Продлить тариф').onClick(()=>window.open('https://arcalink.ru/cabinet','_blank')));
     update();const timer=window.setInterval(()=>{if(!el.isConnected){window.clearInterval(timer);return;}update();},1000);this.plugin.register(()=>window.clearInterval(timer));
   }
   async rememberAuth(bundle:any,email:string){const saved=await this.saved();await this.save({...saved,auth:{email,deviceId:bundle.device.id,accessToken:bundle.access_token,refreshToken:bundle.refresh_token,accessExpiresAt:Date.parse(bundle.auth_session?.access_expires_at)}});}
