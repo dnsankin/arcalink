@@ -36,12 +36,10 @@ export class TelegramInbox {
         this.busy = true;
         let count = 0;
         try {
-            if(this.plugin.folderPolicies?.importReady()===false)return 0;
             if (await this.plugin.workspaces.pendingMerge()) return 0;
-            const policyRevision=this.plugin.folderPolicies?.state?.revision||0;
             const authorization = this.plugin.collaboration.auth(), settings = this.plugin.core.services.setting.currentSettings(), workspace = settings.couchDB_DBNAME, received = await this.receipts();
             const connection = {uri:settings.couchDB_URI,database:workspace,authorization};
-            const connected = () => { const current=this.plugin.core.services.setting.currentSettings(); if (this.disposed || this.plugin.workspaces.busy || this.plugin.collaboration.auth() !== authorization || current.couchDB_DBNAME !== workspace || current.couchDB_URI !== connection.uri || this.plugin.folderPolicies?.importReady()===false || (this.plugin.folderPolicies?.state?.revision||0)!==policyRevision) throw Error('Подключение изменилось. Импорт Telegram продолжится в выбранном хранилище.'); };
+            const connected = () => { const current=this.plugin.core.services.setting.currentSettings(); if (this.disposed || this.plugin.workspaces.busy || this.plugin.collaboration.auth() !== authorization || current.couchDB_DBNAME !== workspace || current.couchDB_URI !== connection.uri) throw Error('Подключение изменилось. Импорт Telegram продолжится в выбранном хранилище.'); };
             const deleted = async (path: string) => {
                 connected();
                 if (await this.wasDeleted(path)) { connected(); return true; }
@@ -64,7 +62,6 @@ export class TelegramInbox {
                         continue;
                     if (!safeRelative(f.path) || this.plugin.folders.contains(f.path))
                         throw Error('Папка Telegram пересекается с общей папкой или содержит недопустимый путь');
-                    if(this.plugin.folderPolicies?.excludes(f.path))continue;
                     const digest = String(f.current_content_hash).split(':').pop()!.toLowerCase(), key = workspace + ':' + f.id + ':' + digest;
                     if (received[key])
                         continue;

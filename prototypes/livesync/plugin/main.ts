@@ -20,9 +20,6 @@ import {TelegramInbox} from './telegram';
 import {SharedFolders} from './folders';
 import {Workspaces} from './workspaces';
 import {pluginSyncSettings} from './plugin-sync.mjs';
-import {pluginEnvironment} from './environment.mjs';
-import {FolderPolicies} from './folder-policies';
-import {renderFolderExclusions} from './folder-exclusions';
 import {localizeMessage,messageLanguage,messageInEnglish,setMessageLanguageSource,observeLocalizedUI,setStartupNoticeGate} from './localized-obsidian';
 import {createStartupNoticeGate} from './startup-notices.mjs';
 import {renderLanguageSetting} from './language-settings';
@@ -61,13 +58,11 @@ export default class ArcaLinkPilot extends LiveSync {
   workspaces=new Workspaces(this);
   freeRelay=new FreeRelay(this);
   unifiedVault=new UnifiedVault(this);
-  folderPolicies=new FolderPolicies(this);
   arcalinkP2P:any;
-  async prepareFreeRelaySettings(settings:any,signal:AbortSignal){if(!isFreeRelay(settings))return null;if(!await this.folderPolicies.beforeExchange())throw Error('Применяются общие исключения папок. Дождитесь завершения.');return this.freeRelay.prepare(settings,signal);}
+  async prepareFreeRelaySettings(settings:any,signal:AbortSignal){return isFreeRelay(settings)?this.freeRelay.prepare(settings,signal):null;}
   cloudFeatures:Promise<void>|null=null;
   sharedFeatures:Promise<void>|null=null;
   async initializeCloudFeatures(){
-    if(pluginEnvironment(this.manifest).lab)return;
     const free=isFreeRelay(this.core.services.setting.currentSettings());
     // Existing shared files still need their cached CRDT and read-only binding on Free.
     if(free&&!this.folders.records.length&&!await this.app.vault.adapter.exists(this.collaboration.registry))return;
@@ -115,14 +110,12 @@ export default class ArcaLinkPilot extends LiveSync {
     this.register(()=>window.removeEventListener('arcalink-open-vault-controls',openVaultControls));
     this.app.workspace.onLayoutReady(()=>{for(const type of ['p2p-server-status','p2p-replicator'])for(const leaf of this.app.workspace.getLeavesOfType(type))leaf.detach();});
     const services = this.core.services;
-    this.folderPolicies.attach();
     this.pilotSyncFeedback=createSyncFeedback({diagnose:()=>this.syncDiagnostic(),notify:(message:string)=>{Logger(message,LOG_LEVEL_INFO);return new Notice(message,10000);}});
     services.appLifecycle.getUnresolvedMessages.addHandler(async()=>[...this.pilotSyncFeedback.messages,...this.folders.syncFeedback.messages]);
     // Preparation succeeded. Clear only our previous diagnostic, never other
     // modules' unresolved errors, and hide its still-visible notification.
     services.replication.onBeforeReplicate.addHandler(async()=>{this.pilotSyncFeedback.clear();return true;},-10);
     services.appLifecycle.onSettingLoaded.addHandler(async()=>{
-      if(pluginEnvironment(this.manifest).lab){try{await this.folderPolicies.assertLabVault();}catch{return false;}if(!services.setting.currentSettings().additionalSuffixOfDatabaseName)await services.setting.applyPartial({additionalSuffixOfDatabaseName:'arcalink-folders-lab'},true);}
       await services.setting.applyPartial(pluginSyncSettings(services.setting.currentSettings().syncInternalFiles,this.app.vault.configDir,this.manifest.id));
       return true;
     },-20);
@@ -176,7 +169,7 @@ export default class ArcaLinkPilot extends LiveSync {
     services.replication.onReplicationFailed.addHandler(async()=>{await this.pilotSyncFeedback.failed();return true;},-10);
     services.vault.isTargetFile.addHandler(async file=>!reserved(getStoragePathFromUXFileInfo(file))&&!this.folders.contains(getStoragePathFromUXFileInfo(file)),0);
     this.collaboration=new CollaborativeNotes(this);
-    services.replication.onBeforeReplicate.addHandler(async()=>pluginEnvironment(this.manifest).lab||isFreeRelay(services.setting.currentSettings())?true:this.folders.refreshBeforeSync(),0);
+    services.replication.onBeforeReplicate.addHandler(async()=>isFreeRelay(services.setting.currentSettings())?true:this.folders.refreshBeforeSync(),0);
     services.appLifecycle.onLoaded.addHandler(async()=>{await this.initializeCloudFeatures();return true;},500);
     this.pilotRecovery = createRecoveryLoop({
       eligible: () => {
@@ -261,7 +254,7 @@ class PilotTab extends PluginSettingTab {
     };
     tabs.forEach((tab,index)=>{
       const button=navigation.createEl('button',{cls:'arcalink-settings-tab',attr:{type:'button',role:'tab',id:'arcalink-tab-'+tab.id,'aria-controls':'arcalink-panel-'+tab.id,'aria-label':tab.label}});
-      button.hidden=pluginEnvironment(this.pilot.manifest).lab&&['sharing','telegram'].includes(tab.id)||this.pilot.manifest.id==='arcalink-free-lab'&&!['account','vaults','sync','sharing','telegram','desktop','help'].includes(tab.id);
+      button.hidden=this.pilot.manifest.id==='arcalink-free-lab'&&!['account','vaults','sync','sharing','telegram','desktop','help'].includes(tab.id);
       const icon=button.createSpan({cls:'arcalink-settings-tab-icon'});icon.setAttribute('aria-hidden','true');setIcon(icon,tab.icon);
       setTooltip(button,tab.label,{placement:'top'});
       const panel=el.createDiv({cls:'arcalink-settings-panel',attr:{role:'tabpanel',id:'arcalink-panel-'+tab.id,'aria-labelledby':button.id}});
@@ -399,7 +392,6 @@ class PilotTab extends PluginSettingTab {
         : fileSizeLimit===0
           ? 'Ограничение размера одного файла в плагине отключено. Общая квота хранилища и отдельные ограничения общих папок и Telegram сохраняются. Возможность передачи крупных файлов зависит от устройства и подключения.'
           : 'Не удалось определить ограничение размера файла. Общая квота хранилища и отдельные ограничения общих папок и Telegram сохраняются.');
-    renderFolderExclusions(panels.sync,this.pilot);
     new Setting(panels.sync).setName('Синхронизировать плагины').setDesc('Передавать файлы и настройки сторонних плагинов между устройствами. Включите на каждом устройстве. Настройки подключения и служебные файлы ArcaLink не передаются. Новые плагины включайте вручную; после обновления файлов перезапустите Obsidian.').addToggle(t=>t.setValue(!!settings.syncInternalFiles).onChange(async value=>{
       t.setDisabled(true);
       try{
