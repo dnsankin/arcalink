@@ -11,9 +11,10 @@ import { patchTicketRelayLifecycle, patchFreeChunkRetries, patchTicketedPeerClea
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const communityRelease = process.env.ARCALINK_RELEASE_CHANNEL === 'community';
+const foldersLab = process.env.ARCALINK_RELEASE_CHANNEL === 'folders-lab';
 const freeRelayLab = process.env.ARCALINK_RELEASE_CHANNEL === 'free-relay-lab';
 const releaseMetadata = JSON.parse(await readFile(path.join(root,
-  freeRelayLab ? 'free-relay-release.json' : communityRelease ? 'community-release.json' : 'pilot-release.json'), 'utf8'));
+  foldersLab ? 'folders-lab-release.json' : freeRelayLab ? 'free-relay-release.json' : communityRelease ? 'community-release.json' : 'pilot-release.json'), 'utf8'));
 const upstream = JSON.parse(await readFile(path.join(root, 'upstream.json'), 'utf8'));
 const cache = path.join(root, '.cache');
 const source = path.join(cache, 'source');
@@ -30,8 +31,8 @@ await mkdir(source, { recursive: true });
 execFileSync('tar', ['-xzf', archive, '-C', source, '--strip-components=1']);
 const manifest = JSON.parse(await readFile(path.join(source, 'manifest.json'), 'utf8'));
 if (manifest.version !== upstream.version) throw new Error('Unexpected upstream version');
-manifest.id = freeRelayLab ? 'arcalink-free-lab' : communityRelease ? 'arcalink-sync' : 'arcalink-livesync-prototype';
-manifest.name = freeRelayLab ? 'ArcaLink Free Lab' : communityRelease ? 'ArcaLink Sync' : 'ArcaLink';
+manifest.id = foldersLab ? 'arcalink-folders-lab' : freeRelayLab ? 'arcalink-free-lab' : communityRelease ? 'arcalink-sync' : 'arcalink-livesync-prototype';
+manifest.name = foldersLab ? 'ArcaLink Folder Lab' : freeRelayLab ? 'ArcaLink Free Lab' : communityRelease ? 'ArcaLink Sync' : 'ArcaLink';
 manifest.version = releaseMetadata.version;
 manifest.author = 'ArcaLink';
 manifest.authorUrl = 'https://arcalink.ru';
@@ -109,7 +110,7 @@ const configSyncRibbon=`        this.addRibbonIcon("custom-sync", $msg("cmdConfi
 if(configSyncSource.split(configSyncRibbon).length!==2)throw Error('Unexpected upstream customization ribbon registration');
 await writeFile(configSyncPath,configSyncSource.replace(configSyncRibbon,''));
 
-for (const name of ['main.ts','content-retry.mjs','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','sync-parameters.mjs','sync-feedback.mjs','startup-notices.mjs','folders.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
+for (const name of ['main.ts','content-retry.mjs','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','folder-exclusions.mjs','folder-exclusions.ts','folder-rules-ui.ts','folder-policy.mjs','folder-policy-store.mjs','folder-policies.ts','folder-local-database.mjs','folder-cleanup.mjs','folder-crypto.mjs','environment.mjs','sync-parameters.mjs','sync-feedback.mjs','startup-notices.mjs','folders.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
   const input = path.join(root, 'plugin', name), output = path.join(source, 'src', name);
   if (communityRelease && ['free-relay.ts', 'workspaces.ts'].includes(name)) {
     await writeFile(output, patchCommunityOnboarding(await readFile(input, 'utf8'), name));
@@ -273,6 +274,19 @@ const peerHelper=path.relative(path.dirname(peerReplicatorPath),path.join(source
 const acceptedMarker='    if (acceptance !== "accepted") return;';
 if(peerReplicator.split(acceptedMarker).length!==2)throw Error('Unexpected Free automatic-watch boundary');
 await writeFile(peerReplicatorPath,`import {isFreeRelayConnection} from ${JSON.stringify(peerHelper)};\n`+peerReplicator.replace(peerLeftMarker,peerLeftMarker+'\n    if (isFreeRelayConnection(this.server?.settings)) this.automationCoordinator.beginLifecycle();').replace(acceptedMarker,acceptedMarker+'\n    if (isFreeRelayConnection(this.server?.settings) && shouldAutoWatch) this.watchPeer(peer.peerId);'));
+if(foldersLab){
+  for(const file of [socketUtilsPath,nostrPath,nativePeerPath,strategyPath,roomOwnerPath]){
+    let labSource=await readFile(file,'utf8');
+    if(!labSource.includes('wss://arcalink.ru/sync-lab/free/signal'))throw Error('Missing folder lab relay boundary');
+    labSource=labSource.replaceAll('wss://arcalink.ru/sync-lab/free/signal','wss://arcalink.ru/sync-lab/folders/free/signal');
+    if(file===roomOwnerPath){
+      const marker='        P2P_relays: prepared.P2P_relays,';
+      if(labSource.split(marker).length!==2)throw Error('Unexpected folder lab room preparation');
+      labSource=labSource.replace(marker,marker+'\n        P2P_roomID: prepared.P2P_roomID,');
+    }
+    await writeFile(file,labSource);
+  }
+}
 const contentPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/common/utils.js');
 const contentSource=await readFile(contentPath,'utf8'),contentMarker='function isTextDocument(doc) {';
 if(contentSource.split(contentMarker).length!==2)throw Error('Unexpected upstream content decoding boundary');
@@ -290,8 +304,11 @@ for (const name of ['main.js', 'manifest.json', 'styles.css', 'LICENSE']) {
 }
 if (communityRelease) {
   await copyFile(path.resolve(root, '../../plugin/arcalink-sync/LICENSE'), path.join(dist, 'LICENSE'));
+}
+if (communityRelease || foldersLab) {
   await writeFile(path.join(dist, 'versions.json'), JSON.stringify({[manifest.version]: manifest.minAppVersion}, null, 2) + '\n');
 }
+if (foldersLab) await copyFile(path.join(root, 'FOLDER-LAB.md'), path.join(dist, 'README.md'));
 await writeFile(path.join(dist, 'styles.css'), (await readFile(path.join(dist, 'styles.css'), 'utf8')) + '\n' + await readFile(path.join(root, 'plugin', 'styles.css'), 'utf8'));
 await writeFile(path.join(dist, 'manifest.json'), JSON.stringify(manifest, null, 2));
 await writeFile(path.join(dist, 'THIRD_PARTY_NOTICES.txt'), audit.notices);
