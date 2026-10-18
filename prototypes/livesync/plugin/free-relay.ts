@@ -1,4 +1,3 @@
-import {pluginEnvironment} from './environment.mjs';
 import {Notice,requestUrl,Setting,Platform} from 'obsidian';
 import {accountClientVersion} from './client-version.mjs';
 import {createNewVaultSettings} from '@vrtmrz/livesync-commonlib/settings';
@@ -69,9 +68,9 @@ export class FreeRelay {
     return result;
   }
   authError(status:number){return Object.assign(Error(status===401?'Сессия ArcaLink завершена. Войдите снова в настройках. Локальные заметки сохранены.':status===403?'Нет доступа к аккаунту ArcaLink. Проверьте аккаунт в личном кабинете.':status===429?'ArcaLink временно ограничил запросы. Подождите немного.':'Не удалось связаться с ArcaLink. Повторим подключение автоматически. Локальные заметки сохранены.'),{status});}
-  async credentials(session:any,retry=true):Promise<{room:string;relayUrl:string;turnUrls:string[];username:string;credential:string;expiresAt:number;policyRevision?:number;workspaceId?:string}>{
+  async credentials(session:any,retry=true):Promise<{room:string;relayUrl:string;turnUrls:string[];username:string;credential:string;expiresAt:number}>{
     let response:any;
-    try{response=await requestUrl({url:pluginEnvironment(this.plugin.manifest).freeBase+'/credentials',method:'POST',headers:{Authorization:'Bearer '+session.accessToken,'Content-Type':'application/json'},body:JSON.stringify({group:session.group,...this.plugin.folderPolicies?.proof(session.group)}),throw:false});}
+    try{response=await requestUrl({url:FREE_RELAY_BASE+'/credentials',method:'POST',headers:{Authorization:'Bearer '+session.accessToken,'Content-Type':'application/json'},body:JSON.stringify({group:session.group}),throw:false});}
     catch{throw this.authError(503);}
     if(response.status===401&&retry&&session.refreshToken)return this.credentials(await this.refresh(session),false);
     if(response.status===401||response.status===403)throw this.authError(response.status);
@@ -81,9 +80,7 @@ export class FreeRelay {
   async prepare(settings:any,signal:AbortSignal){
     const session=await this.session();if(!session)throw Error('Войдите в Free');
     const credentials=await this.credentials(session);if(signal.aborted)throw Error('Подключение Free отменено');
-    const revision=this.plugin.folderPolicies?.proof(session.group).revision||0;
-    if(revision&&(credentials.policyRevision!==revision||credentials.workspaceId!==session.group))throw Error('Применяются общие исключения папок. Дождитесь завершения.');
-    return runtimeRelaySettings(revision||pluginEnvironment(this.plugin.manifest).lab?{...settings,P2P_roomID:credentials.room}:settings,credentials);
+    return runtimeRelaySettings(settings,credentials);
   }
   async connect(email:string,password:string,group:string,passphrase:string){
     if(this.busy)throw Error('Подключение выполняется');
@@ -101,7 +98,7 @@ export class FreeRelay {
       const credentials=await this.credentials(session);
       const next={...(settings.isConfigured?settings:createNewVaultSettings()),isConfigured:true,remoteType:'ONLY_P2P',
         liveSync:false,periodicReplication:false,syncOnSave:false,syncOnStart:false,syncOnFileOpen:false,
-        P2P_Enabled:true,P2P_relays:pluginEnvironment(this.plugin.manifest).freeSignal,P2P_roomID:credentials.room,P2P_passphrase:passphrase,
+        P2P_Enabled:true,P2P_relays:FREE_SIGNAL_URL,P2P_roomID:credentials.room,P2P_passphrase:passphrase,
         P2P_DevicePeerName:this.plugin.app.vault.getName()+' '+session.deviceId.slice(-6),P2P_AppID:'self-hosted-livesync',
         P2P_AutoStart:true,P2P_AutoBroadcast:true,P2P_AutoAccepting:0,P2P_managedType:'',P2P_managedId:'',P2P_managedToken:'',
         P2P_turnServers:credentials.turnUrls.join(','),P2P_turnUsername:'',P2P_turnCredential:'',P2P_connectionPath:'relay',P2P_useDiagRTC:true};

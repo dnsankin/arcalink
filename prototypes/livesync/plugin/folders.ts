@@ -30,7 +30,7 @@ export class SharedFolders {
     contains(path: string) { return this.records.some(r => path.toLowerCase() === r.mount.toLowerCase() || path.toLowerCase().startsWith(r.mount.toLowerCase() + '/')); }
     record(path: string) { return this.records.find(r => path === r.mount || path.startsWith(r.mount + '/')); }
     async save() { this.queue = this.queue.catch(() => { }).then(() => this.app.vault.adapter.write(this.registry, JSON.stringify(this.records))); await this.queue; }
-    validateMount(mount: string) { this.plugin.folderPolicies?.assertSharedMount(mount);if (!safeRelative(mount) || mount === 'ArcaLink Shared' || this.records.some(r => mount.toLowerCase().startsWith(r.mount.toLowerCase() + '/') || r.mount.toLowerCase().startsWith(mount.toLowerCase() + '/') || r.mount.toLowerCase() === mount.toLowerCase()))
+    validateMount(mount: string) { if (!safeRelative(mount) || mount === 'ArcaLink Shared' || this.records.some(r => mount.toLowerCase().startsWith(r.mount.toLowerCase() + '/') || r.mount.toLowerCase().startsWith(mount.toLowerCase() + '/') || r.mount.toLowerCase() === mount.toLowerCase()))
         throw Error('Выберите обычную папку вне других общих папок'); }
     async init() {
         if (await this.app.vault.adapter.exists(this.registry))

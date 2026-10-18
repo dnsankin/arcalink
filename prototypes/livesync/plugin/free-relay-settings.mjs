@@ -1,14 +1,12 @@
-export const FOLDER_LAB_SIGNAL_URL='wss://arcalink.ru/sync-lab/folders/free/signal';
-const signalUrls=['wss://arcalink.ru/sync-lab/free/signal',FOLDER_LAB_SIGNAL_URL];
 export const FREE_RELAY_BASE='https://arcalink.ru/sync-lab/free';
 export const FREE_SIGNAL_URL='wss://arcalink.ru/sync-lab/free/signal';
 export function isFreeRelay(settings) {
-  return settings?.remoteType==='ONLY_P2P' && signalUrls.includes(settings.P2P_relays);
+  return settings?.remoteType==='ONLY_P2P' && settings.P2P_relays===FREE_SIGNAL_URL;
 }
 export function isFreeRelayConnection(settings) {
   const url=settings?.P2P_relays;
   return settings?.remoteType==='ONLY_P2P' && typeof url==='string' &&
-    signalUrls.some(signal=>url===signal||url.startsWith(signal+'?ticket='));
+    (url===FREE_SIGNAL_URL || url.startsWith(FREE_SIGNAL_URL+'?ticket='));
 }
 export function freeRelayRpcOptions(settings, defaults) {
   return isFreeRelayConnection(settings)?{...defaults,chunkMissingRetryMs:5000,deferChunkRetriesUntilSent:true}:defaults;
@@ -21,11 +19,11 @@ export function freeRelayRpcTimeout(settings, timeout) {
 }
 export function runtimeRelaySettings(settings, credentials, now=Date.now()) {
   const relay=new URL(credentials.relayUrl);
-  if(relay.origin!=='wss://arcalink.ru'||!signalUrls.some(signal=>new URL(signal).pathname===relay.pathname)||!relay.searchParams.get('ticket')||
+  if(relay.origin!=='wss://arcalink.ru'||relay.pathname!=='/sync-lab/free/signal'||!relay.searchParams.get('ticket')||
     credentials.room!==settings.P2P_roomID||credentials.connectionPath!=='relay-only'||credentials.serverStorage!==false||
     !Number.isFinite(credentials.expiresAt)||credentials.expiresAt<=now+60000||
     !Array.isArray(credentials.turnUrls)||!credentials.turnUrls.length||
-    credentials.turnUrls.some(url=>!(relay.pathname===new URL(FOLDER_LAB_SIGNAL_URL).pathname?/^turn:arcalink\.ru:3479(\?transport=(udp|tcp))?$/:/^turns?:arcalink\.ru:(3478|5349)(\?transport=(udp|tcp))?$/).test(url))||
+    credentials.turnUrls.some(url=>!/^turns?:arcalink\.ru:(3478|5349)(\?transport=(udp|tcp))?$/.test(url))||
     typeof credentials.username!=='string'||!credentials.username||typeof credentials.credential!=='string'||!credentials.credential) throw Error('Некорректные параметры Free от сервера');
   return {...settings,P2P_connectionPath:'relay',P2P_relays:credentials.relayUrl,
     P2P_iceServers:[{urls:credentials.turnUrls,username:credentials.username,credential:credentials.credential}],
