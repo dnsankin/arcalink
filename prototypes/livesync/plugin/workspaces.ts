@@ -1,3 +1,4 @@
+import {pluginEnvironment} from './environment.mjs';
 import {isFreeRelayConnection,FREE_SIGNAL_URL} from './free-relay-settings.mjs';
 import {accountClientVersion} from './client-version.mjs';
 import { requestPilot, responseData, responseError } from './pilot-http.mjs';
@@ -211,8 +212,9 @@ export class Workspaces {
                 if(state.workspace_id!==space.id||state.relay_group!==space.id||typeof state.relay_passphrase!=='string'||state.relay_passphrase.length<16)throw Error('Некорректная привязка Free');
                 if(space.encrypted&&!passphrase)throw Error('Введите парольную фразу хранилища');
                 const session={email:this.pending.email,deviceId:this.pending.device.id,accessToken:this.pending.access_token,refreshToken:this.pending.refresh_token,accessExpiresAt:Date.parse(this.pending.auth_session?.access_expires_at),group:space.id};
+                await p.folderPolicies?.prepareAccess(space,{...createNewVaultSettings(),isConfigured:true,remoteType:'ONLY_P2P',P2P_relays:pluginEnvironment(p.manifest).freeSignal,encrypt:!!space.encrypted,passphrase:space.encrypted?passphrase:''});
                 const credentials=await p.freeRelay.credentials(session);
-                const settings={...createNewVaultSettings(),isConfigured:true,remoteType:'ONLY_P2P',liveSync:false,syncOnSave:false,syncOnStart:false,encrypt:!!space.encrypted,passphrase:space.encrypted?passphrase:'',P2P_Enabled:true,P2P_AutoStart:true,P2P_AutoBroadcast:true,P2P_AutoAccepting:1,P2P_AutoSyncPeers:'~.*',P2P_AutoWatchPeers:'~.*',P2P_relays:FREE_SIGNAL_URL,P2P_roomID:credentials.room,P2P_passphrase:state.relay_passphrase,P2P_AppID:'self-hosted-livesync',P2P_connectionPath:'relay'};
+                const settings={...createNewVaultSettings(),isConfigured:true,remoteType:'ONLY_P2P',liveSync:false,syncOnSave:false,syncOnStart:false,encrypt:!!space.encrypted,passphrase:space.encrypted?passphrase:'',P2P_Enabled:true,P2P_AutoStart:true,P2P_AutoBroadcast:true,P2P_AutoAccepting:1,P2P_AutoSyncPeers:'~.*',P2P_AutoWatchPeers:'~.*',P2P_relays:pluginEnvironment(p.manifest).freeSignal,P2P_roomID:credentials.room,P2P_passphrase:state.relay_passphrase,P2P_AppID:'self-hosted-livesync',P2P_connectionPath:'relay'};
                 upsertRemoteConfigurationInPlace(settings as any,'p2p',{id:'arcalink-free',name:space.title,activate:true,activateForP2P:true});
                 await p.freeRelay.writeSession(session);
                 const saved=await p.unifiedVault.saved();await p.unifiedVault.save({...saved,workspaceId:space.id,title:space.title});
@@ -225,23 +227,29 @@ export class Workspaces {
             }
         }
         const pending = await this.pendingMerge();
-        if (pending || (wasConfigured && s.couchDB_DBNAME !== space.database)) {
+        const existingBinding=await this.session();
+        if (pending || (wasConfigured && s.couchDB_DBNAME !== space.database && !(p.folderPolicies?.active&&existingBinding.workspaceId===space.id))) {
             if (!mergeConfirmed) throw Error('Подтвердите слияние локального и серверного хранилищ');
             return this.mergeWorkspace(space, passphrase, pending);
         }
         if (space.encrypted === true && !passphrase)
             throw Error('Введите парольную фразу зашифрованного хранилища');
+        const planned={...(wasConfigured?s:createNewVaultSettings()),encrypt:!!space.encrypted,passphrase:space.encrypted?passphrase:''};
+        const prepared=await p.folderPolicies?.prepareAccess(space,planned);
         const access = await this.api('connect', { id: space.id });
         const settings = { ...(wasConfigured ? s : createNewVaultSettings()), couchDB_URI: access.url.replace(/\/$/, ''), couchDB_DBNAME: access.database, couchDB_USER: access.user, couchDB_PASSWORD: access.password, isConfigured: true, liveSync: true, syncOnSave: true, syncOnStart: true, ...(!wasConfigured ? { customChunkSize: 60, encrypt: !!space.encrypted, passphrase: space.encrypted ? passphrase : '' } : {}) };
         Object.assign(settings, pluginSyncSettings(s.syncInternalFiles, p.app.vault.configDir, p.manifest.id));
         upsertRemoteConfigurationInPlace(settings as any, 'couchdb', { id: 'arcalink-pilot', name: 'ArcaLink', activate: true });
         await this.checkDestinationKey(settings);
         await p.core.services.setting.applyPartial(settings, true);
+        if(prepared){await p.folderPolicies.finishPrepared(settings,true);p.folderPolicies.releaseForDestination();}
         const old = await this.session();
         await p.app.vault.adapter.write(this.sessionPath, JSON.stringify({ email: this.pending?.email || old.email, deviceId: this.pending?.device.id || old.deviceId, workspaceId: space.id, workspaceTitle: space.title }));
         this.pending = null;
-        if (wasConfigured)
+        if (wasConfigured){
+            if(prepared)await p.core.services.databaseEvents.initialiseDatabase(false,true,true,true);
             await p.core.services.control.applySettings();
+        }
         else {
             await p.core.services.appLifecycle.askRestart("Connection settings are saved. Restart Obsidian to start syncing. Restart now?");
         }
@@ -344,7 +352,10 @@ export class Workspaces {
             await services.control.applySettings();
             await services.replicator.onCloseActiveReplication();
             await this.waitForReflection();
+            const planned={...current,...paused,additionalSuffixOfDatabaseName:journal.suffix,encrypt:!!space.encrypted,passphrase:space.encrypted?passphrase:''};
+            const prepared=await p.folderPolicies?.prepareAccess(space,planned);
             const access = await this.api('connect', { id: space.id });
+            if(prepared&&p.folderPolicies.state.database===access.database){journal.target.database=access.database;await adapter.write(this.mergeJournal,JSON.stringify(journal));}
             if (access.database !== journal.target.database) throw Error('Сервер вернул другое хранилище');
             const target = { ...current, ...paused, couchDB_URI: access.url.replace(/\/$/, ''), couchDB_DBNAME: access.database,
                 couchDB_USER: access.user, couchDB_PASSWORD: access.password, additionalSuffixOfDatabaseName: journal.suffix,
@@ -352,6 +363,7 @@ export class Workspaces {
             upsertRemoteConfigurationInPlace(target as any, 'couchdb', { id: 'arcalink-pilot', name: 'ArcaLink', activate: true });
             await this.checkDestinationKey(target);
             await services.setting.applyPartial(target, true);
+            if(prepared){await p.folderPolicies.finishPrepared(target,true);p.folderPolicies.releaseForDestination();}
             await p.folders.copyBindings();
             // Open a fresh namespace, never reset the source DB or export its deletion history.
             if (await services.databaseEvents.initialiseDatabase(true, true, true) !== true)
@@ -435,7 +447,9 @@ export class Workspaces {
             await p.app.vault.adapter.write(this.journal, JSON.stringify({ source_database: pending?.source_database || s.couchDB_DBNAME, session: pending?.session || await this.session(), target: w, sync }));
             await p.core.services.setting.suspendAllSync();
             await p.core.services.control.applySettings();
+            const prepared=await p.folderPolicies?.prepareAccess(w,target);
             await p.core.services.setting.applyPartial(target, true);
+            if(prepared){await p.folderPolicies.finishPrepared(target,true);p.folderPolicies.releaseForDestination();}
             await p.core.services.control.applySettings();
             await p.folders.copyBindings();
             const r = p.core.rebuilder;

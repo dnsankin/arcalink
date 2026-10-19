@@ -117,3 +117,43 @@
 .arcalink-tariff-gate[disabled] button,
 .arcalink-tariff-gate[disabled] .checkbox-container { opacity: .45; filter: grayscale(1); }
 .arcalink-tariff-hint { color: var(--text-muted); }
+
+/* Folder picker: indentation belongs to names; both checkbox columns align. */
+.arcalink-folder-rules-modal { width: min(840px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); }
+.arcalink-folder-rules { min-height: 0; overflow-y: auto; }
+.arcalink-folder-rules [hidden] { display: none !important; }
+.arcalink-folder-tree { max-height: 45vh; overflow: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; }
+.arcalink-folder-tree-header,
+.arcalink-folder-tree-row { display: grid; grid-template-columns: minmax(0, 1fr) 76px 64px; column-gap: 8px; align-items: center; padding: 4px 10px; }
+.arcalink-folder-tree-header { position: sticky; top: 0; z-index: 1; min-height: 44px; background: var(--background-secondary); border-bottom: 1px solid var(--background-modifier-border); font-size: var(--font-ui-small); font-weight: 600; }
+.arcalink-folder-tree-header > :not(:first-child) { text-align: center; overflow-wrap: anywhere; }
+.arcalink-folder-local-heading { color: var(--color-green, #28a745); }
+.arcalink-folder-cloud-heading { color: var(--color-red, #d83a45); }
+.arcalink-folder-tree .arcalink-folder-tree-list { margin: 0; padding: 0; list-style: none; }
+.arcalink-folder-tree-list > li { margin: 0; padding: 0; }
+.arcalink-folder-tree-row:hover { background: var(--background-modifier-hover); }
+.arcalink-folder-tree-name { min-width: 0; display: flex; align-items: center; gap: 6px; padding-inline-start: calc(var(--arcalink-folder-depth) * 16px); }
+.arcalink-folder-tree-name .arcalink-folder-tree-branch { flex: 0 0 24px; width: 24px; height: 30px; padding: 2px; box-shadow: none; background: none; color: var(--text-muted); }
+.arcalink-folder-tree-branch.is-leaf { visibility: hidden; }
+.arcalink-folder-tree-branch[aria-expanded="true"] svg { transform: rotate(90deg); }
+.arcalink-folder-tree-icon { display: flex; color: var(--text-muted); flex-shrink: 0; }
+.arcalink-folder-tree-icon svg { width: 16px; height: 16px; }
+.arcalink-folder-tree-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arcalink-folder-check-cell { display: flex; align-items: center; justify-content: center; min-height: 36px; cursor: pointer; }
+.arcalink-folder-rules input.arcalink-folder-check { appearance: none; -webkit-appearance: none; position: relative; width: 21px; height: 21px; margin: 0; padding: 0; border: 2px solid var(--arcalink-check-color); border-radius: 4px; background: transparent; box-shadow: none; cursor: pointer; }
+.arcalink-folder-check-local { --arcalink-check-color: var(--color-green, #28a745); }
+.arcalink-folder-check-cloud { --arcalink-check-color: var(--color-red, #d83a45); }
+.arcalink-folder-rules input.arcalink-folder-check:checked { background: var(--arcalink-check-color); }
+.arcalink-folder-rules input.arcalink-folder-check:checked::after { content: ''; background: none; mask: none; -webkit-mask: none; box-sizing: content-box; position: absolute; inset: 2px auto auto 5px; width: 6px; height: 11px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.arcalink-folder-rules input.arcalink-folder-check:disabled { opacity: .4; filter: grayscale(1); cursor: default; }
+.arcalink-folder-rules input.arcalink-folder-check:focus-visible,
+.arcalink-folder-tree-branch:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 3px; }
+.arcalink-folder-tree-description { grid-column: 1; padding-inline-start: calc(var(--arcalink-folder-depth) * 16px + 30px); color: var(--text-muted); font-size: var(--font-ui-smaller); overflow-wrap: anywhere; }
+.arcalink-folder-tree > p { padding: 0 10px; }
+@media (max-width: 500px) {
+    .arcalink-folder-tree-header,
+    .arcalink-folder-tree-row { grid-template-columns: minmax(0, 1fr) 76px 54px; column-gap: 4px; padding-inline: 6px; }
+    .arcalink-folder-tree-name { gap: 4px; padding-inline-start: calc(var(--arcalink-folder-depth) * 12px); }
+    .arcalink-folder-tree-icon { display: none; }
+    .arcalink-folder-tree-description { padding-inline-start: calc(var(--arcalink-folder-depth) * 12px + 24px); }
+}
