@@ -16,5 +16,5 @@ for(const marker of ['updatePilot','checkPilotUpdate','installRelease','recoverI
 for(const name of readdirSync('prototypes/livesync/plugin').filter(name=>/\.(ts|mjs)$/.test(name)))
   for(const marker of ['disablePlugin','enablePlugin'])assert.equal(readFileSync('prototypes/livesync/plugin/'+name,'utf8').includes(marker),false,name+': '+marker);
 for(const marker of ['disablePlugin','enablePlugin'])assert.equal(readFileSync('main.js','utf8').includes(marker),false,'bundle: '+marker);
-execFileSync(process.execPath,['--test','prototypes/livesync/tests/folder-policies-controller.test.mjs','prototypes/livesync/tests/folder-mode-proof.test.mjs','prototypes/livesync/tests/folder-rules-tree.test.mjs','prototypes/livesync/tests/settings-registration.test.mjs'],{stdio:'inherit'});
+execFileSync(process.execPath,['--test','prototypes/livesync/tests/folder-policies-controller.test.mjs','prototypes/livesync/tests/folder-mode-proof.test.mjs','prototypes/livesync/tests/folder-rules-tree.test.mjs','prototypes/livesync/tests/mobile-sync-status.test.mjs','prototypes/livesync/tests/settings-registration.test.mjs'],{stdio:'inherit'});
 console.log('Community metadata, syntax, assets, startup guards and absence of self-updater/automatic plugin reload verified');
