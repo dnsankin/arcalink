@@ -8,12 +8,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.14](https://github.com/dnsankin/arcalink/releases/tag/1.0.14)**. После обновления перезапустите Obsidian.
 
-Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.13; настройки подключения сохраняются.
+Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.14](https://github.com/dnsankin/arcalink/releases/tag/1.0.14) | 19.10.2026 | На смартфоне над заметкой появился статус подключения и синхронизации. Нажатие открывает подробности и настройки. Для Free отдельно показано ожидание второго устройства. Поддерживаются русский и английский; механизм синхронизации не менялся. |
 | [1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13) | 19.10.2026 | Восстановлены запуск и доступ к настройкам у существующих хранилищ. Выбор папок представлен деревом с поиском: зелёная галочка включает обмен на устройстве, красная — облачную копию и обмен на всех устройствах. Снятие галочки исключает папку; облачное изменение требует подтверждения. Сохранённые настройки и независимые локальные исключения сохраняются. |
 | [1.0.12](https://github.com/dnsankin/arcalink/releases/tag/1.0.12) | 18.10.2026 | В настройках синхронизации добавлен выбор папок: исключить только на этом устройстве или исключить на всех устройствах и удалить облачную копию. Перед удалением показан расчёт и запрашивается подтверждение; локальные файлы сохраняются. Общее правило действует на Free и платных тарифах, сохраняется при смене тарифа и может быть отменено. |
 | [1.0.11](https://github.com/dnsankin/arcalink/releases/tag/1.0.11) | 16.10.2026 | На вкладке «Синхронизация» добавлены пояснения о фоновой работе Android и текущем пределе размера одного файла на устройстве. Уточнены отличие от квоты хранилища и отдельные ограничения общих папок/Telegram. Поддерживаются русский и английский; механизм синхронизации и настройки не меняются. |
@@ -63,6 +64,12 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 Для некоторых существующих хранилищ перед первым общим исключением требуется проверка режима шифрования. Если сервер не может её выполнить, изменение не применяется и облачная копия не удаляется. Локальные исключения остаются доступны.
 
+### Статус на смартфоне
+
+Над открытой заметкой показана плашка ArcaLink: подключение, обмен, отсутствие сети, пауза или сообщение, требующее внимания. Нажмите её, чтобы открыть подробности и настройки синхронизации. На Free отдельно показано ожидание второго устройства.
+
+Зелёное «Подключено» означает доступность соединения, а не завершение передачи всех файлов. Стрелки ↑/↓ показывают счётчики обмена за текущий сеанс; это не количество полностью синхронизированных файлов.
+
 ### Язык интерфейса
 
 Переключатель находится **вверху настроек плагина**. Доступны **«Как в Obsidian»**, **«Русский»** и **«English»**. Выбор сохраняется для плагина; настройки и уведомления используют выбранный язык.
@@ -109,12 +116,13 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13)**. Restart Obsidian after updating.
+Current version: **[1.0.14](https://github.com/dnsankin/arcalink/releases/tag/1.0.14)**. Restart Obsidian after updating.
 
-Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.13; connection settings are retained.
+Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.14](https://github.com/dnsankin/arcalink/releases/tag/1.0.14) | 2026-10-19 | Phones now show connection and sync status above the note. Tap for details and sync settings. Free separately shows when it is waiting for another device. Available in Russian and English; the sync mechanism is unchanged. |
 | [1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13) | 2026-10-19 | Restored startup and settings access for existing vaults. Folder selection is now a searchable tree: green enables sync on this device, red enables the cloud copy and sync on all devices. Clearing a checkbox excludes the folder; cloud changes require confirmation. Saved settings and independent local exclusions are retained. |
 | [1.0.12](https://github.com/dnsankin/arcalink/releases/tag/1.0.12) | 2026-10-18 | Added folder selection in Sync settings: exclude on this device, or exclude everywhere and remove the cloud copy. Removal requires a preview and confirmation; local files are kept. Workspace-wide rules work on Free and paid plans, survive plan changes, and can be removed. |
 | [1.0.11](https://github.com/dnsankin/arcalink/releases/tag/1.0.11) | 2026-10-16 | Added guidance in Sync settings about Android background operation and the current per-file size limit on this device. Clarified the difference from the storage quota and separate limits for shared folders/Telegram. Available in Russian and English; sync behavior and settings are unchanged. |
@@ -163,6 +171,12 @@ Offline devices receive the current rules before exchanging data again. Update t
 Rules can be changed. Removing a common exclusion lets local files sync again and consume cloud space. Independent local exclusions on other devices are kept. Shared folders and collaborative notes are managed separately; folders overlapping them cannot be selected for workspace-wide cleanup. A common exclusion also pauses import of matching Telegram files, without deleting Telegram originals.
 
 Some existing vaults need their encryption mode verified before the first workspace-wide exclusion. If the server cannot complete that check, the change is not applied and the cloud copy is not removed. Local exclusions remain available.
+
+## Phone sync status
+
+A bar above the open note shows the ArcaLink connection, data exchange, offline state, pause, or an issue needing attention. Tap it for details and sync settings. Free separately indicates when it is waiting for another device.
+
+A green “Connected” label means a connection is available; it does not confirm that every file has finished transferring. The ↑/↓ arrows show data-exchange counters for the current session, not the number of fully synchronised files.
 
 ## Interface language
 
