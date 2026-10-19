@@ -24,6 +24,7 @@ import {pluginEnvironment} from './environment.mjs';
 import {FolderPolicies} from './folder-policies';
 import {renderFolderExclusions} from './folder-exclusions';
 import {localizeMessage,messageLanguage,messageInEnglish,setMessageLanguageSource,observeLocalizedUI,setStartupNoticeGate} from './localized-obsidian';
+import {createMobileSyncStatus} from './mobile-sync-status';
 import {createStartupNoticeGate} from './startup-notices.mjs';
 import {renderLanguageSetting} from './language-settings';
 import {getStoragePathFromUXFileInfo} from '@vrtmrz/livesync-commonlib/compat/common/typeUtils';
@@ -81,6 +82,8 @@ export default class ArcaLinkPilot extends LiveSync {
     await this.cloudFeatures;
   }
   async connectPilot(email:string,password:string){return this.workspaces.login(email,password);}
+  mobileSyncStatus: any;
+  openMobileSyncSettings(){this.pilotSettingsTab='sync';openObsidianSettings(this.app,this.manifest.id);}
   pilotSyncFeedback: any;
   startupSyncNotices: any;
   async startupSyncNoticeState(){
@@ -136,6 +139,8 @@ export default class ArcaLinkPilot extends LiveSync {
     this.pilotStorageWarning=createStorageWarning({load:()=>this.loadPilotStorageStatus(),notify:(message:string)=>{new Notice(message,15000);}});
     services.appLifecycle.onLoaded.addHandler(async()=>{void this.pilotStorageWarning.tick();return true;},600);
     this.app.workspace.onLayoutReady(()=>{void this.pilotStorageWarning.tick();this.registerInterval(window.setInterval(()=>void this.pilotStorageWarning.tick(),5*60*1000));});
+    this.mobileSyncStatus=Platform.isMobileApp?createMobileSyncStatus(this):null;
+    this.register(()=>this.mobileSyncStatus?.dispose());
     const lamp=this.addStatusBarItem();
     lamp.addClass('arcalink-sync-lamp');
     lamp.setText('●');
@@ -158,14 +163,15 @@ export default class ArcaLinkPilot extends LiveSync {
         const summary=editor?.querySelector('.livesync-status-statusline')?.textContent?.trim()||'';
         const offline=!navigator.onLine;
         const settings=services.setting.currentSettings();
-        if(isFreeRelay(settings)){const connected=this.arcalinkP2P?.transportLifecycle.isConnected,peers=this.arcalinkP2P?.peerDirectory.getPeers()||[];lamp.dataset.state=offline?'offline':connected&&peers.length?'ready':'idle';setTooltip(lamp,offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':'Free: второе устройство подключено; состояние передачи — в панели устройств',{placement:'top'});return;}
+        if(isFreeRelay(settings)){const connected=this.arcalinkP2P?.transportLifecycle.isConnected,peers=this.arcalinkP2P?.peerDirectory.getPeers()||[];this.mobileSyncStatus?.update({free:true,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});lamp.dataset.state=offline?'offline':connected&&peers.length?'ready':'idle';setTooltip(lamp,offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':'Free: второе устройство подключено; состояние передачи — в панели устройств',{placement:'top'});return;}
         const paused=services.appLifecycle.isSuspended(),automaticOff=settings.isConfigured&&!settings.liveSync;
         const kind=syncLampState({errors,status,offline,paused,automaticOff});
         lamp.dataset.state=kind;
+        this.mobileSyncStatus?.update({kind,status,offline,configured:settings.isConfigured,ready:services.appLifecycle.isReady(),paused,automaticOff,sent:state.sent,arrived:state.arrived,errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
         const label=kind==='idle'&&paused?'Синхронизация приостановлена':kind==='idle'&&automaticOff?'Автоматическая синхронизация выключена':{error:'Ошибка синхронизации',offline:'Нет подключения к интернету',ready:'Синхронизация подключена',active:'Синхронизация выполняется',idle:'Синхронизация ожидает'}[kind];
         // setTooltip owns aria-label; resetting it would erase the detailed hover text.
         const tooltip=[label,summary,...syncUserMessages([...errors,lastMessage].filter(Boolean),this.folders.syncFeedback.messages)].filter(Boolean).map(localizeMessage).join('\n');if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
-      } catch {lamp.dataset.state='idle';setTooltip(lamp,localizeMessage('Синхронизация запускается'),{placement:'top'});}
+      } catch {this.mobileSyncStatus?.update({ready:false,configured:true});lamp.dataset.state='idle';setTooltip(lamp,localizeMessage('Синхронизация запускается'),{placement:'top'});}
       finally {lampBusy=false;}
     };
     this.app.workspace.onLayoutReady(()=>{void refreshLamp();this.registerInterval(window.setInterval(()=>void refreshLamp(),1000));});
