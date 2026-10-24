@@ -59,7 +59,7 @@ async function componentFixture({encrypted=false}={}){
  vm.runInNewContext(compiled,{module,exports:module.exports,require:()=>({Modal,Setting,TFile,getLinkpath:s=>s.split('#')[0],Notice:class{},Component:class{load(){}unload(){}},MarkdownRenderer:{render:async(app,md,el)=>{rendered.push(md);el.innerHTML=md;}},requestUrl:()=>{throw Error('Real transport forbidden');}}),crypto:webcrypto,TextEncoder,Uint8Array,document:{createElement:()=>new Element()},URL:{createObjectURL:()=> 'blob:fake',revokeObjectURL:()=>{}},Blob:class{},navigator:{clipboard:{writeText:async()=>{}}},btoa:s=>Buffer.from(s,'binary').toString('base64')});
  const publications=new module.exports.NotePublications(plugin);
  publications.api=async(action,body)=>{calls.push({action,body});if(action==='limits')return {limit_bytes:1024*1024*1024};if(action==='list')return {publications:[]};if(action==='preview')return {id:'2'.repeat(32),html:body.html};if(action==='check')return {missing:[]};if(action==='save')return {id:'2'.repeat(32),url:'https://arcalink.ru/p/example'};return {};};
- return {publications,settings,modals,calls,writes,rendered,note,events,commands};
+ return {publications,settings,modals,calls,writes,rendered,note,events,commands,app,TFile};
 }
 
 test('publication UI requires preview, excludes embedded notes, and offers storage choice',async()=>{
@@ -118,4 +118,17 @@ test('settings summary reports failed loading and supports retry without claimin
  f.publications.api=async()=>{if(failed)throw Error('Offline');return {publications:[]};};
  const load=f.publications.render(root);await load();assert.ok(root.children.some(c=>c.text==='Offline'));
  failed=false;await load();assert.ok(root.children.some(c=>c.text==='Опубликовано заметок: 0'));
+});
+
+test('publication preparation and save accept 150 attachments',async()=>{
+ const f=await componentFixture(),links=[];let markdown='';
+ for(let i=0;i<150;i++){const original='![[photo'+i+'.png]]',start=markdown.length;markdown+=original+'\n';links.push({link:'photo'+i+'.png',original,position:{start:{offset:start},end:{offset:start+original.length}}});}
+ f.app.vault.read=async()=>markdown;
+ f.app.metadataCache.getFileCache=()=>({embeds:links});
+ f.app.metadataCache.getFirstLinkpathDest=path=>new f.TFile(path);
+ await f.publications.prepare(f.note);
+ const buttons=f.settings.flatMap(s=>s.buttons);
+ await buttons.find(b=>b.text==='Предпросмотр').click();
+ const publish=buttons.find(b=>b.text==='Опубликовать');assert.equal(publish.disabled,false);await publish.click();
+ const saved=f.calls.find(c=>c.action==='save').body;assert.equal(saved.assets.length,150);assert.equal(new Set(saved.assets.map(a=>a.key)).size,150);
 });
