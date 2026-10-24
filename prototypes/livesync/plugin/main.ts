@@ -1,3 +1,4 @@
+import {NotePublications} from './publication';
 import {settingsState,settingsStateLabel,capabilityHint} from './settings-state.mjs';
 import {UnifiedVault} from './unified-vault';
 import {VaultControls} from './vault-controls';
@@ -54,6 +55,7 @@ export default class ArcaLinkPilot extends LiveSync {
   folders=new SharedFolders(this);
   telegram=new TelegramInbox(this);
   desktop=new DesktopControls(this);
+  publications=new NotePublications(this);
   openDesktopSettings(){this.pilotSettingsTab='desktop';openObsidianSettings(this.app,this.manifest.id);}
   openDesktopHotkeys(){openObsidianSettings(this.app,'hotkeys');}
   pilotSettingsTab=this.manifest.id==='arcalink-free-lab'?'vaults':'account';
@@ -112,6 +114,7 @@ export default class ArcaLinkPilot extends LiveSync {
     this.register(()=>setMessageLanguageSource());
     try{this.folders.records=JSON.parse(await this.app.vault.adapter.read(this.folders.registry));}catch{/* No registry exists on a fresh install. */}
     super.onload();
+    this.publications.init();
 
     const openVaultControls=()=>{this.pilotSettingsTab='vaults';openObsidianSettings(this.app,this.manifest.id);};
     window.addEventListener('arcalink-open-vault-controls',openVaultControls);
