@@ -1016,3 +1016,5 @@ body.is-mobile .livesync-compatibility-review-notice {
 .arcalink-mobile-sync-status[data-state="offline"] .arcalink-mobile-sync-dot { color: var(--color-yellow, #bf8700); }
 .arcalink-mobile-sync-status[data-state="error"] .arcalink-mobile-sync-dot { color: var(--color-red, #cf222e); }
 .arcalink-mobile-sync-status:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+
+.arcalink-publication-preview { width: 100%; height: 360px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); }
