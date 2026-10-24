@@ -132,3 +132,26 @@ test('publication preparation and save accept 150 attachments',async()=>{
  const publish=buttons.find(b=>b.text==='Опубликовать');assert.equal(publish.disabled,false);await publish.click();
  const saved=f.calls.find(c=>c.action==='save').body;assert.equal(saved.assets.length,150);assert.equal(new Set(saved.assets.map(a=>a.key)).size,150);
 });
+
+test('successful publication replaces long form with visible result and close action',async()=>{
+ const f=await componentFixture();await f.publications.prepare(f.note);
+ const modal=f.modals[0],buttons=f.settings.flatMap(s=>s.buttons);
+ await buttons.find(b=>b.text==='Предпросмотр').click();
+ await buttons.find(b=>b.text==='Опубликовать').click();
+ assert.equal(modal.titleEl.text,'Страница опубликована');
+ assert.equal(modal.contentEl.children.some(c=>c.tag==='iframe'||c.tag==='ul'),false);
+ assert.equal(modal.contentEl.scrollTop,0);
+ assert.equal(modal.contentEl.children.find(c=>c.tag==='a').attrs.target,'_blank');
+ const close=f.settings.flatMap(s=>s.buttons).find(b=>b.text==='Закрыть');assert.ok(close);close.click();assert.equal(modal.contentEl.children.length,0);
+});
+
+test('publishing status is visible while save is pending and failure allows retry',async()=>{
+ const f=await componentFixture();await f.publications.prepare(f.note);
+ const buttons=f.settings.flatMap(s=>s.buttons);await buttons.find(b=>b.text==='Предпросмотр').click();
+ const publish=buttons.find(b=>b.text==='Опубликовать');let reject;
+ f.publications.api=async action=>{if(action==='save')return new Promise((ok,no)=>{reject=no;});throw Error('Unexpected action');};
+ const pending=publish.click();assert.equal(publish.text,'Публикуется…');assert.equal(publish.disabled,true);
+ reject(Error('Synthetic failure'));await pending;
+ assert.equal(publish.text,'Опубликовать');assert.equal(publish.disabled,false);
+ assert.equal(f.modals[0].contentEl.children.some(c=>c.tag==='iframe'),true);
+});
