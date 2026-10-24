@@ -1,5 +1,5 @@
 {
-  "projectCommit": "e3a2649e7c89596a24a47b08c5e5ece8f8e6d703",
+  "projectCommit": "17fe3d51838ba4c6da02dd3348192afbb7c64140",
   "workingTreeModified": false,
   "pluginId": "arcalink-sync",
   "version": "1.0.17",
@@ -84,7 +84,7 @@
     "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
     "COPYRIGHT.md": "a9753d3404f7a2ac136aa9b29d3e74ff4e93a64785c00098c5a6755067d7942f",
     "PUBLISHING.md": "33a8428108744ae6ab0bbae5aa559fdbdc6f746858d4f9324e35c81a2c2b463e",
-    "versions.json": "6678ede9b610829edd415cc9472defe5e371cc5bb5b8bb0f2f131fec2c928443",
+    "versions.json": "7df7ae21f9474ef2c29ce3c4cc73eaf9e748c0c5f86798f107c4df6e1fda4cc1",
     "manifest.json": "7a6d8c62b6572a3e1098e8b43ef349585a57b8a64f670573ff0c466d2d81c788",
     "main.js": "f2fef7282af6020b21e168542a3ffe1bd778caa59b5e01975b4de63ac575ab8c",
     "styles.css": "dcc0f92736aafc5a0bb5c1f8f61deb8c044369476da1d7d67fbc3c82882737a6",
