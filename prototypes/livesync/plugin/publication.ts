@@ -165,13 +165,17 @@ class PublicationModal extends Modal {
    frame.srcdoc='<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; media-src data:; style-src \'unsafe-inline\'"><style>body{font:16px system-ui;line-height:1.65;padding:20px;color:#eee;background:#202027}img,video{max-width:100%}pre{white-space:pre-wrap}</style><h1>'+publicationAttribute(this.payload.title)+'</h1>'+html;
    publish.setDisabled(false);
   }catch(e){new Notice((e as Error).message);}finally{b.setDisabled(false);}}));
-  controls.addButton(b=>{publish=b;b.setButtonText(this.old?'Обновить публикацию':'Опубликовать').setCta().setDisabled(true).onClick(async()=>{b.setDisabled(true);const version=this.previewVersion;try{
+  controls.addButton(b=>{publish=b;b.setButtonText(this.old?'Обновить публикацию':'Опубликовать').setCta().setDisabled(true).onClick(async()=>{b.setDisabled(true).setButtonText('Публикуется…');const version=this.previewVersion;try{
    const snapshot={...this.payload};let assets=snapshot.assets;
    if(snapshot.mode==='copy'){const {missing}=await this.owner.api('check',{hashes:assets.map((a:any)=>a.hash)});for(const a of this.assets)if(missing.includes(a.hash))await this.owner.upload(a,snapshot.workspace);}
    const result=await this.owner.api('save',{...snapshot,assets});this.old=result;
-   const link=new Setting(this.contentEl).setName('Страница опубликована').setDesc(result.url);link.addButton(c=>c.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(result.url).catch(()=>new Notice(result.url))));
+   this.titleEl.setText('Страница опубликована');this.contentEl.empty();this.contentEl.scrollTop=0;
+   this.contentEl.createEl('p',{text:'Публичная страница сохранена. Откройте её по ссылке:'});
+   this.contentEl.createEl('a',{text:result.url,href:result.url,attr:{target:'_blank',rel:'noopener noreferrer'}});
+   const done=new Setting(this.contentEl);done.addButton(c=>c.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(result.url).catch(()=>new Notice(result.url))));
+   done.addButton(c=>c.setButtonText('Закрыть').setCta().onClick(()=>this.close()));
    new Notice('Публичная страница сохранена');
-  }catch(e){b.setDisabled(version!==this.previewVersion);new Notice((e as Error).message);}});});
+  }catch(e){b.setButtonText(this.old?'Обновить публикацию':'Опубликовать').setDisabled(version!==this.previewVersion);new Notice((e as Error).message);}});});
  }
  onClose(){this.previewVersion++;this.contentEl.empty();}
 }
