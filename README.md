@@ -8,12 +8,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.15](https://github.com/dnsankin/arcalink/releases/tag/1.0.15)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.16](https://github.com/dnsankin/arcalink/releases/tag/1.0.16)**. После обновления перезапустите Obsidian.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.16](https://github.com/dnsankin/arcalink/releases/tag/1.0.16) | 24.10.2026 | Раздел «Публикации» в настройках со сводкой страниц и отзывом. Вложения копируются частями; вместо предела 32 МиБ действует квота хранилища. Уникальные публичные копии и незавершённые загрузки учитываются в общей квоте. Крупные вложения по ссылке отдаются без постоянной копии. |
 | [1.0.15](https://github.com/dnsankin/arcalink/releases/tag/1.0.15) | 24.10.2026 | Публикация выбранной заметки как общедоступной страницы с предпросмотром, ручным обновлением и отзывом. Фото увеличиваются и скачиваются, видео воспроизводится. Для незашифрованных вложений — выбор исходников или отдельной копии; для зашифрованных — открытая копия. Публичные оригиналы дедуплицируются. |
 | [1.0.14](https://github.com/dnsankin/arcalink/releases/tag/1.0.14) | 19.10.2026 | На смартфоне над заметкой появился статус подключения и синхронизации. Нажатие открывает подробности и настройки. Для Free отдельно показано ожидание второго устройства. Поддерживаются русский и английский; механизм синхронизации не менялся. |
 | [1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13) | 19.10.2026 | Восстановлены запуск и доступ к настройкам у существующих хранилищ. Выбор папок представлен деревом с поиском: зелёная галочка включает обмен на устройстве, красная — облачную копию и обмен на всех устройствах. Снятие галочки исключает папку; облачное изменение требует подтверждения. Сохранённые настройки и независимые локальные исключения сохраняются. |
@@ -81,7 +82,7 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 Для зашифрованного хранилища выбранные вложения сохраняются отдельной открытой копией. Для незашифрованного можно выбрать копию или чтение исходных серверных файлов без дублирования. Изменение/удаление исходника или очистка облачного хранилища может сделать вложение недоступным до обновления публикации. Одинаковые публичные оригиналы аккаунта хранятся один раз. Другие заметки не публикуются автоматически; шифрование исходного vault не меняется.
 
-Лимиты первой версии: 32 МиБ вложений и 100 файлов на страницу, 100 страниц и 300 МиБ публичных оригиналов на аккаунт. Поддержка видео зависит от кодека браузера. Отзыв не удаляет уже скачанные посетителями файлы.
+Размер ограничен квотой хранилища. Уникальные публичные копии и резервы загрузок занимают общую квоту; одинаковые копии учитываются один раз. До 100 вложений на страницу и 100 страниц на аккаунт. Крупный файл читается клиентом целиком по одному; доступная память устройства может ограничить его обработку. Локальное превью вложений больше 2 МиБ отключено. Поддержка видео зависит от кодека браузера. Отзыв не удаляет уже скачанные посетителями файлы.
 
 ### Установка
 
@@ -125,12 +126,13 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.15](https://github.com/dnsankin/arcalink/releases/tag/1.0.15)**. Restart Obsidian after updating.
+Current version: **[1.0.16](https://github.com/dnsankin/arcalink/releases/tag/1.0.16)**. Restart Obsidian after updating.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.16](https://github.com/dnsankin/arcalink/releases/tag/1.0.16) | 2026-10-24 | Publications settings show public pages and revocation controls. Chunked uploads replace the 32 MiB limit with the storage quota. Unique public copies and unfinished uploads count toward the shared quota. Large references stream without a permanent copy. |
 | [1.0.15](https://github.com/dnsankin/arcalink/releases/tag/1.0.15) | 2026-10-24 | Publish a selected note as a public page with preview, manual updates and revocation. Photos enlarge and download; videos play inline. Choose source files or independent copies for unencrypted attachments; encrypted vaults require public copies. Public originals are deduplicated. |
 | [1.0.14](https://github.com/dnsankin/arcalink/releases/tag/1.0.14) | 2026-10-19 | Phones now show connection and sync status above the note. Tap for details and sync settings. Free separately shows when it is waiting for another device. Available in Russian and English; the sync mechanism is unchanged. |
 | [1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13) | 2026-10-19 | Restored startup and settings access for existing vaults. Folder selection is now a searchable tree: green enables sync on this device, red enables the cloud copy and sync on all devices. Clearing a checkbox excludes the folder; cloud changes require confirmation. Saved settings and independent local exclusions are retained. |
@@ -198,7 +200,7 @@ Choose “Publish on the web” from a Markdown note's menu, inspect the preview
 
 Encrypted vaults require separate unencrypted copies of selected attachments. For unencrypted vaults, choose independent copies or read existing server files without duplication. Changing/deleting source files or clearing cloud storage may make attachments unavailable until the publication is updated. Identical public originals are stored once per account. Other notes are not published automatically; source-vault encryption is preserved.
 
-Initial limits: 32 MiB and 100 attachments per page, 100 pages and 300 MiB of public originals per account. Video playback depends on browser codecs. Revocation cannot remove copies already downloaded by visitors.
+Size is bounded by the storage quota. Unique public copies and upload reservations consume the shared quota; duplicate copies count once. Up to 100 attachments per page and 100 pages per account. The client reads one complete file at a time, so device memory may limit processing. Local media previews above 2 MiB are omitted. Video playback depends on browser codecs. Revocation cannot remove copies already downloaded by visitors.
 
 ## Installation
 

@@ -35,7 +35,12 @@ export class NotePublications {
   const saved=await this.plugin.unifiedVault.saved();const free=await this.plugin.freeRelay.session();
   const token=free?.accessToken||saved?.auth?.accessToken;
   const authorization=isFreeRelayConnection(this.plugin.core.services.setting.currentSettings())&&token?'Bearer '+token:auth;
-  const r=await requestUrl({url:BASE+action,method:'POST',headers:{Authorization:authorization,'Content-Type':'application/json'},body:JSON.stringify(body),throw:false});
+  let r:any;
+  for(let attempt=0;attempt<5;attempt++){
+   r=await requestUrl({url:BASE+action,method:'POST',headers:{Authorization:authorization,'Content-Type':'application/json'},body:JSON.stringify(body),throw:false});
+   if(r.status!==429)break;
+   await new Promise(resolve=>setTimeout(resolve,Math.min(5000,750*(attempt+1))));
+  }
   if(r.status!==200)throw Error(responseError(r,'Публикация временно недоступна'));
   return r.json;
  }
@@ -44,6 +49,7 @@ export class NotePublications {
   const workspace=saved?.workspaceId||session.workspaceId;
   if(!workspace)throw Error('Сначала подключите серверное хранилище');
   const source_key=await this.sourceKey(workspace,file.path);
+  const limits=await this.api('limits',{});
   const list=await this.api('list',{}),old=list.publications.find((p:any)=>p.source_key===source_key);
   const markdown=await app.vault.read(file),cache=app.metadataCache.getFileCache(file);
   if(!cache)throw Error('Дождитесь индексации заметки и повторите публикацию');
@@ -57,11 +63,12 @@ export class NotePublications {
    if(!publicationTypes[target.extension.toLowerCase()]){warnings.push(target.path);replacements.push({start:link.position.start.offset,end:link.position.end.offset,original:link.original,html:'[Неподдерживаемое вложение]'});continue;}
    let asset=byPath.get(target.path);
    if(!asset){
-    if(assets.length>=100||target.stat.size>MAX_PUBLICATION_BYTES)throw Error('Лимит публикации: 100 вложений и 32 МиБ суммарно');
+    if(assets.length>=100)throw Error('Лимит публикации: 100 вложений');
+    if(target.stat.size>limits.limit_bytes)throw Error('Вложение превышает квоту хранилища');
     const bytes=new Uint8Array(await app.vault.readBinary(target));
-    asset={key:await publicationHash(new TextEncoder().encode(target.path)),hash:await publicationHash(bytes),filename:target.name,size:bytes.length,source:await this.plugin.core.services.path.path2id(target.path),bytes};
+    asset={key:await publicationHash(new TextEncoder().encode(target.path)),hash:await publicationHash(bytes),filename:target.name,size:bytes.length,source:await this.plugin.core.services.path.path2id(target.path),localPath:target.path,bytes:bytes.length<=2*1024*1024?bytes:undefined};
     assets.push(asset);byPath.set(target.path,asset);
-    if(assets.reduce((sum,a)=>sum+a.size,0)>MAX_PUBLICATION_BYTES)throw Error('Суммарный размер вложений больше 32 МиБ');
+    if(assets.reduce((sum,a)=>sum+a.size,0)>limits.limit_bytes)throw Error('Размер публикации превышает квоту хранилища');
    }
    replacements.push({start:link.position.start.offset,end:link.position.end.offset,original:link.original,html:publicationEmbed(asset,link.embedded,link.displayText||target.name)});
   }
@@ -70,14 +77,63 @@ export class NotePublications {
    const rendered=document.createElement('div');
    await MarkdownRenderer.render(app,replacePublicationLinks(markdown,replacements),rendered,file.path,component);
    // The server sanitizes again; local resource URLs and arbitrary plugin HTML are never trusted.
-   const payload={source_key,workspace,title:old?.title||file.basename,html:rendered.innerHTML,assets:assets.map(({bytes,...a})=>a),indexed:!!old?.indexed,mode:this.plugin.core.services.setting.currentSettings().encrypt?'copy':old?.mode||'reference'};
+   const payload={source_key,workspace,title:old?.title||file.basename,html:rendered.innerHTML,assets:assets.map(({bytes,localPath,...a})=>a),indexed:!!old?.indexed,mode:this.plugin.core.services.setting.currentSettings().encrypt?'copy':old?.mode||'reference'};
    new PublicationModal(this,assets,payload,old,warnings,!!this.plugin.core.services.setting.currentSettings().encrypt).open();
   }finally{component.unload();}
+ }
+ render(el:HTMLElement){
+  new Setting(el).setName('Публикации').setHeading();
+  el.createEl('p',{text:'Общедоступные страницы вашего аккаунта. Изменения заметок публикуются только вручную.'});
+  const summary=el.createEl('p',{text:'Обновите список, чтобы увидеть опубликованные заметки.'});
+  const controls=new Setting(el).setName('Управление публикациями');
+  controls.addButton(b=>b.setButtonText('Опубликовать текущую заметку').onClick(()=>this.open(this.app.workspace.getActiveFile())));
+  let refresh:any,busy=false;
+  controls.addButton(b=>{refresh=b;b.setButtonText('Обновить список').onClick(()=>void load());});
+  const rows=el.createEl('div');
+  const load=async()=>{
+   if(busy)return;busy=true;refresh.setDisabled(true);summary.setText('Загрузка публикаций…');
+   try{
+    const {publications}=await this.api('list',{});rows.empty();summary.setText('Опубликовано заметок: '+publications.length);
+    if(!publications.length)rows.createEl('p',{text:'Опубликованных заметок пока нет'});
+    for(const p of publications){
+     const row=new Setting(rows).setName(p.title).setDesc((p.mode==='copy'?'Независимая копия':'Исходные вложения')+' · '+(p.indexed?'Индексация разрешена':'Без индексации')+' · '+new Date(p.updated*1000).toLocaleString());
+     row.descEl.createEl('br');row.descEl.createEl('a',{text:'Открыть страницу',href:p.url,attr:{target:'_blank',rel:'noopener noreferrer'}});
+     row.addButton(b=>b.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(p.url).catch(()=>new Notice(p.url))));
+     row.addButton(b=>b.setButtonText('Снять с публикации').onClick(()=>this.confirmRemoval(p,()=>void load())));
+    }
+   }catch(e){summary.setText((e as Error).message||'Не удалось загрузить публикации');}
+   finally{busy=false;refresh.setDisabled(false);}
+  };
+  return load;
+ }
+ confirmRemoval(p:any,done:()=>void){
+  const confirm=new Modal(this.app);confirm.titleEl.setText('Снять с публикации?');
+  confirm.contentEl.createEl('p',{text:p.title+' — страница и её вложения станут недоступны по публичным ссылкам.'});
+  new Setting(confirm.contentEl).addButton(c=>c.setButtonText('Снять с публикации').setWarning().onClick(async()=>{
+   c.setDisabled(true);try{await this.api('remove',{id:p.id});confirm.close();done();new Notice('Публикация удалена');}
+   catch(e){c.setDisabled(false);new Notice((e as Error).message);}
+  }));confirm.open();
+ }
+ async upload(asset:any,workspace:string){
+  const start=await this.api('upload-begin',{workspace,hash:asset.hash,size:asset.size});
+  if(start.complete)return;
+  const file=this.app.vault.getAbstractFileByPath(asset.localPath);
+  if(!(file instanceof TFile))throw Error('Исходное вложение не найдено');
+  // Obsidian exposes readBinary on desktop and mobile; only one file is retained.
+  const bytes=new Uint8Array(await this.app.vault.readBinary(file));
+  if(bytes.length!==asset.size||await publicationHash(bytes)!==asset.hash)throw Error('Вложение изменилось. Откройте публикацию заново.');
+  let offset=start.offset;
+  while(offset<bytes.length){
+   const end=Math.min(offset+1024*1024,bytes.length);
+   const result=await this.api('upload-chunk',{upload:start.upload,offset,data:bytesToBase64(bytes.subarray(offset,end))});
+   if(result.offset!==end)throw Error('Сервер вернул неверное смещение загрузки');offset=end;
+  }
+  await this.api('upload-finish',{upload:start.upload});
  }
  async manage(){
   const list=await this.api('list',{}),modal=new Modal(this.plugin.app);modal.titleEl.setText('Публичные заметки');
   if(!list.publications.length)modal.contentEl.createEl('p',{text:'Опубликованных заметок пока нет'});
-  for(const p of list.publications)new Setting(modal.contentEl).setName(p.title).setDesc(p.url).addButton(b=>b.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(p.url).catch(()=>new Notice(p.url)))).addButton(b=>b.setButtonText('Снять с публикации').onClick(()=>{const confirm=new Modal(this.plugin.app);confirm.titleEl.setText('Снять с публикации?');confirm.contentEl.createEl('p',{text:p.title+' — страница и её вложения станут недоступны по публичным ссылкам.'});new Setting(confirm.contentEl).addButton(c=>c.setButtonText('Снять с публикации').setWarning().onClick(async()=>{c.setDisabled(true);try{await this.api('remove',{id:p.id});confirm.close();modal.close();new Notice('Публикация удалена');}catch(e){c.setDisabled(false);new Notice((e as Error).message);}}));confirm.open();}));
+  for(const p of list.publications)new Setting(modal.contentEl).setName(p.title).setDesc(p.url).addButton(b=>b.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(p.url).catch(()=>new Notice(p.url)))).addButton(b=>b.setButtonText('Снять с публикации').onClick(()=>this.confirmRemoval(p,()=>modal.close())));
   modal.open();
  }
  get app(){return this.plugin.app;}
@@ -97,6 +153,7 @@ class PublicationModal extends Modal {
   this.contentEl.createEl('h3',{text:'Публикуемые вложения'});
   const ul=this.contentEl.createEl('ul');for(const a of this.assets)ul.createEl('li',{text:a.filename+' · '+(a.size/1024/1024).toFixed(2)+' МиБ'});
   if(!this.assets.length)this.contentEl.createEl('p',{text:'Нет вложений'});
+  if(this.assets.some(a=>!a.bytes))this.contentEl.createEl('p',{text:'Крупные вложения перечислены выше; их локальный предпросмотр отключён, чтобы не перегружать память. После публикации они доступны на странице.'});
   if(this.warnings.length)this.contentEl.createEl('p',{text:'Не включены в публикацию: '+this.warnings.join(', ')});
   this.contentEl.createEl('p',{text:'Ссылки на другие заметки не публикуют эти заметки. Внешние iframe и произвольный HTML отключены.'});
   const frame=this.contentEl.createEl('iframe',{cls:'arcalink-publication-preview',attr:{sandbox:'',title:'Предпросмотр публичной заметки'}});
@@ -105,13 +162,13 @@ class PublicationModal extends Modal {
    const result=await this.owner.api('preview',this.payload);
    if(version!==this.previewVersion)return;
    let html=result.html;
-   for(const a of this.assets){const url='data:'+publicationTypes[a.filename.split('.').pop().toLowerCase()]+';base64,'+bytesToBase64(a.bytes);html=html.split('/p/'+result.id+'/assets/'+a.key).join(url);}
+   for(const a of this.assets){if(!a.bytes){html=html.split('/p/'+result.id+'/assets/'+a.key).join('');continue;}const url='data:'+publicationTypes[a.filename.split('.').pop().toLowerCase()]+';base64,'+bytesToBase64(a.bytes);html=html.split('/p/'+result.id+'/assets/'+a.key).join(url);}
    frame.srcdoc='<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; media-src data:; style-src \'unsafe-inline\'"><style>body{font:16px system-ui;line-height:1.65;padding:20px;color:#eee;background:#202027}img,video{max-width:100%}pre{white-space:pre-wrap}</style><h1>'+publicationAttribute(this.payload.title)+'</h1>'+html;
    publish.setDisabled(false);
   }catch(e){new Notice((e as Error).message);}finally{b.setDisabled(false);}}));
   controls.addButton(b=>{publish=b;b.setButtonText(this.old?'Обновить публикацию':'Опубликовать').setCta().setDisabled(true).onClick(async()=>{b.setDisabled(true);const version=this.previewVersion;try{
    const snapshot={...this.payload};let assets=snapshot.assets;
-   if(snapshot.mode==='copy'){const {missing}=await this.owner.api('check',{hashes:assets.map((a:any)=>a.hash)});assets=assets.map((a:any)=>({...a,...(missing.includes(a.hash)?{data:bytesToBase64(this.assets.find(v=>v.key===a.key).bytes)}:{})}));}
+   if(snapshot.mode==='copy'){const {missing}=await this.owner.api('check',{hashes:assets.map((a:any)=>a.hash)});for(const a of this.assets)if(missing.includes(a.hash))await this.owner.upload(a,snapshot.workspace);}
    const result=await this.owner.api('save',{...snapshot,assets});this.old=result;
    const link=new Setting(this.contentEl).setName('Страница опубликована').setDesc(result.url);link.addButton(c=>c.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(result.url).catch(()=>new Notice(result.url))));
    new Notice('Публичная страница сохранена');
