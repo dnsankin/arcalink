@@ -8,13 +8,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.1.0](https://github.com/dnsankin/arcalink/releases/tag/1.1.0)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.15](https://github.com/dnsankin/arcalink/releases/tag/1.0.15)**. После обновления перезапустите Obsidian.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
-| [1.1.0](https://github.com/dnsankin/arcalink/releases/tag/1.1.0) | 24.10.2026 | Публикация выбранной заметки как общедоступной страницы с предпросмотром, ручным обновлением и отзывом. Фото увеличиваются и скачиваются, видео воспроизводится. Для незашифрованных вложений — выбор исходников или отдельной копии; для зашифрованных — открытая копия. Публичные оригиналы дедуплицируются. |
+| [1.0.15](https://github.com/dnsankin/arcalink/releases/tag/1.0.15) | 24.10.2026 | Публикация выбранной заметки как общедоступной страницы с предпросмотром, ручным обновлением и отзывом. Фото увеличиваются и скачиваются, видео воспроизводится. Для незашифрованных вложений — выбор исходников или отдельной копии; для зашифрованных — открытая копия. Публичные оригиналы дедуплицируются. |
 | [1.0.14](https://github.com/dnsankin/arcalink/releases/tag/1.0.14) | 19.10.2026 | На смартфоне над заметкой появился статус подключения и синхронизации. Нажатие открывает подробности и настройки. Для Free отдельно показано ожидание второго устройства. Поддерживаются русский и английский; механизм синхронизации не менялся. |
 | [1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13) | 19.10.2026 | Восстановлены запуск и доступ к настройкам у существующих хранилищ. Выбор папок представлен деревом с поиском: зелёная галочка включает обмен на устройстве, красная — облачную копию и обмен на всех устройствах. Снятие галочки исключает папку; облачное изменение требует подтверждения. Сохранённые настройки и независимые локальные исключения сохраняются. |
 | [1.0.12](https://github.com/dnsankin/arcalink/releases/tag/1.0.12) | 18.10.2026 | В настройках синхронизации добавлен выбор папок: исключить только на этом устройстве или исключить на всех устройствах и удалить облачную копию. Перед удалением показан расчёт и запрашивается подтверждение; локальные файлы сохраняются. Общее правило действует на Free и платных тарифах, сохраняется при смене тарифа и может быть отменено. |
@@ -125,13 +125,13 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.1.0](https://github.com/dnsankin/arcalink/releases/tag/1.1.0)**. Restart Obsidian after updating.
+Current version: **[1.0.15](https://github.com/dnsankin/arcalink/releases/tag/1.0.15)**. Restart Obsidian after updating.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
-| [1.1.0](https://github.com/dnsankin/arcalink/releases/tag/1.1.0) | 2026-10-24 | Publish a selected note as a public page with preview, manual updates and revocation. Photos enlarge and download; videos play inline. Choose source files or independent copies for unencrypted attachments; encrypted vaults require public copies. Public originals are deduplicated. |
+| [1.0.15](https://github.com/dnsankin/arcalink/releases/tag/1.0.15) | 2026-10-24 | Publish a selected note as a public page with preview, manual updates and revocation. Photos enlarge and download; videos play inline. Choose source files or independent copies for unencrypted attachments; encrypted vaults require public copies. Public originals are deduplicated. |
 | [1.0.14](https://github.com/dnsankin/arcalink/releases/tag/1.0.14) | 2026-10-19 | Phones now show connection and sync status above the note. Tap for details and sync settings. Free separately shows when it is waiting for another device. Available in Russian and English; the sync mechanism is unchanged. |
 | [1.0.13](https://github.com/dnsankin/arcalink/releases/tag/1.0.13) | 2026-10-19 | Restored startup and settings access for existing vaults. Folder selection is now a searchable tree: green enables sync on this device, red enables the cloud copy and sync on all devices. Clearing a checkbox excludes the folder; cloud changes require confirmation. Saved settings and independent local exclusions are retained. |
 | [1.0.12](https://github.com/dnsankin/arcalink/releases/tag/1.0.12) | 2026-10-18 | Added folder selection in Sync settings: exclude on this device, or exclude everywhere and remove the cloud copy. Removal requires a preview and confirmation; local files are kept. Workspace-wide rules work on Free and paid plans, survive plan changes, and can be removed. |
