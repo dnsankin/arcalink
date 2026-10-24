@@ -257,6 +257,7 @@ class PilotTab extends PluginSettingTab {
       {id:'sync',label:'Синхронизация',icon:'refresh-cw'},
       {id:'sharing',label:'Совместная работа',icon:'users-round'},
       {id:'telegram',label:'Telegram',icon:'send'},
+      {id:'publications',label:'Публикации',icon:'globe'},
       {id:'desktop',label:'Трей и горячие клавиши',icon:'keyboard'},
       {id:'help',label:'Краткая инструкция',icon:'book-open'},
       {id:'changes',label:'История изменений',icon:'history'}
@@ -264,9 +265,11 @@ class PilotTab extends PluginSettingTab {
     const navigation=el.createDiv({cls:'arcalink-settings-tabs'});
     navigation.setAttribute('role','tablist');navigation.setAttribute('aria-label','Разделы настроек ArcaLink');
     const panels:Record<string,HTMLElement>={},buttons:HTMLButtonElement[]=[];
+    let loadPublications:(()=>Promise<void>)|undefined;
     const select=(id:string)=>{
       this.pilot.pilotSettingsTab=id;
       tabs.forEach((tab,index)=>{const active=tab.id===id;buttons[index].setAttribute('aria-selected',String(active));buttons[index].tabIndex=active?0:-1;panels[tab.id].hidden=!active;});
+      if(id==='publications')void loadPublications?.();
     };
     tabs.forEach((tab,index)=>{
       const button=navigation.createEl('button',{cls:'arcalink-settings-tab',attr:{type:'button',role:'tab',id:'arcalink-tab-'+tab.id,'aria-controls':'arcalink-panel-'+tab.id,'aria-label':tab.label}});
@@ -327,6 +330,8 @@ class PilotTab extends PluginSettingTab {
     this.pilot.folders.render(panels.sharing,button=>tariffGate(button,'collaboration'));
     if(isFreeRelay(settings))new VaultControls(this.pilot).render(panels.vaults);
     this.pilot.desktop.render(panels.desktop);
+    loadPublications=this.pilot.publications.render(panels.publications);
+    if(this.pilot.pilotSettingsTab==='publications')void loadPublications();
     const telegramControls=panels.telegram.createDiv();tariffGate(telegramControls,'cloud');
     this.pilot.telegram.render(telegramControls);
     const telegramSection=panels.telegram.querySelector('details');if(telegramSection)telegramSection.open=true;
