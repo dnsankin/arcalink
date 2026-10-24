@@ -42,8 +42,8 @@ async function componentFixture({encrypted=false}={}){
  const compiled=require('esbuild').buildSync({entryPoints:[fileURLToPath(new URL('../plugin/publication.ts',import.meta.url))],bundle:true,format:'cjs',platform:'node',write:false,external:['obsidian']}).outputFiles[0].text;
  const settings=[],modals=[],calls=[],writes=new Map(),rendered=[];
  class Setting {
-  constructor(parent){this.parent=parent;this.buttons=[];settings.push(this);}
-  setName(value){this.name=value;return this;}setDesc(value){this.desc=value;return this;}
+  constructor(parent){this.parent=parent;this.buttons=[];this.descEl=new Element();settings.push(this);}
+  setHeading(){return this;}setName(value){this.name=value;return this;}setDesc(value){this.desc=value;return this;}
   addButton(cb){const c=new Control();this.buttons.push(c);cb(c);return this;}
   addText(cb){this.text=new Control();cb(this.text);return this;}
   addDropdown(cb){this.dropdown=new Control();cb(this.dropdown);return this;}
@@ -58,7 +58,7 @@ async function componentFixture({encrypted=false}={}){
  const module={exports:{}};
  vm.runInNewContext(compiled,{module,exports:module.exports,require:()=>({Modal,Setting,TFile,getLinkpath:s=>s.split('#')[0],Notice:class{},Component:class{load(){}unload(){}},MarkdownRenderer:{render:async(app,md,el)=>{rendered.push(md);el.innerHTML=md;}},requestUrl:()=>{throw Error('Real transport forbidden');}}),crypto:webcrypto,TextEncoder,Uint8Array,document:{createElement:()=>new Element()},URL:{createObjectURL:()=> 'blob:fake',revokeObjectURL:()=>{}},Blob:class{},navigator:{clipboard:{writeText:async()=>{}}},btoa:s=>Buffer.from(s,'binary').toString('base64')});
  const publications=new module.exports.NotePublications(plugin);
- publications.api=async(action,body)=>{calls.push({action,body});if(action==='list')return {publications:[]};if(action==='preview')return {id:'2'.repeat(32),html:body.html};if(action==='check')return {missing:[]};if(action==='save')return {id:'2'.repeat(32),url:'https://arcalink.ru/p/example'};return {};};
+ publications.api=async(action,body)=>{calls.push({action,body});if(action==='limits')return {limit_bytes:1024*1024*1024};if(action==='list')return {publications:[]};if(action==='preview')return {id:'2'.repeat(32),html:body.html};if(action==='check')return {missing:[]};if(action==='save')return {id:'2'.repeat(32),url:'https://arcalink.ru/p/example'};return {};};
  return {publications,settings,modals,calls,writes,rendered,note,events,commands};
 }
 
@@ -100,4 +100,22 @@ test('corrupt publication index is preserved and reported instead of silently re
  const f=await componentFixture();f.writes.set('config/plugin/publication-index.json','{broken');
  await assert.rejects(f.publications.sourceKey('1'.repeat(32),'note.md'));
  assert.equal(f.writes.get('config/plugin/publication-index.json'),'{broken');
+});
+
+test('settings summary loads on selection, shows storage/index state, and refreshes after confirmed revocation',async()=>{
+ const f=await componentFixture(),root=new Element();let entries=[{id:'1'.repeat(32),title:'Published note',url:'https://arcalink.ru/p/'+('1'.repeat(32)),mode:'copy',indexed:false,updated:1700000000}];
+ f.publications.api=async(action,body)=>{f.calls.push({action,body});if(action==='list')return {publications:entries};if(action==='remove'){entries=[];return {removed:true};}throw Error('Unexpected action');};
+ const load=f.publications.render(root);assert.equal(f.calls.length,0,'Hidden settings must not fetch publication lists');await load();
+ assert.ok(root.children.some(c=>c.text==='Опубликовано заметок: 1'));
+ const row=f.settings.find(s=>s.name==='Published note');assert.match(row.desc,/Независимая копия.*Без индексации/);
+ row.buttons.find(b=>b.text==='Снять с публикации').click();assert.equal(f.calls.filter(c=>c.action==='remove').length,0,'Revocation requires explicit confirmation');
+ const confirm=f.modals.at(-1),button=f.settings.find(s=>s.parent===confirm.contentEl).buttons[0];await button.click();await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(root.children.some(c=>c.text==='Опубликовано заметок: 0'));assert.equal(f.calls.filter(c=>c.action==='remove').length,1);
+ f.publications.init();assert.ok(f.commands.some(c=>c.id==='publish-note'));assert.ok(f.commands.some(c=>c.id==='manage-publications'));
+});
+test('settings summary reports failed loading and supports retry without claiming an empty account',async()=>{
+ const f=await componentFixture(),root=new Element();let failed=true;
+ f.publications.api=async()=>{if(failed)throw Error('Offline');return {publications:[]};};
+ const load=f.publications.render(root);await load();assert.ok(root.children.some(c=>c.text==='Offline'));
+ failed=false;await load();assert.ok(root.children.some(c=>c.text==='Опубликовано заметок: 0'));
 });
