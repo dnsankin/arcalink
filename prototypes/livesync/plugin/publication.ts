@@ -63,7 +63,6 @@ export class NotePublications {
    if(!publicationTypes[target.extension.toLowerCase()]){warnings.push(target.path);replacements.push({start:link.position.start.offset,end:link.position.end.offset,original:link.original,html:'[Неподдерживаемое вложение]'});continue;}
    let asset=byPath.get(target.path);
    if(!asset){
-    if(assets.length>=100)throw Error('Лимит публикации: 100 вложений');
     if(target.stat.size>limits.limit_bytes)throw Error('Вложение превышает квоту хранилища');
     const bytes=new Uint8Array(await app.vault.readBinary(target));
     asset={key:await publicationHash(new TextEncoder().encode(target.path)),hash:await publicationHash(bytes),filename:target.name,size:bytes.length,source:await this.plugin.core.services.path.path2id(target.path),localPath:target.path,bytes:bytes.length<=2*1024*1024?bytes:undefined};
