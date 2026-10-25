@@ -53,13 +53,13 @@ async function componentFixture({encrypted=false}={}){
  class TFile {constructor(path){this.path=path;this.name=path.split('/').pop();this.extension=path.split('.').pop();this.basename=this.name.slice(0,-this.extension.length-1);this.stat={size:3};}}
  const note=new TFile('note.md'),photo=new TFile('photo.png');
  const markdown='![[photo.png]] ![[secret.md]]',events={},commands=[];
- const app={vault:{on:(event,fn)=>{events[event]=fn;},read:async()=>markdown,readBinary:async()=>new Uint8Array([1,2,3]).buffer,adapter:{exists:async path=>writes.has(path),read:async path=>{if(!writes.has(path))throw Error();return writes.get(path);},write:async(path,value)=>writes.set(path,value)}},workspace:{on:()=>{},getActiveFile:()=>note},metadataCache:{getFirstLinkpathDest:path=>path==='photo.png'?photo:new TFile('secret.md'),getFileCache:()=>({embeds:[{link:'photo.png',original:'![[photo.png]]',position:{start:{offset:0},end:{offset:14}}},{link:'secret.md',original:'![[secret.md]]',position:{start:{offset:15},end:{offset:29}}}]})}};
+ const app={vault:{on:(event,fn)=>{events[event]=fn;},getAbstractFileByPath:path=>path===note.path?note:null,read:async()=>markdown,readBinary:async()=>new Uint8Array([1,2,3]).buffer,adapter:{exists:async path=>writes.has(path),read:async path=>{if(!writes.has(path))throw Error();return writes.get(path);},write:async(path,value)=>writes.set(path,value)}},workspace:{on:()=>{},getActiveFile:()=>note},metadataCache:{getFirstLinkpathDest:path=>path==='photo.png'?photo:new TFile('secret.md'),getFileCache:()=>({embeds:[{link:'photo.png',original:'![[photo.png]]',position:{start:{offset:0},end:{offset:14}}},{link:'secret.md',original:'![[secret.md]]',position:{start:{offset:15},end:{offset:29}}}]})}};
  const plugin={app,pilotDirectory:'config/plugin',addCommand:c=>commands.push(c),registerEvent:()=>{},workspaces:{auth:()=> 'Basic fake',session:async()=>({workspaceId:'1'.repeat(32)})},unifiedVault:{saved:async()=>({workspaceId:'1'.repeat(32)})},freeRelay:{session:async()=>null},core:{services:{setting:{currentSettings:()=>({encrypt:encrypted})},path:{path2id:async path=>path}}}};
  const module={exports:{}};
  vm.runInNewContext(compiled,{module,exports:module.exports,require:()=>({Modal,Setting,TFile,getLinkpath:s=>s.split('#')[0],Notice:class{},Component:class{load(){}unload(){}},MarkdownRenderer:{render:async(app,md,el)=>{rendered.push(md);el.innerHTML=md;}},requestUrl:()=>{throw Error('Real transport forbidden');}}),crypto:webcrypto,TextEncoder,Uint8Array,document:{createElement:()=>new Element()},URL:{createObjectURL:()=> 'blob:fake',revokeObjectURL:()=>{}},Blob:class{},navigator:{clipboard:{writeText:async()=>{}}},btoa:s=>Buffer.from(s,'binary').toString('base64')});
  const publications=new module.exports.NotePublications(plugin);
  publications.api=async(action,body)=>{calls.push({action,body});if(action==='limits')return {limit_bytes:1024*1024*1024};if(action==='list')return {publications:[]};if(action==='preview')return {id:'2'.repeat(32),html:body.html};if(action==='check')return {missing:[]};if(action==='save')return {id:'2'.repeat(32),url:'https://arcalink.ru/p/example'};return {};};
- return {publications,settings,modals,calls,writes,rendered,note,events,commands,app,TFile};
+ return {publications,settings,modals,calls,writes,rendered,note,events,commands,app,TFile,plugin};
 }
 
 test('publication UI requires preview, excludes embedded notes, and offers storage choice',async()=>{
@@ -154,4 +154,27 @@ test('publishing status is visible while save is pending and failure allows retr
  reject(Error('Synthetic failure'));await pending;
  assert.equal(publish.text,'Опубликовать');assert.equal(publish.disabled,false);
  assert.equal(f.modals[0].contentEl.children.some(c=>c.tag==='iframe'),true);
+});
+
+test('settings update opens matching source, preserves ID and requires preview before save',async()=>{
+ const f=await componentFixture(),workspace='1'.repeat(32),key=await f.publications.sourceKey(workspace,f.note.path);
+ const p={id:'3'.repeat(32),workspace,source_key:key,title:'Published',url:'https://arcalink.ru/p/id',mode:'reference',updated:1};
+ const api=f.publications.api;f.publications.api=async(action,body)=>action==='list'?{publications:[p]}:api(action,body);
+ const root=new Element();await f.publications.render(root)();
+ const update=f.settings.find(s=>s.name==='Published').buttons.find(b=>b.text==='Обновить публикацию');assert.ok(update);await update.click();
+ assert.equal(f.modals.at(-1).titleEl.text,'Обновить публичную заметку');
+ const buttons=f.settings.flatMap(s=>s.buttons),save=buttons.find(b=>b.text==='Обновить публикацию'&&b!==update);
+ assert.equal(save.disabled,true);assert.equal(f.calls.some(c=>c.action==='save'),false);
+ await buttons.find(b=>b.text==='Предпросмотр').click();await save.click();
+ assert.equal(f.calls.find(c=>c.action==='save').body.source_key,key);
+});
+
+test('updating cannot substitute active note when source is missing or workspace differs',async()=>{
+ const f=await componentFixture(),workspace='1'.repeat(32),p={workspace,source_key:'9'.repeat(64)};
+ await assert.rejects(f.publications.update(p),/Исходная заметка не найдена/);
+ const key=await f.publications.sourceKey(workspace,f.note.path);p.source_key=key;
+ await f.publications.renamed({path:'renamed.md'},f.note.path);
+ f.app.vault.getAbstractFileByPath=path=>path==='renamed.md'?new f.TFile(path):null;
+ let prepared;f.publications.prepare=async file=>{prepared=file.path;};await f.publications.update(p);assert.equal(prepared,'renamed.md');
+ await assert.rejects(f.publications.update({...p,workspace:'2'.repeat(32)}),/Переключитесь/);
 });
