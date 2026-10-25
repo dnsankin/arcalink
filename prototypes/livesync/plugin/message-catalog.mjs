@@ -1,6 +1,21 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+["Shared folders: ${p0}", "Общих папок: ${p0}"],
+["Make viewer", "Сделать читателем"],
+["Make editor", "Сделать редактором"],
+["Revoke participant access", "Отозвать доступ участника"],
+["Active invitations", "Активные приглашения"],
+["No active invitations.", "Нет активных приглашений."],
+["A new code replaces the previous code for this role. Existing participants keep their access.", "Новый код заменит прежний код этой роли. Участники сохранят свой доступ."],
+["Revoke invitation", "Отозвать приглашение"],
+
+["Folders with shared access", "Папки с общим доступом"],
+["Loading shared folders…", "Загрузка общих папок…"],
+["No shared folders are connected in this workspace.", "В этом хранилище нет подключённых общих папок."],
+["Your permissions are shown. The folder owner can see the participant list.", "Показаны ваши права. Список участников доступен владельцу папки."],
+["Could not load folder access. Check your sign-in and try again.", "Не удалось загрузить доступ к папкам. Проверьте вход в аккаунт и повторите запрос."],
+
 ["Attention needed", "Требуется внимание"],
 ["Connect a vault", "Подключите хранилище"],
 ["Sign in and select a vault in ArcaLink settings.", "Войдите в аккаунт и выберите хранилище в настройках ArcaLink."],
@@ -214,7 +229,7 @@ export default Object.fromEntries([
 ["On your second device, sign in to the same account and connect the same server workspace. Wait for the merge and download to finish.", "На втором устройстве войдите в тот же аккаунт и подключите то же серверное хранилище. Дождитесь завершения слияния и загрузки заметок."],
 ["On the Sync tab, enable automatic sync. If needed, enable Sync plugins on every device; activate new plugins manually and restart Obsidian after their files are updated.", "На вкладке «Синхронизация» включите автоматическую синхронизацию. При необходимости включите «Синхронизировать плагины» на каждом устройстве; новые плагины активируйте вручную, после обновления их файлов перезапустите Obsidian."],
 ["The indicator at the bottom shows sync status. Hover to read messages or click to open settings. The detailed log is available under Sync → Show log.", "Лампочка внизу показывает состояние синхронизации. Наведите мышь, чтобы прочитать сообщения; нажмите, чтобы открыть настройки. Подробный журнал доступен через «Синхронизация» → «Показать лог»."],
-["Encryption, available storage, and server workspace management are on the Workspaces tab. Shared notes and folders are under Collaboration, and the bot is under Telegram. Install updates through the Obsidian plugin catalogue.", "Режим шифрования, свободное место и управление серверными хранилищами находятся во «Хранилищах». Совместные заметки и общие папки — в «Совместной работе», бот — в «Telegram». Обновления устанавливаются через каталог плагинов Obsidian."],
+["Encryption, available storage, and server workspace management are on the Workspaces tab. Shared folders and access management are under Collaboration, and the bot is under Telegram. Install updates through the Obsidian plugin catalogue.", "Режим шифрования, свободное место и управление серверными хранилищами находятся во «Хранилищах». Общие папки и управление доступом — в «Совместной работе», бот — в «Telegram». Обновления устанавливаются через каталог плагинов Obsidian."],
 ['Interface language', 'Язык интерфейса'],
 ['Choose the language for ArcaLink settings and notifications.', 'Выберите язык настроек и уведомлений ArcaLink.'],
 ['Same as Obsidian', 'Как в Obsidian'],

@@ -461,14 +461,90 @@ export class SharedFolders {
             }
             e.files.get(id)?.set('path', relative);
         } await this.project(e); }
-    render(el: HTMLElement, gate:(control:HTMLElement)=>void=()=>{}) { new Setting(el).setName('Общие папки').setDesc('Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Пилот: до 100 файлов, 1 МБ на файл, 4 МБ на папку.').addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => this.plugin.collaboration.prompt('Поделиться папкой', 'Путь существующей папки (сервер будет видеть её содержимое)', async (path: string) => this.create(path))); gate(b.buttonEl); }).addButton(b => b.setButtonText('Присоединиться').onClick(() => this.plugin.collaboration.prompt('Общая папка', 'Код приглашения', async (code: string) => { const r = await this.plugin.collaboration.api('join', { code }); if (r.kind !== 'folder')
-        throw Error('Это приглашение в заметку'); this.mountDialog(r); }))); for (const r of this.records) {
-        const row = new Setting(el).setName(r.mount).setDesc(r.role === 'owner' ? 'Вы владелец' : r.role === 'viewer' ? 'Только чтение' : 'Редактирование разрешено');
-        row.nameEl.setAttribute('data-arcalink-user-content','');
-        if (r.role === 'owner')
-            row.addButton(b => { b.setButtonText('Пригласить редактора').onClick(() => void this.invite(r, 'editor'));gate(b.buttonEl); }).addButton(b => { b.setButtonText('Пригласить читателя').onClick(() => void this.invite(r, 'viewer'));gate(b.buttonEl); }).addButton(b => b.setButtonText('Отозвать доступ').onClick(() => this.plugin.collaboration.prompt('Отозвать доступ ко всей папке', 'Введите ОТОЗВАТЬ', async (value: string) => { if (value !== 'ОТОЗВАТЬ')
-                throw Error('Отзыв отменён'); await this.plugin.collaboration.api('revoke', { id: r.id }); new Notice('Доступ участников и приглашения отозваны. Их локальные копии остаются у них.'); })));
-    } }
+    render(el: HTMLElement, gate:(control:HTMLElement)=>void=()=>{}) {
+        new Setting(el).setName('Общие папки').setDesc('Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Пилот: до 100 файлов, 1 МБ на файл, 4 МБ на папку.')
+            .addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => this.plugin.collaboration.prompt('Поделиться папкой', 'Путь существующей папки (сервер будет видеть её содержимое)', async (path: string) => this.create(path))); gate(b.buttonEl); })
+            .addButton(b => b.setButtonText('Присоединиться').onClick(() => this.plugin.collaboration.prompt('Общая папка', 'Код приглашения', async (code: string) => {
+                const r = await this.plugin.collaboration.api('join', { code });
+                if (r.kind !== 'folder') throw Error('Это приглашение в заметку');
+                this.mountDialog(r);
+            })));
+        const actions = new Setting(el).setName('Папки с общим доступом');
+        const list = el.createDiv({cls:'arcalink-folder-access'});
+        let loading = false;
+        const load = async () => {
+            if (loading) return;
+            loading = true;
+            refresh.setDisabled(true);
+            list.empty();
+            list.createEl('p', {text:'Загрузка общих папок…'});
+            const scope = this.refreshScope();
+            try {
+                const result = await this.plugin.collaboration.api('folder-access', {});
+                if (this.disposed || !this.sameRefreshScope(scope)) { list.empty(); return; }
+                list.empty();
+                if (!Array.isArray(result.folders)) throw Error('Invalid folder access response');
+                if (!result.folders.length) list.createEl('p', {text:'В этом хранилище нет подключённых общих папок.'});
+                new Setting(list).setName('Общих папок: ' + result.folders.length);
+                for (const r of result.folders) {
+                    const roleLabel = (role: string) => role === 'owner' ? 'Владелец' : role === 'editor' ? 'Редактор' : 'Только чтение';
+                    const card = list.createDiv({cls:'arcalink-folder-access-card'});
+                    const row = new Setting(card).setName(r.mount).setDesc(roleLabel(r.role));
+                    row.nameEl.setAttribute('data-arcalink-user-content','');
+                    const members = card.createDiv();
+                    for (const member of r.members || []) {
+                        if (r.role === 'owner' && member.role !== 'owner') {
+                            const participant = new Setting(members).setName(member.email || member.account_id).setDesc(roleLabel(member.role));
+                            participant.nameEl.setAttribute('data-arcalink-user-content','');
+                            participant.addButton(b => b.setButtonText(member.role === 'editor' ? 'Сделать читателем' : 'Сделать редактором').onClick(async () => {
+                                b.setDisabled(true);
+                                try { await this.plugin.collaboration.api('member-access', {id:r.id,account_id:member.account_id,role:member.role === 'editor' ? 'viewer' : 'editor'}); await load(); }
+                                catch (e:any) { new Notice(e.message); } finally { b.setDisabled(false); }
+                            })).addButton(b => b.setButtonText('Отозвать доступ участника').onClick(() => this.plugin.collaboration.prompt('Отозвать доступ участника', 'Введите ОТОЗВАТЬ', async (value:string) => {
+                                if (value !== 'ОТОЗВАТЬ') throw Error('Отзыв отменён');
+                                await this.plugin.collaboration.api('member-access', {id:r.id,account_id:member.account_id,role:'remove'});
+                                await load();
+                            })));
+                        } else {
+                            const line = members.createDiv();
+                            line.createSpan({text:member.email || member.account_id,attr:{'data-arcalink-user-content':''}});
+                            line.createSpan({text:' · ' + roleLabel(member.role)});
+                        }
+
+                    }
+                    if (r.role === 'owner') {
+                        const invitations = members.createDiv();
+                        invitations.createEl('p', {text:'Активные приглашения'});
+                        if (!(r.invitations || []).length) invitations.createEl('p', {text:'Нет активных приглашений.'});
+                        for (const invitation of r.invitations || []) {
+                            new Setting(invitations).setName(roleLabel(invitation.role)).setDesc('Новый код заменит прежний код этой роли. Участники сохранят свой доступ.')
+                                .addButton(b => b.setButtonText('Отозвать приглашение').onClick(async () => {
+                                    b.setDisabled(true);
+                                    try { await this.plugin.collaboration.api('revoke-invitation', {id:r.id,invitation_id:invitation.id}); await load(); }
+                                    catch (e:any) { new Notice(e.message); } finally { b.setDisabled(false); }
+                                }));
+                        }
+                    }
+                    if (r.role !== 'owner') members.createEl('p', {text:'Показаны ваши права. Список участников доступен владельцу папки.'});
+                    if (r.role === 'owner') row
+                        .addButton(b => { b.setButtonText('Пригласить редактора').onClick(async () => { await this.invite(r, 'editor'); await load(); }); gate(b.buttonEl); })
+                        .addButton(b => { b.setButtonText('Пригласить читателя').onClick(async () => { await this.invite(r, 'viewer'); await load(); }); gate(b.buttonEl); })
+                        .addButton(b => b.setButtonText('Отозвать доступ').onClick(() => this.plugin.collaboration.prompt('Отозвать доступ ко всей папке', 'Введите ОТОЗВАТЬ', async (value: string) => {
+                            if (value !== 'ОТОЗВАТЬ') throw Error('Отзыв отменён');
+                            await this.plugin.collaboration.api('revoke', { id:r.id });
+                            new Notice('Доступ участников и приглашения отозваны. Их локальные копии остаются у них.');
+                            await load();
+                        })));
+                }
+            } catch {
+                list.empty();
+                list.createEl('p', {text:'Не удалось загрузить доступ к папкам. Проверьте вход в аккаунт и повторите запрос.'});
+            } finally { loading = false; refresh.setDisabled(false); }
+        };
+        let refresh: any;
+        actions.addButton(b => { refresh = b; b.setButtonText('Обновить список').onClick(() => void load()); });
+        void load();
+    }
     async invite(r: any, role: string) { try {
         const code = await this.plugin.collaboration.invite(r.id, role);
         const m = new Modal(this.app);
