@@ -7,6 +7,7 @@ import { auditBundle } from './licenses.mjs';
 import { patchReplicationBusy } from './patch-replication.mjs';
 import { patchContentRetryProcessor, patchContentRetryLifecycle, patchContentRetryFixture } from './patch-content-retry.mjs';
 import { patchCommunityOnboarding } from './patch-community-onboarding.mjs';
+import { patchConfigDoctor } from './patch-config-doctor.mjs';
 import { patchSettingsRegistration } from './patch-settings-registration.mjs';
 import { patchTicketRelayLifecycle, patchFreeChunkRetries, patchTicketedPeerCleanup, patchTicketedRtcRelease, patchTicketedFreshJoin } from './patch-free-relay.mjs';
 
@@ -189,6 +190,8 @@ await writeFile(preflightPath,preflight.replace(seedHandler,'    let pilotSeedFa
             const report = (context.services.API as any).pilotReportParameterFailure;
             if (report) report(explanation, showMessage);
             errorManager.showError(explanation, report ? LOG_LEVEL_INFO : showMessage ? LOG_LEVEL_NOTICE : LOG_LEVEL_INFO);`).replace(seedCleared,seedCleared+'\n        if (pilotSeedFailure) errorManager.clearError(pilotSeedFailure);\n        pilotSeedFailure = undefined;'));
+const doctorPath=path.join(source,'src/serviceFeatures/startupLifecycle/configDoctor.ts');
+await writeFile(doctorPath,patchConfigDoctor(await readFile(doctorPath,'utf8')));
 const env = { ...process.env, PATHS_TEST_INSTALL: '' };
 // Retain cloud metadata after a failed content read, using the existing
 // processor and its revision/deletion checks for every delayed attempt.
