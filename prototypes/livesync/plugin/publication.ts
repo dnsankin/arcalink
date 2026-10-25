@@ -29,6 +29,21 @@ export class NotePublications {
   }));
  }
  open(file:TFile|null){if(!file||file.extension!=='md'){new Notice('Выберите Markdown-заметку');return;}void this.prepare(file).catch(e=>new Notice(e.message));}
+ async update(p:any){
+  const saved=await this.plugin.unifiedVault.saved(),session=await this.plugin.workspaces.session();
+  if((saved?.workspaceId||session.workspaceId)!==p.workspace)throw Error('Переключитесь на хранилище исходной заметки, чтобы обновить публикацию');
+  await this.indexQueue.catch(()=>{});
+  const index=await this.index(),prefix=p.workspace+':';
+  const entry=Object.entries(index).find(([path,key])=>path.startsWith(prefix)&&key===p.source_key);
+  const file=entry?this.app.vault.getAbstractFileByPath(entry[0].slice(prefix.length)):null;
+  if(!(file instanceof TFile)||file.extension!=='md')throw Error('Исходная заметка не найдена на этом устройстве. Обновите публикацию на устройстве, с которого она была создана.');
+  await this.prepare(file);
+ }
+ updateButton(row:Setting,p:any){
+  row.addButton(b=>b.setButtonText('Обновить публикацию').onClick(async()=>{
+   b.setDisabled(true);try{await this.update(p);}catch(e){new Notice((e as Error).message);}finally{b.setDisabled(false);}
+  }));
+ }
  async api(action:string,body:any){
   // Reuse the normal account identity without changing transport settings or refreshing sync sessions.
   const auth=this.plugin.workspaces.auth();
@@ -97,6 +112,7 @@ export class NotePublications {
     for(const p of publications){
      const row=new Setting(rows).setName(p.title).setDesc((p.mode==='copy'?'Независимая копия':'Исходные вложения')+' · '+(p.indexed?'Индексация разрешена':'Без индексации')+' · '+new Date(p.updated*1000).toLocaleString());
      row.descEl.createEl('br');row.descEl.createEl('a',{text:'Открыть страницу',href:p.url,attr:{target:'_blank',rel:'noopener noreferrer'}});
+     this.updateButton(row,p);
      row.addButton(b=>b.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(p.url).catch(()=>new Notice(p.url))));
      row.addButton(b=>b.setButtonText('Снять с публикации').onClick(()=>this.confirmRemoval(p,()=>void load())));
     }
@@ -132,7 +148,7 @@ export class NotePublications {
  async manage(){
   const list=await this.api('list',{}),modal=new Modal(this.plugin.app);modal.titleEl.setText('Публичные заметки');
   if(!list.publications.length)modal.contentEl.createEl('p',{text:'Опубликованных заметок пока нет'});
-  for(const p of list.publications)new Setting(modal.contentEl).setName(p.title).setDesc(p.url).addButton(b=>b.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(p.url).catch(()=>new Notice(p.url)))).addButton(b=>b.setButtonText('Снять с публикации').onClick(()=>this.confirmRemoval(p,()=>modal.close())));
+  for(const p of list.publications){const row=new Setting(modal.contentEl).setName(p.title).setDesc(p.url);this.updateButton(row,p);row.addButton(b=>b.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(p.url).catch(()=>new Notice(p.url)))).addButton(b=>b.setButtonText('Снять с публикации').onClick(()=>this.confirmRemoval(p,()=>modal.close())));}
   modal.open();
  }
  get app(){return this.plugin.app;}
