@@ -8,12 +8,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.20](https://github.com/dnsankin/arcalink/releases/tag/1.0.20)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.21](https://github.com/dnsankin/arcalink/releases/tag/1.0.21)**. После обновления перезапустите Obsidian.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.21](https://github.com/dnsankin/arcalink/releases/tag/1.0.21) | 26.10.2026 | Управление общими папками в настройках: участники и права, смена роли, отзыв доступа участника и приглашений. Блок совместных заметок убран со страницы настроек. |
 | [1.0.20](https://github.com/dnsankin/arcalink/releases/tag/1.0.20) | 25.10.2026 | Значок публикаций светится зелёным, если есть активная страница. Подсветка снимается после отзыва последней публикации. |
 | [1.0.19](https://github.com/dnsankin/arcalink/releases/tag/1.0.19) | 25.10.2026 | Кнопка «Обновить публикацию» у каждой страницы в настройках и списке публикаций. Открывает исходную заметку для предпросмотра и сохраняет прежнюю ссылку. |
 | [1.0.18](https://github.com/dnsankin/arcalink/releases/tag/1.0.18) | 25.10.2026 | После публикации длинная форма заменяется подтверждением со ссылкой, копированием и кнопкой закрытия. Во время сохранения виден статус «Публикуется…». |
@@ -130,12 +131,13 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.20](https://github.com/dnsankin/arcalink/releases/tag/1.0.20)**. Restart Obsidian after updating.
+Current version: **[1.0.21](https://github.com/dnsankin/arcalink/releases/tag/1.0.21)**. Restart Obsidian after updating.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.21](https://github.com/dnsankin/arcalink/releases/tag/1.0.21) | 2026-10-26 | Manage shared-folder access in settings: participants and roles, role changes, participant removal and invitation revocation. Removed the collaborative-note controls from settings. |
 | [1.0.20](https://github.com/dnsankin/arcalink/releases/tag/1.0.20) | 2026-10-25 | The Publications icon glows green when an active page exists and clears after the last publication is revoked. |
 | [1.0.19](https://github.com/dnsankin/arcalink/releases/tag/1.0.19) | 2026-10-25 | Update publication action on each page in settings and publication management. Opens the original note for preview and preserves its public URL. |
 | [1.0.18](https://github.com/dnsankin/arcalink/releases/tag/1.0.18) | 2026-10-25 | Successful publication replaces the long form with a visible link, copy and close actions. The publish button shows progress while saving. |

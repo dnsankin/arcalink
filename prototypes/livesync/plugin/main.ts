@@ -325,7 +325,6 @@ class PilotTab extends PluginSettingTab {
     new Setting(panels.vaults).setName('Серверные хранилища').setDesc('Выберите серверное хранилище и подтвердите действие кнопкой «Подключить». Создание хранилища не меняет текущее подключение.').addButton(b=>{b.setButtonText('Обновить список').setDisabled(!settings.isConfigured&&!pending).onClick(loadCatalog);tariffGate(b.buttonEl,'cloud');}).settingEl.setAttribute('data-arcalink-capability','cloud');
     panels.vaults.append(catalog);tariffGate(catalog,'cloud');loadCatalog();
     panels.account.createEl('a',{text:'Регистрация и скачивание',href:BASE+'/register'});
-    new Setting(panels.sharing).setName('Совместные заметки').setDesc('Редактируйте заметки вместе. Сервер видит их текст. Пригласить редактора или читателя можно через палитру команд. Всем участникам нужна актуальная версия плагина.').addButton(b=>{b.setButtonText('Создать заметку').onClick(()=>this.pilot.collaboration.prompt('Совместная заметка','Название',async title=>this.pilot.collaboration.create(title)));tariffGate(b.buttonEl,'collaboration');}).addButton(b=>b.setButtonText('Присоединиться').onClick(()=>this.pilot.collaboration.prompt('Присоединиться','Код приглашения',async code=>this.pilot.collaboration.join(code))));
     this.pilot.workspaces.renderRecovery(panels.vaults);
     this.pilot.folders.render(panels.sharing,button=>tariffGate(button,'collaboration'));
     if(isFreeRelay(settings))new VaultControls(this.pilot).render(panels.vaults);
@@ -395,7 +394,7 @@ class PilotTab extends PluginSettingTab {
       'На втором устройстве войдите в тот же аккаунт и подключите то же серверное хранилище. Дождитесь завершения слияния и загрузки заметок.',
       'На вкладке «Синхронизация» включите автоматическую синхронизацию. При необходимости включите «Синхронизировать плагины» на каждом устройстве; новые плагины активируйте вручную, после обновления их файлов перезапустите Obsidian.',
       'Лампочка внизу показывает состояние синхронизации. Наведите мышь, чтобы прочитать сообщения; нажмите, чтобы открыть настройки. Подробный журнал доступен через «Синхронизация» → «Показать лог».',
-      'Режим шифрования, свободное место и управление серверными хранилищами находятся во «Хранилищах». Совместные заметки и общие папки — в «Совместной работе», бот — в «Telegram». Обновления устанавливаются через каталог плагинов Obsidian.'
+      'Режим шифрования, свободное место и управление серверными хранилищами находятся во «Хранилищах». Общие папки и управление доступом — в «Совместной работе», бот — в «Telegram». Обновления устанавливаются через каталог плагинов Obsidian.'
     ])steps.createEl('li',{text});
     new Setting(panels.changes).setName('История изменений').setHeading();
     panels.changes.createEl('p',{text:'Установлена версия '+this.pilot.manifest.version+'. Здесь перечислены последние изменения плагина ArcaLink.'});
