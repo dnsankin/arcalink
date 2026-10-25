@@ -6,6 +6,10 @@ import {responseError} from './pilot-http.mjs';
 const BASE='https://arcalink.ru/sync/publish/api/';
 
 export class NotePublications {
+ private activeIds=new Set<string>();
+ get hasActivePublications(){return this.activeIds.size>0;}
+ published(id:string){this.activeIds.add(id);}
+ rememberPublications(pages:any[]){this.activeIds=new Set(pages.map(p=>p.id));}
  private indexQueue:Promise<any>=Promise.resolve();
  constructor(private plugin:any){}
  get indexPath(){return this.plugin.pilotDirectory+'/publication-index.json';}
@@ -107,7 +111,7 @@ export class NotePublications {
   const load=async()=>{
    if(busy)return;busy=true;refresh.setDisabled(true);summary.setText('Загрузка публикаций…');
    try{
-    const {publications}=await this.api('list',{});rows.empty();summary.setText('Опубликовано заметок: '+publications.length);
+    const {publications}=await this.api('list',{});this.rememberPublications(publications);rows.empty();summary.setText('Опубликовано заметок: '+publications.length);
     if(!publications.length)rows.createEl('p',{text:'Опубликованных заметок пока нет'});
     for(const p of publications){
      const row=new Setting(rows).setName(p.title).setDesc((p.mode==='copy'?'Независимая копия':'Исходные вложения')+' · '+(p.indexed?'Индексация разрешена':'Без индексации')+' · '+new Date(p.updated*1000).toLocaleString());
@@ -125,7 +129,7 @@ export class NotePublications {
   const confirm=new Modal(this.app);confirm.titleEl.setText('Снять с публикации?');
   confirm.contentEl.createEl('p',{text:p.title+' — страница и её вложения станут недоступны по публичным ссылкам.'});
   new Setting(confirm.contentEl).addButton(c=>c.setButtonText('Снять с публикации').setWarning().onClick(async()=>{
-   c.setDisabled(true);try{await this.api('remove',{id:p.id});confirm.close();done();new Notice('Публикация удалена');}
+   c.setDisabled(true);try{await this.api('remove',{id:p.id});this.activeIds.delete(p.id);confirm.close();done();new Notice('Публикация удалена');}
    catch(e){c.setDisabled(false);new Notice((e as Error).message);}
   }));confirm.open();
  }
@@ -146,7 +150,7 @@ export class NotePublications {
   await this.api('upload-finish',{upload:start.upload});
  }
  async manage(){
-  const list=await this.api('list',{}),modal=new Modal(this.plugin.app);modal.titleEl.setText('Публичные заметки');
+  const list=await this.api('list',{});this.rememberPublications(list.publications);const modal=new Modal(this.plugin.app);modal.titleEl.setText('Публичные заметки');
   if(!list.publications.length)modal.contentEl.createEl('p',{text:'Опубликованных заметок пока нет'});
   for(const p of list.publications){const row=new Setting(modal.contentEl).setName(p.title).setDesc(p.url);this.updateButton(row,p);row.addButton(b=>b.setButtonText('Скопировать ссылку').onClick(()=>void navigator.clipboard.writeText(p.url).catch(()=>new Notice(p.url)))).addButton(b=>b.setButtonText('Снять с публикации').onClick(()=>this.confirmRemoval(p,()=>modal.close())));}
   modal.open();
@@ -185,6 +189,7 @@ class PublicationModal extends Modal {
    const snapshot={...this.payload};let assets=snapshot.assets;
    if(snapshot.mode==='copy'){const {missing}=await this.owner.api('check',{hashes:assets.map((a:any)=>a.hash)});for(const a of this.assets)if(missing.includes(a.hash))await this.owner.upload(a,snapshot.workspace);}
    const result=await this.owner.api('save',{...snapshot,assets});this.old=result;
+   this.owner.published(result.id);
    this.titleEl.setText('Страница опубликована');this.contentEl.empty();this.contentEl.scrollTop=0;
    this.contentEl.createEl('p',{text:'Публичная страница сохранена. Откройте её по ссылке:'});
    this.contentEl.createEl('a',{text:result.url,href:result.url,attr:{target:'_blank',rel:'noopener noreferrer'}});

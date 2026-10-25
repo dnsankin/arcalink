@@ -297,7 +297,7 @@ class PilotTab extends PluginSettingTab {
     for(const id of ['sharing','telegram'])hints[id]=panels[id].createEl('p',{cls:'arcalink-tariff-hint',text:capabilityHint(id==='sharing'?'collaboration':'cloud')});
     updateSectionStates=()=>{
       const current=this.pilot.core.services.setting.currentSettings();
-      const state=settingsState({settings:current,policy:this.pilot.unifiedVault.state,account:accountStatus,signedIn,telegram:this.pilot.telegram.configured,desktop:this.pilot.desktop.settings,shared:!!(this.pilot.collaboration.records.length||this.pilot.folders.records.length)});
+      const state=settingsState({settings:current,policy:this.pilot.unifiedVault.state,account:accountStatus,signedIn,telegram:this.pilot.telegram.configured,desktop:this.pilot.desktop.settings,shared:!!(this.pilot.collaboration.records.length||this.pilot.folders.records.length),publications:this.pilot.publications.hasActivePublications});
       tabs.forEach((tab,index)=>{
         const value=state.sections[tab.id]||'unconfigured',button=buttons[index];
         if(button.getAttribute('data-state')!==value){
@@ -330,8 +330,9 @@ class PilotTab extends PluginSettingTab {
     this.pilot.folders.render(panels.sharing,button=>tariffGate(button,'collaboration'));
     if(isFreeRelay(settings))new VaultControls(this.pilot).render(panels.vaults);
     this.pilot.desktop.render(panels.desktop);
+    this.pilot.publications.rememberPublications([]);
     loadPublications=this.pilot.publications.render(panels.publications);
-    if(this.pilot.pilotSettingsTab==='publications')void loadPublications();
+    void loadPublications();
     const telegramControls=panels.telegram.createDiv();tariffGate(telegramControls,'cloud');
     this.pilot.telegram.render(telegramControls);
     const telegramSection=panels.telegram.querySelector('details');if(telegramSection)telegramSection.open=true;
