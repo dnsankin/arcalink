@@ -8,12 +8,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.18](https://github.com/dnsankin/arcalink/releases/tag/1.0.18)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.19](https://github.com/dnsankin/arcalink/releases/tag/1.0.19)**. После обновления перезапустите Obsidian.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.19](https://github.com/dnsankin/arcalink/releases/tag/1.0.19) | 25.10.2026 | Кнопка «Обновить публикацию» у каждой страницы в настройках и списке публикаций. Открывает исходную заметку для предпросмотра и сохраняет прежнюю ссылку. |
 | [1.0.18](https://github.com/dnsankin/arcalink/releases/tag/1.0.18) | 25.10.2026 | После публикации длинная форма заменяется подтверждением со ссылкой, копированием и кнопкой закрытия. Во время сохранения виден статус «Публикуется…». |
 | [1.0.17](https://github.com/dnsankin/arcalink/releases/tag/1.0.17) | 25.10.2026 | Убран предел 100 вложений при публикации заметки. Проверка размера по квоте хранилища сохранена. |
 | [1.0.16](https://github.com/dnsankin/arcalink/releases/tag/1.0.16) | 24.10.2026 | Раздел «Публикации» в настройках со сводкой страниц и отзывом. Вложения копируются частями; вместо предела 32 МиБ действует квота хранилища. Уникальные публичные копии и незавершённые загрузки учитываются в общей квоте. Крупные вложения по ссылке отдаются без постоянной копии. |
@@ -128,12 +129,13 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.18](https://github.com/dnsankin/arcalink/releases/tag/1.0.18)**. Restart Obsidian after updating.
+Current version: **[1.0.19](https://github.com/dnsankin/arcalink/releases/tag/1.0.19)**. Restart Obsidian after updating.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.19](https://github.com/dnsankin/arcalink/releases/tag/1.0.19) | 2026-10-25 | Update publication action on each page in settings and publication management. Opens the original note for preview and preserves its public URL. |
 | [1.0.18](https://github.com/dnsankin/arcalink/releases/tag/1.0.18) | 2026-10-25 | Successful publication replaces the long form with a visible link, copy and close actions. The publish button shows progress while saving. |
 | [1.0.17](https://github.com/dnsankin/arcalink/releases/tag/1.0.17) | 2026-10-25 | Removed the 100-attachment limit for note publications. Storage quota checks remain in place. |
 | [1.0.16](https://github.com/dnsankin/arcalink/releases/tag/1.0.16) | 2026-10-24 | Publications settings show public pages and revocation controls. Chunked uploads replace the 32 MiB limit with the storage quota. Unique public copies and unfinished uploads count toward the shared quota. Large references stream without a permanent copy. |
