@@ -178,3 +178,16 @@ test('updating cannot substitute active note when source is missing or workspace
  let prepared;f.publications.prepare=async file=>{prepared=file.path;};await f.publications.update(p);assert.equal(prepared,'renamed.md');
  await assert.rejects(f.publications.update({...p,workspace:'2'.repeat(32)}),/Переключитесь/);
 });
+
+test('publication indicator stays active until the last confirmed removal',async()=>{
+ const f=await componentFixture();assert.equal(f.publications.hasActivePublications,false);
+ f.publications.rememberPublications([{id:'one'},{id:'two'}]);assert.equal(f.publications.hasActivePublications,true);
+ f.publications.published('one');
+ for(const id of ['one','two']){
+  f.publications.api=async()=>({removed:true});f.publications.confirmRemoval({id,title:id},()=>{});
+  const modal=f.modals.at(-1);await f.settings.find(s=>s.parent===modal.contentEl).buttons[0].click();
+  assert.equal(f.publications.hasActivePublications,id==='one');
+ }
+ f.publications.published('new');assert.equal(f.publications.hasActivePublications,true);
+ f.publications.rememberPublications([]);assert.equal(f.publications.hasActivePublications,false);
+});
