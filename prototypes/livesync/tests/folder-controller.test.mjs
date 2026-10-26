@@ -146,3 +146,15 @@ test('folder editor rebind does not turn disk hydration into a duplicate Yjs edi
 test('opening a saved shared folder locks the editor before asynchronous authorization finishes',async()=>{const manager=controller(),r={id:'doc',mount:'Team',role:'owner'};manager.records=[r];manager.filePath=v=>v.path;let resolve;manager.ensure=()=>new Promise(r=>resolve=r);let readonly=false;const view={path:'Team/note.md',state:{doc:{length:0,toString:()=>''}},dispatch:t=>{if(t.effects?.configuration)readonly=t.effects.configuration.some(e=>e.readOnly===true);}};manager.views.set(view,{path:null,added:true,c:{reconfigure:configuration=>({configuration})}});const pending=manager.attach(view);assert.equal(readonly,true);const doc=new Y.Doc();resolve({record:r,doc,files:doc.getMap('files'),paths:new Map(),undo:new Map(),ready:false,denied:false,provider:{awareness:{}}});await pending;assert.equal(readonly,true);doc.destroy();});
 test('unloading shared folders removes stale read-only editor configuration',()=>{const manager=controller();let readonly=true;const view={dispatch:t=>{readonly=t.effects.configuration.some(e=>e.readOnly);}};manager.views.set(view,{added:true,c:{reconfigure:configuration=>({configuration})}});manager.dispose();assert.equal(readonly,false);assert.equal(manager.views.size,0);});
 test('joining a first shared folder initializes saved bindings before synchronization',async()=>{const manager=controller();let initialized=false;manager.validateMount=()=>{};manager.app.vault={getFiles:()=>[]};manager.plugin.initializeCloudFeatures=async()=>{assert.equal(manager.records.length,1);initialized=true;};manager.ensure=async()=>assert.equal(initialized,true);await manager.mount({id:'new',kind:'folder',role:'editor'},'Joined');assert.equal(initialized,true);});
+test('voluntary exit disconnects only selected folder and retains local files',async()=>{
+ const m=controller();const calls=[];m.records=[{id:'team',mount:'Team',role:'editor'},{id:'other',mount:'Other',role:'owner'}];
+ m.plugin.collaboration.api=async(action,body)=>{calls.push([action,body.id]);return {left:true};};
+ m.entries.set('team',{provider:{disconnect:()=>calls.push('disconnect'),destroy:()=>calls.push('provider destroyed')},persistence:{destroy:()=>calls.push('persistence closed')},undo:new Map(),doc:{destroy:()=>calls.push('doc destroyed')}});
+ m.app.vault={adapter:{remove:()=>assert.fail('must preserve files'),write:()=>assert.fail('must preserve files')}};
+ await m.leave('team');assert.deepEqual(calls[0],['leave','team']);assert.ok(calls.includes('disconnect'));assert.equal(m.records.length,1);assert.equal(m.records[0].id,'other');assert.equal(m.entries.has('team'),false);
+ await assert.rejects(m.leave('other'),/Владелец/);
+});
+test('failed voluntary exit preserves local membership and connection',async()=>{
+ const m=controller();m.records=[{id:'team',role:'viewer'}];m.plugin.collaboration.api=async()=>{throw Error('offline');};m.entries.set('team',{provider:{disconnect:()=>assert.fail('must stay connected')}});
+ await assert.rejects(m.leave('team'),/offline/);assert.equal(m.records.length,1);assert.equal(m.entries.has('team'),true);
+});
