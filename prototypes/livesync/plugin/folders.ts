@@ -1,3 +1,4 @@
+import {chooseSharedFolder} from './shared-folder-picker';
 import { TFile, Notice, Modal, Setting, editorInfoField } from 'obsidian';
 import { Compartment, StateEffect, EditorState, Prec } from '@codemirror/state';
 import { EditorView, ViewPlugin, keymap } from '@codemirror/view';
@@ -162,7 +163,7 @@ export class SharedFolders {
         new Notice('Папка опубликована. Теперь создайте приглашение для редактора или читателя.');
         return r;
     }
-    mountDialog(result: any) { const m = new Modal(this.app); m.titleEl.setText('Подключить общую папку «' + result.title + '»'); let mount = 'Общие папки/' + result.title.replace(/[\\:*?"<>|/]/g, '_'); new Setting(m.contentEl).setName('Локальная папка').setDesc('Выберите новую или пустую папку. Сервер видит её содержимое.').addText(t => t.setValue(mount).onChange(v => mount = v.trim())); new Setting(m.contentEl).addButton(b => b.setButtonText('Подключить').setCta().onClick(async () => { b.setDisabled(true); try {
+    mountDialog(result: any) { const m = new Modal(this.app); m.titleEl.setText('Подключить общую папку «' + result.title + '»'); let mountInput:any; let mount = 'Общие папки/' + result.title.replace(/[\\:*?"<>|/]/g, '_'); new Setting(m.contentEl).setName('Локальная папка').setDesc('Выберите новую или пустую папку. Сервер видит её содержимое.').addText(t => {mountInput=t;t.setValue(mount).onChange(v => mount = v.trim());}).addButton(b=>b.setButtonText('Выбрать папку').onClick(()=>chooseSharedFolder(this.app,{title:'Выбрать папку',description:'Выберите пустую папку для подключения. Новую папку можно указать в поле пути.',action:'Выбрать папку',unavailable:path=>{try{this.validateMount(path);return this.app.vault.getFiles().some((f:any)=>f.path.startsWith(path+'/'))?'Папка должна быть пустой':'';}catch(e:any){return e.message;}},select:async path=>{mount=path;mountInput.setValue(path);}}))); new Setting(m.contentEl).addButton(b => b.setButtonText('Подключить').setCta().onClick(async () => { b.setDisabled(true); try {
         await this.mount(result, mount);
         m.close();
     }
@@ -461,9 +462,32 @@ export class SharedFolders {
             }
             e.files.get(id)?.set('path', relative);
         } await this.project(e); }
+    async leave(id: string) {
+        const record = this.records.find(r => r.id === id);
+        if (record?.role === 'owner') throw Error('Владелец не может покинуть свою папку');
+        await this.plugin.collaboration.api('leave', {id});
+        this.refreshAttempt++;
+        this.pendingRefresh = undefined;
+        this.refreshedScope = undefined;
+        this.lastRefresh = 0;
+        const entry = this.entries.get(id);
+        if (entry) {
+            entry.denied = true;
+            entry.provider?.disconnect();
+            entry.provider?.destroy();
+            entry.persistence?.destroy();
+            for (const undo of entry.undo.values()) undo.destroy();
+            entry.doc.destroy();
+            this.entries.delete(id);
+        }
+        this.records = this.records.filter(r => r.id !== id);
+        await this.save();
+        this.refresh();
+        new Notice('Вы отказались от общего доступа. Локальные файлы сохранены.');
+    }
     render(el: HTMLElement, gate:(control:HTMLElement)=>void=()=>{}) {
         new Setting(el).setName('Общие папки').setDesc('Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Пилот: до 100 файлов, 1 МБ на файл, 4 МБ на папку.')
-            .addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => this.plugin.collaboration.prompt('Поделиться папкой', 'Путь существующей папки (сервер будет видеть её содержимое)', async (path: string) => this.create(path))); gate(b.buttonEl); })
+            .addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => chooseSharedFolder(this.app,{title:'Поделиться папкой',description:'Выберите папку для совместной работы. Сервер и приглашённые участники получат доступ к её содержимому.',action:'Поделиться папкой',unavailable:path=>{try{this.validateMount(path);return this.app.vault.getFiles().some((f:any)=>f.path.startsWith(path+'/'))?'':'Папка пуста';}catch(e:any){return e.message;}},select:async path=>{await this.create(path);await load();}})); gate(b.buttonEl); })
             .addButton(b => b.setButtonText('Присоединиться').onClick(() => this.plugin.collaboration.prompt('Общая папка', 'Код приглашения', async (code: string) => {
                 const r = await this.plugin.collaboration.api('join', { code });
                 if (r.kind !== 'folder') throw Error('Это приглашение в заметку');
@@ -489,9 +513,15 @@ export class SharedFolders {
                 for (const r of result.folders) {
                     const roleLabel = (role: string) => role === 'owner' ? 'Владелец' : role === 'editor' ? 'Редактор' : 'Только чтение';
                     const card = list.createDiv({cls:'arcalink-folder-access-card'});
-                    const row = new Setting(card).setName(r.mount).setDesc(roleLabel(r.role));
-                    row.nameEl.setAttribute('data-arcalink-user-content','');
-                    const members = card.createDiv();
+                    const row = new Setting(card).setName('Папка').setDesc(roleLabel(r.role));
+                    row.settingEl.addClass('arcalink-folder-access-header');
+                    row.nameEl.createSpan({text:': '+r.mount,attr:{'data-arcalink-user-content':''}});
+                    const folderOwner = r.owner || (r.members || []).find((member:any) => member.role === 'owner');
+                    const ownerLine = card.createDiv();
+                    ownerLine.createSpan({text:'Владелец папки: '});
+                    ownerLine.createSpan({text:folderOwner?.email || folderOwner?.account_id || 'Не удалось определить',attr:{'data-arcalink-user-content':''}});
+                    const members = card.createDiv({cls:'arcalink-folder-access-members'});
+                    members.createEl('h4',{text:'Участники и права'});
                     for (const member of r.members || []) {
                         if (r.role === 'owner' && member.role !== 'owner') {
                             const participant = new Setting(members).setName(member.email || member.account_id).setDesc(roleLabel(member.role));
@@ -526,6 +556,11 @@ export class SharedFolders {
                         }
                     }
                     if (r.role !== 'owner') members.createEl('p', {text:'Показаны ваши права. Список участников доступен владельцу папки.'});
+                    if (r.role !== 'owner') row.addButton(b => b.setButtonText('Отказаться от общего доступа').onClick(() => this.plugin.collaboration.prompt('Отказаться от общего доступа', 'Доступ будет прекращён на всех ваших устройствах. Локальные файлы сохранятся. Введите ВЫЙТИ', async (value:string) => {
+                        if (value !== 'ВЫЙТИ') throw Error('Выход отменён');
+                        await this.leave(r.id);
+                        await load();
+                    })));
                     if (r.role === 'owner') row
                         .addButton(b => { b.setButtonText('Пригласить редактора').onClick(async () => { await this.invite(r, 'editor'); await load(); }); gate(b.buttonEl); })
                         .addButton(b => { b.setButtonText('Пригласить читателя').onClick(async () => { await this.invite(r, 'viewer'); await load(); }); gate(b.buttonEl); })
