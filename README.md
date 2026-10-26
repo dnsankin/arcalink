@@ -8,12 +8,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.24](https://github.com/dnsankin/arcalink/releases/tag/1.0.24)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25)**. После обновления перезапустите Obsidian.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25) | 26.10.2026 | Кнопка «Прекратить общий доступ» возвращает папку в обычную синхронизацию хранилища, сохраняя файлы и отзывая доступ участников. Для подтверждения действий с доступом достаточно кнопки «Подтверждаю». |
 | [1.0.24](https://github.com/dnsankin/arcalink/releases/tag/1.0.24) | 26.10.2026 | Общие папки доступны на всех действующих платных тарифах, включая Begin. Исправлены серверная проверка тарифа и доступность кнопок в плагине; лимит участников сохранён. |
 | [1.0.23](https://github.com/dnsankin/arcalink/releases/tag/1.0.23) | 26.10.2026 | Общие папки: единая карточка с владельцем, правами и приглашениями; выбор папки из дерева; выход участника с сохранением локальных файлов. |
 | [1.0.22](https://github.com/dnsankin/arcalink/releases/tag/1.0.22) | 26.10.2026 | Рекомендации диагностики, включая размер чанка, больше не открываются автоматически. Обязательные проверки и ручная диагностика сохранены; параметры синхронизации не меняются. |
@@ -134,12 +135,13 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.24](https://github.com/dnsankin/arcalink/releases/tag/1.0.24)**. Restart Obsidian after updating.
+Current version: **[1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25)**. Restart Obsidian after updating.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25) | 2026-10-26 | Stop sharing restores ordinary vault synchronization while preserving files and revoking participant access. Access actions now use an explicit confirmation button instead of typed words. |
 | [1.0.24](https://github.com/dnsankin/arcalink/releases/tag/1.0.24) | 2026-10-26 | Shared folders are available on every active paid plan, including Begin. Server entitlement checks and plugin controls updated; participant limits preserved. |
 | [1.0.23](https://github.com/dnsankin/arcalink/releases/tag/1.0.23) | 2026-10-26 | Shared folders: grouped cards with owner, permissions and invitations; folder tree picker; participants can leave while preserving local files. |
 | [1.0.22](https://github.com/dnsankin/arcalink/releases/tag/1.0.22) | 2026-10-26 | Diagnostic recommendations, including chunk size, no longer open automatically. Required checks and manual diagnostics remain available; synchronization settings are unchanged. |
