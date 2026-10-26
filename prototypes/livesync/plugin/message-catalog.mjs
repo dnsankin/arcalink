@@ -1,6 +1,22 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+["Leave shared folder", "Отказаться от общего доступа"],
+["Access will end on all your devices. Local files will remain. Type ВЫЙТИ", "Доступ будет прекращён на всех ваших устройствах. Локальные файлы сохранятся. Введите ВЫЙТИ"],
+["You have left the shared folder. Local files were preserved.", "Вы отказались от общего доступа. Локальные файлы сохранены."],
+["The owner cannot leave their folder", "Владелец не может покинуть свою папку"],
+["Exit cancelled", "Выход отменён"],
+["Folder owner: ", "Владелец папки: "],
+["Could not determine", "Не удалось определить"],
+["Participants and permissions", "Участники и права"],
+["Choose a folder for collaboration. The server and invited participants will have access to its contents.", "Выберите папку для совместной работы. Сервер и приглашённые участники получат доступ к её содержимому."],
+["Selected folder", "Выбранная папка"],
+["Not selected", "Не выбрана"],
+["Folder is empty", "Папка пуста"],
+["Choose folder", "Выбрать папку"],
+["Choose an empty folder to connect. You can enter a new folder in the path field.", "Выберите пустую папку для подключения. Новую папку можно указать в поле пути."],
+["The folder must be empty", "Папка должна быть пустой"],
+
 ["Shared folders: ${p0}", "Общих папок: ${p0}"],
 ["Make viewer", "Сделать читателем"],
 ["Make editor", "Сделать редактором"],

@@ -8,12 +8,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.22](https://github.com/dnsankin/arcalink/releases/tag/1.0.22)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.23](https://github.com/dnsankin/arcalink/releases/tag/1.0.23)**. После обновления перезапустите Obsidian.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.23](https://github.com/dnsankin/arcalink/releases/tag/1.0.23) | 26.10.2026 | Общие папки: единая карточка с владельцем, правами и приглашениями; выбор папки из дерева; выход участника с сохранением локальных файлов. |
 | [1.0.22](https://github.com/dnsankin/arcalink/releases/tag/1.0.22) | 26.10.2026 | Рекомендации диагностики, включая размер чанка, больше не открываются автоматически. Обязательные проверки и ручная диагностика сохранены; параметры синхронизации не меняются. |
 | [1.0.21](https://github.com/dnsankin/arcalink/releases/tag/1.0.21) | 26.10.2026 | Управление общими папками в настройках: участники и права, смена роли, отзыв доступа участника и приглашений. Блок совместных заметок убран со страницы настроек. |
 | [1.0.20](https://github.com/dnsankin/arcalink/releases/tag/1.0.20) | 25.10.2026 | Значок публикаций светится зелёным, если есть активная страница. Подсветка снимается после отзыва последней публикации. |
@@ -132,12 +133,13 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.22](https://github.com/dnsankin/arcalink/releases/tag/1.0.22)**. Restart Obsidian after updating.
+Current version: **[1.0.23](https://github.com/dnsankin/arcalink/releases/tag/1.0.23)**. Restart Obsidian after updating.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.23](https://github.com/dnsankin/arcalink/releases/tag/1.0.23) | 2026-10-26 | Shared folders: grouped cards with owner, permissions and invitations; folder tree picker; participants can leave while preserving local files. |
 | [1.0.22](https://github.com/dnsankin/arcalink/releases/tag/1.0.22) | 2026-10-26 | Diagnostic recommendations, including chunk size, no longer open automatically. Required checks and manual diagnostics remain available; synchronization settings are unchanged. |
 | [1.0.21](https://github.com/dnsankin/arcalink/releases/tag/1.0.21) | 2026-10-26 | Manage shared-folder access in settings: participants and roles, role changes, participant removal and invitation revocation. Removed the collaborative-note controls from settings. |
 | [1.0.20](https://github.com/dnsankin/arcalink/releases/tag/1.0.20) | 2026-10-25 | The Publications icon glows green when an active page exists and clears after the last publication is revoked. |
