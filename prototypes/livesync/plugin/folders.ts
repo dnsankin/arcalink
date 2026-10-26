@@ -65,6 +65,10 @@ export class SharedFolders {
         if (!scope[0] || !current()) return;
         const result = await this.plugin.collaboration.api('folders', {});
         if (!current()) return;
+        for (const id of result.removed || []) {
+            if (!current()) return;
+            await this.detachSharedFolder(id);
+        }
         for (const r of result.folders) {
             if (this.records.some(x => x.id === r.id))
                 continue;
@@ -470,6 +474,10 @@ export class SharedFolders {
         this.pendingRefresh = undefined;
         this.refreshedScope = undefined;
         this.lastRefresh = 0;
+        await this.detachSharedFolder(id);
+        new Notice('Вы отказались от общего доступа. Локальные файлы сохранены.');
+    }
+    async detachSharedFolder(id: string) {
         const entry = this.entries.get(id);
         if (entry) {
             entry.denied = true;
@@ -483,7 +491,34 @@ export class SharedFolders {
         this.records = this.records.filter(r => r.id !== id);
         await this.save();
         this.refresh();
-        new Notice('Вы отказались от общего доступа. Локальные файлы сохранены.');
+    }
+    async stopSharing(id: string) {
+        await this.plugin.collaboration.api('stop-sharing', {id});
+        this.refreshAttempt++;
+        this.pendingRefresh = undefined;
+        this.refreshedScope = undefined;
+        this.lastRefresh = 0;
+        await this.detachSharedFolder(id);
+        new Notice('Общий доступ прекращён. Папка и её файлы остаются в синхронизации хранилища.');
+    }
+    confirmAccessChange(title: string, folder: string, detail: string, task: () => Promise<void>, participant?: string) {
+        const modal = new Modal(this.app);
+        modal.modalEl.addClass('arcalink-access-confirmation');
+        modal.titleEl.setText(title);
+        modal.contentEl.createEl('p', {text:folder,attr:{'data-arcalink-user-content':''}});
+        if (participant) modal.contentEl.createEl('p', {text:participant,attr:{'data-arcalink-user-content':''}});
+        modal.contentEl.createEl('p', {text:detail});
+        const error = modal.contentEl.createEl('p', {attr:{role:'alert'}});
+        new Setting(modal.contentEl)
+            .addButton(b => b.setButtonText('Отмена').onClick(() => modal.close()))
+            .addButton(b => b.setButtonText('Подтверждаю').setCta().onClick(async () => {
+                b.setDisabled(true);
+                error.setText('');
+                try { await task(); modal.close(); }
+                catch (e:any) { error.setText(e.message || 'Не удалось изменить доступ. Повторите попытку.'); }
+                finally { b.setDisabled(false); }
+            }));
+        modal.open();
     }
     render(el: HTMLElement, gate:(control:HTMLElement)=>void=()=>{}) {
         new Setting(el).setName('Общие папки').setDesc('Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Пилот: до 100 файлов, 1 МБ на файл, 4 МБ на папку.')
@@ -510,7 +545,11 @@ export class SharedFolders {
                 if (!Array.isArray(result.folders)) throw Error('Invalid folder access response');
                 if (!result.folders.length) list.createEl('p', {text:'В этом хранилище нет подключённых общих папок.'});
                 new Setting(list).setName('Общих папок: ' + result.folders.length);
-                for (const r of result.folders) {
+                for (const id of result.removed || []) {
+            if (!current()) return;
+            await this.detachSharedFolder(id);
+        }
+        for (const r of result.folders) {
                     const roleLabel = (role: string) => role === 'owner' ? 'Владелец' : role === 'editor' ? 'Редактор' : 'Только чтение';
                     const card = list.createDiv({cls:'arcalink-folder-access-card'});
                     const row = new Setting(card).setName('Папка').setDesc(roleLabel(r.role));
@@ -530,11 +569,11 @@ export class SharedFolders {
                                 b.setDisabled(true);
                                 try { await this.plugin.collaboration.api('member-access', {id:r.id,account_id:member.account_id,role:member.role === 'editor' ? 'viewer' : 'editor'}); await load(); }
                                 catch (e:any) { new Notice(e.message); } finally { b.setDisabled(false); }
-                            })).addButton(b => b.setButtonText('Отозвать доступ участника').onClick(() => this.plugin.collaboration.prompt('Отозвать доступ участника', 'Введите ОТОЗВАТЬ', async (value:string) => {
-                                if (value !== 'ОТОЗВАТЬ') throw Error('Отзыв отменён');
+                            })).addButton(b => b.setButtonText('Отозвать доступ участника').onClick(() => this.confirmAccessChange('Отозвать доступ участника', r.mount, 'Участник потеряет доступ к общей папке. Его локальные файлы сохранятся.', async () => {
                                 await this.plugin.collaboration.api('member-access', {id:r.id,account_id:member.account_id,role:'remove'});
+                                new Notice('Доступ участника отозван. Его локальные файлы сохраняются.');
                                 await load();
-                            })));
+                            }, member.email || member.account_id)));
                         } else {
                             const line = members.createDiv();
                             line.createSpan({text:member.email || member.account_id,attr:{'data-arcalink-user-content':''}});
@@ -556,18 +595,15 @@ export class SharedFolders {
                         }
                     }
                     if (r.role !== 'owner') members.createEl('p', {text:'Показаны ваши права. Список участников доступен владельцу папки.'});
-                    if (r.role !== 'owner') row.addButton(b => b.setButtonText('Отказаться от общего доступа').onClick(() => this.plugin.collaboration.prompt('Отказаться от общего доступа', 'Доступ будет прекращён на всех ваших устройствах. Локальные файлы сохранятся. Введите ВЫЙТИ', async (value:string) => {
-                        if (value !== 'ВЫЙТИ') throw Error('Выход отменён');
+                    if (r.role !== 'owner') row.addButton(b => b.setButtonText('Отказаться от общего доступа').onClick(() => this.confirmAccessChange('Отказаться от общего доступа', r.mount, 'Доступ будет прекращён на всех ваших устройствах. Локальные файлы сохранятся.', async () => {
                         await this.leave(r.id);
                         await load();
                     })));
                     if (r.role === 'owner') row
                         .addButton(b => { b.setButtonText('Пригласить редактора').onClick(async () => { await this.invite(r, 'editor'); await load(); }); gate(b.buttonEl); })
                         .addButton(b => { b.setButtonText('Пригласить читателя').onClick(async () => { await this.invite(r, 'viewer'); await load(); }); gate(b.buttonEl); })
-                        .addButton(b => b.setButtonText('Отозвать доступ').onClick(() => this.plugin.collaboration.prompt('Отозвать доступ ко всей папке', 'Введите ОТОЗВАТЬ', async (value: string) => {
-                            if (value !== 'ОТОЗВАТЬ') throw Error('Отзыв отменён');
-                            await this.plugin.collaboration.api('revoke', { id:r.id });
-                            new Notice('Доступ участников и приглашения отозваны. Их локальные копии остаются у них.');
+                        .addButton(b => b.setButtonText('Прекратить общий доступ').onClick(() => this.confirmAccessChange('Прекратить общий доступ', r.mount, 'Доступ всех участников будет отозван. Папка останется в синхронизации хранилища.', async () => {
+                            await this.stopSharing(r.id);
                             await load();
                         })));
                 }

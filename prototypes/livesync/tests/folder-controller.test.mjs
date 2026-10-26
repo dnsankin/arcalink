@@ -158,3 +158,17 @@ test('failed voluntary exit preserves local membership and connection',async()=>
  const m=controller();m.records=[{id:'team',role:'viewer'}];m.plugin.collaboration.api=async()=>{throw Error('offline');};m.entries.set('team',{provider:{disconnect:()=>assert.fail('must stay connected')}});
  await assert.rejects(m.leave('team'),/offline/);assert.equal(m.records.length,1);assert.equal(m.entries.has('team'),true);
 });
+test('stop sharing retires shared binding while leaving folder eligible for ordinary vault sync',async()=>{
+ const m=controller();m.records=[{id:'team',mount:'Team',role:'owner'},{id:'keep',mount:'Keep',role:'owner'}];const calls=[];
+ m.plugin.collaboration.api=async(action,body)=>{calls.push([action,body.id]);return {stopped:true};};
+ m.app.vault={adapter:{remove:()=>assert.fail('must preserve files'),write:()=>assert.fail('must preserve files')}};
+ await m.stopSharing('team');assert.deepEqual(calls,[['stop-sharing','team']]);assert.equal(m.contains('Team/note.md'),false);assert.equal(m.contains('Keep/note.md'),true);
+});
+test('closed shared folders discovered on another device become ordinary without file changes',async()=>{
+ const m=controller();m.records=[{id:'closed',mount:'Team',role:'owner'}];m.plugin.collaboration.api=async()=>({folders:[],removed:['closed']});
+ await m.discover();assert.equal(m.contains('Team/note.md'),false);assert.equal(m.records.length,0);
+});
+test('failed stop sharing keeps the shared binding',async()=>{
+ const m=controller();m.records=[{id:'team',mount:'Team',role:'owner'}];m.plugin.collaboration.api=async()=>{throw Error('offline');};
+ await assert.rejects(m.stopSharing('team'),/offline/);assert.equal(m.contains('Team/note.md'),true);
+});
