@@ -1,6 +1,8 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+["The shared folder server copy is unavailable. Local files are preserved. Connection will resume after plan payment.", "Серверная копия общей папки недоступна. Локальные файлы сохранены. Подключение возобновится после оплаты тарифа."],
+["Shared folders and invitations are available on active paid plans. Saved materials and access management remain available.", "Общие папки и приглашения доступны на действующих платных тарифах. Сохранённые материалы и управление доступом остаются на месте."],
 ["Leave shared folder", "Отказаться от общего доступа"],
 ["Access will end on all your devices. Local files will remain. Type ВЫЙТИ", "Доступ будет прекращён на всех ваших устройствах. Локальные файлы сохранятся. Введите ВЫЙТИ"],
 ["You have left the shared folder. Local files were preserved.", "Вы отказались от общего доступа. Локальные файлы сохранены."],

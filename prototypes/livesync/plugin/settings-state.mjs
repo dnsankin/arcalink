@@ -10,12 +10,12 @@ export function settingsState({settings={},policy,account,signedIn=false,telegra
  const cloud=free?false:typeof policy?.writable==='boolean'?policy.writable:knownPlan&&account?.billing_status?active:null;
  const pro=free?false:typeof policy?.paid==='boolean'?policy.paid:knownPlan&&account?.billing_status?active&&!['free','begin'].includes(account.plan):null;
  /** @type {Record<string,boolean|null>} */
- const capabilities={cloud,collaboration:pro};
+ const capabilities={cloud,collaboration:cloud};
  const configured={publications:publications===true,account:signedIn,vaults:!!settings.isConfigured,sync:!!settings.isConfigured&&!!(settings.liveSync||settings.syncInternalFiles||(free&&settings.P2P_AutoSyncPeers)),sharing:shared,telegram:telegram===true,desktop:!!(desktop.tray||desktop.closeToTray||desktop.globalHotkeys)};
  /** @type {Record<string,string>} */
  const sections={};
  for(const [id,value] of Object.entries(configured)) {
-  const available=id==='sharing'?pro:id==='telegram'?cloud:true;
+  const available=id==='sharing'?cloud:id==='telegram'?cloud:true;
   sections[id]=available===false?'unavailable':value?'configured':'unconfigured';
  }
  return {capabilities,sections};
@@ -25,5 +25,5 @@ export function settingsStateLabel(state) {
  return state==='configured'?'Настроено':state==='unavailable'?'Недоступно на текущем тарифе':'';
 }
 export function capabilityHint(capability) {
- return capability==='collaboration'?'Создание совместных заметок, общих папок и приглашений доступно на Pro. Сохранённые материалы и управление доступом остаются на месте.':'Для этой функции нужен тариф с серверным хранилищем. Сохранённые настройки остаются на месте.';
+ return capability==='collaboration'?'Общие папки и приглашения доступны на действующих платных тарифах. Сохранённые материалы и управление доступом остаются на месте.':'Для этой функции нужен тариф с серверным хранилищем. Сохранённые настройки остаются на месте.';
 }
