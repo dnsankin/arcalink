@@ -257,7 +257,7 @@ export class SharedFolders {
             e.record.role = access.role; await this.save(); this.refresh();
         } catch { /* Socket scope remains authoritative while offline. */ }
     }
-    storagePaused(e: any) { e.record.role = 'viewer'; void this.save(); this.refresh(); if (!(this as any).retentionNotified) { (this as any).retentionNotified = true; new Notice('Серверная копия общей папки недоступна. Локальные файлы сохранены. Подключение возобновится после оплаты Pro.'); } }
+    storagePaused(e: any) { e.record.role = 'viewer'; void this.save(); this.refresh(); if (!(this as any).retentionNotified) { (this as any).retentionNotified = true; new Notice('Серверная копия общей папки недоступна. Локальные файлы сохранены. Подключение возобновится после оплаты тарифа.'); } }
     deny(e: any) { e.denied = true; e.provider?.disconnect(); this.refresh(); new Notice('Доступ к общей папке закрыт. Локальные копии сохранены.'); }
     filePath(view: any) { return view.state.field(editorInfoField, false)?.file?.path || null; }
     refresh() { for (const view of this.views.keys())
