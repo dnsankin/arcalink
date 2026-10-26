@@ -1,6 +1,16 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+["I confirm", "Подтверждаю"],
+["The participant will lose access to the shared folder. Their local files will be preserved.", "Участник потеряет доступ к общей папке. Его локальные файлы сохранятся."],
+["Access will end on all your devices. Local files will be preserved.", "Доступ будет прекращён на всех ваших устройствах. Локальные файлы сохранятся."],
+["All participants will lose access. The folder will remain in vault synchronization.", "Доступ всех участников будет отозван. Папка останется в синхронизации хранилища."],
+["Could not change access. Please try again.", "Не удалось изменить доступ. Повторите попытку."],
+["Participant access revoked. Their local files are preserved.", "Доступ участника отозван. Его локальные файлы сохраняются."],
+["Stop sharing", "Прекратить общий доступ"],
+["All participants will lose access. The folder will remain in vault synchronization. Type ПРЕКРАТИТЬ", "Доступ всех участников будет отозван. Папка останется в синхронизации хранилища. Введите ПРЕКРАТИТЬ"],
+["Action cancelled", "Действие отменено"],
+["Sharing stopped. The folder and its files remain in vault synchronization.", "Общий доступ прекращён. Папка и её файлы остаются в синхронизации хранилища."],
 ["The shared folder server copy is unavailable. Local files are preserved. Connection will resume after plan payment.", "Серверная копия общей папки недоступна. Локальные файлы сохранены. Подключение возобновится после оплаты тарифа."],
 ["Shared folders and invitations are available on active paid plans. Saved materials and access management remain available.", "Общие папки и приглашения доступны на действующих платных тарифах. Сохранённые материалы и управление доступом остаются на месте."],
 ["Leave shared folder", "Отказаться от общего доступа"],
