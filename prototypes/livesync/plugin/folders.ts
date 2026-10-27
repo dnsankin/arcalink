@@ -344,7 +344,7 @@ export class SharedFolders {
     }
     async project(e: any) {
         e.projecting = e.projecting.catch(() => { }).then(async () => {
-            if (this.disposed || e.denied || !e.ready) return;
+            if (this.disposed || e.denied || !e.ready || e.rescanning) return;
             const next = folderPaths(e.files);
             // Materialize every changed file before processing removals. A failed
             // download must never turn a partial projection into local deletions.
@@ -359,7 +359,7 @@ export class SharedFolders {
                 let currentData = file instanceof TFile ? new Uint8Array(await this.app.vault.readBinary(file)) : null;
                 let current = currentData ? await blobDigest(currentData) : null;
                 if (this.disposed || e.denied) return;
-                if (type === 'blob' && current === snapshot && old === relative) {
+                if (type === 'blob' && current === snapshot && (old === undefined || old === relative)) {
                     e.disk.set(path, snapshot); e.disk.set(id, snapshot);
                     e.signatures ||= new Map(); if (signature) e.signatures.set(id,signature); continue;
                 }
@@ -418,6 +418,48 @@ export class SharedFolders {
             this.refresh();
         });
         await e.projecting;
+    }
+    async rescanMissing(r: any, progress: (done: number, total: number, added: number) => void = () => {}) {
+        const e = await this.ensure(r);
+        this.assertWritable(e);
+        if (!e.provider?.synced) throw Error('Дождитесь подключения общей папки и повторите сверку.');
+        if (e.rescanning) throw Error('Сверка этой папки уже выполняется.');
+        e.rescanning = true;
+        let added = 0, checked = 0;
+        try {
+            await e.projecting;
+            if (e.changing) await e.changing;
+            const files = this.app.vault.getFiles().filter((f: any) => f.path.startsWith(r.mount + '/'));
+            const known = () => new Set([...folderPaths(e.files).values()]);
+            let paths = known();
+            for (const file of files) {
+                this.assertWritable(e);
+                if (!e.provider.synced) throw Error('Соединение прервано. Добавленные файлы сохранены; повторите сверку после подключения.');
+                const relative = file.path.slice(r.mount.length + 1);
+                if (!paths.has(relative) && this.app.vault.getAbstractFileByPath(file.path) === file) {
+                    if (!safeRelative(relative)) throw Error('Недопустимое имя файла: ' + relative);
+                    const stamp = file.stat?.mtime + ':' + file.stat?.size;
+                    const data = new Uint8Array(await this.app.vault.readBinary(file));
+                    const reference = file.extension === 'md' ? null : await this.upload(e, data);
+                    this.assertWritable(e);
+                    // A peer or local watcher may have added the same path while uploading.
+                    if (stamp !== file.stat?.mtime + ':' + file.stat?.size) throw Error('Файл изменился во время сверки. Повторите сверку: ' + relative);
+                    paths = known();
+                    if (!paths.has(relative) && this.app.vault.getAbstractFileByPath(file.path) === file) {
+                        const f = new Y.Map();
+                        f.set('path', relative); f.set('type', reference ? 'blob' : 'text');
+                        if (reference) { f.set('content', reference.hash); f.set('size', reference.size); }
+                        else { const text = new Y.Text(); text.insert(0, new TextDecoder().decode(data)); f.set('content', text); }
+                        e.files.set(uuid(), f); paths.add(relative); added++;
+                    }
+                }
+                progress(++checked, files.length, added);
+            }
+            return {checked, added};
+        } finally {
+            e.rescanning = false;
+            this.scheduleProject(e);
+        }
     }
     async changed(event: string, file: any) {
         const r = this.record(file.path);
@@ -651,6 +693,24 @@ export class SharedFolders {
                         }
                     }
                     if (r.role !== 'owner') members.createEl('p', {text:'Показаны ваши права. Список участников доступен владельцу папки.'});
+                    if (r.role !== 'viewer') row.addButton(b => b.setButtonText('Досинхронизировать файлы').onClick(() => {
+                        const modal = new Modal(this.app);
+                        modal.titleEl.setText('Досинхронизировать общую папку');
+                        modal.contentEl.createEl('p', {text:'Папка: ' + r.mount});
+                        modal.contentEl.createEl('p', {text:'Недостающие файлы с этого устройства будут добавлены в общую папку. Уже общие файлы не перезаписываются и не удаляются. Запускайте на устройстве с полной копией.'});
+                        const status = modal.contentEl.createEl('p');
+                        new Setting(modal.contentEl).addButton(start => start.setButtonText('Начать сверку').setCta().onClick(async () => {
+                            start.setDisabled(true);
+                            status.setText('Проверка подключения и подготовка сверки…');
+                            try {
+                                const result = await this.rescanMissing(r, (done, total, added) => status.setText('Проверено: ' + done + ' / ' + total + '. Добавлено: ' + added));
+                                const e = this.entries.get(r.id);
+                                status.setText('Сверка завершена. Проверено: ' + result.checked + '. Добавлено: ' + result.added + (e?.provider?.hasUnsyncedChanges ? '. Изменения ещё отправляются на сервер. Не закрывайте Obsidian.' : '. Изменения переданы на сервер.'));
+                            } catch (error: any) { status.setText(error.message); }
+                            finally { start.setDisabled(false); }
+                        }));
+                        modal.open();
+                    }));
                     if (r.role !== 'owner') row.addButton(b => b.setButtonText('Отказаться от общего доступа').onClick(() => this.confirmAccessChange('Отказаться от общего доступа', r.mount, 'Доступ будет прекращён на всех ваших устройствах. Локальные файлы сохранятся.', async () => {
                         await this.leave(r.id);
                         await load();

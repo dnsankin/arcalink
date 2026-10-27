@@ -261,3 +261,47 @@ test('a newer folder snapshot during download postpones projection without an un
  await x.manager.project(x.e);assert.equal(x.local.size,0);assert.deepEqual(x.trash,[]);
  await x.manager.project(x.e);assert.deepEqual(x.local.get('Team/after.jpg').data,data);
 });
+
+test('additive rescan imports missing local files but preserves registered remote content and remote-only files',async()=>{
+ const m=controller(),doc=new Y.Doc(),r={id:'team',mount:'Team',role:'owner'};
+ file(doc,'old','existing.md','remote text');file(doc,'remote','remote-only.md','keep');
+ const e={record:r,doc,files:doc.getMap('files'),provider:{synced:true},projecting:Promise.resolve(),ready:true};
+ m.ensure=async()=>e;let projects=0;m.scheduleProject=()=>projects++;
+ const files=['existing.md','missing.md','image.png'].map(p=>new TestFile('Team/'+p));
+ m.app.vault={getFiles:()=>files,getAbstractFileByPath:p=>files.find(f=>f.path===p),readBinary:async f=>new TextEncoder().encode(f.path).buffer};
+ m.upload=async()=>({hash:'a'.repeat(64),size:14});
+ const progress=[];const result=await m.rescanMissing(r,(...x)=>progress.push(x));
+ assert.equal(result.checked,3);assert.equal(result.added,2);assert.equal(e.files.size,4);
+ assert.equal(e.files.get('old').get('content').toString(),'remote text');assert.equal(e.files.get('remote').get('content').toString(),'keep');
+ assert.equal(progress.length,3);assert.equal(projects,1);assert.equal(e.rescanning,false);
+ assert.equal((await m.rescanMissing(r)).added,0);
+});
+test('rescan refuses viewer, offline and concurrent work and retains partial progress on upload error',async()=>{
+ const m=controller(),r={id:'team',mount:'Team',role:'viewer'},doc=new Y.Doc();
+ const e={record:r,doc,files:doc.getMap('files'),provider:{synced:true},projecting:Promise.resolve(),ready:true};m.ensure=async()=>e;
+ await assert.rejects(m.rescanMissing(r),/недоступна для записи/);r.role='owner';e.provider.synced=false;
+ await assert.rejects(m.rescanMissing(r),/подключения/);e.provider.synced=true;e.rescanning=true;
+ await assert.rejects(m.rescanMissing(r),/уже выполняется/);e.rescanning=false;
+ const files=['first.md','bad.png'].map(p=>new TestFile('Team/'+p));
+ m.app.vault={getFiles:()=>files,getAbstractFileByPath:p=>files.find(f=>f.path===p),readBinary:async()=>new TextEncoder().encode('local').buffer};
+ m.upload=async()=>{throw Error('network timeout');};let projects=0;m.scheduleProject=()=>projects++;
+ await assert.rejects(m.rescanMissing(r),/network timeout/);assert.equal(e.files.size,1);assert.equal(e.rescanning,false);assert.equal(projects,1);
+});
+test('rescan rechecks paths and write access after an awaited upload',async()=>{
+ for(const revoke of [false,true]){
+  const m=controller(),doc=new Y.Doc(),r={id:'team',mount:'Team',role:'owner'},f=new TestFile('Team/image.png');
+  const e={record:r,doc,files:doc.getMap('files'),provider:{synced:true},projecting:Promise.resolve(),ready:true};m.ensure=async()=>e;m.scheduleProject=()=>{};
+  m.app.vault={getFiles:()=>[f],getAbstractFileByPath:()=>f,readBinary:async()=>new Uint8Array([1]).buffer};
+  m.upload=async()=>{if(revoke)e.denied=true;else file(doc,'peer','image.png','peer data');return{hash:'a'.repeat(64),size:1};};
+  if(revoke){await assert.rejects(m.rescanMissing(r),/недоступна для записи/);assert.equal(e.files.size,0);}
+  else{assert.equal((await m.rescanMissing(r)).added,0);assert.equal(e.files.size,1);assert.equal(e.files.get('peer').get('content').toString(),'peer data');}
+  assert.equal(e.rescanning,false);
+ }
+});
+test('fresh projection reuses matching local attachment bytes without redownloading them',async()=>{
+ const x=projectionFixture(),id='b'.repeat(32),data=new Uint8Array([1,2,3]),hash=await blobDigest(data);
+ const f=file(x.e.doc,id,'existing.png',hash,'blob');f.set('size',data.length);
+ x.put('Team/existing.png',data);x.manager.plugin.collaboration.api=async()=>assert.fail('matching local bytes must not be downloaded again');
+ await x.manager.project(x.e);
+ assert.equal(x.e.paths.get(id),'existing.png');assert.equal(x.e.disk.get(id),hash);assert.equal(x.writes.length,0);assert.equal(x.trash.length,0);
+});
