@@ -1,12 +1,13 @@
+import {blobDigest, uploadSharedBlob, downloadSharedBlob} from './shared-folder-blobs.mjs';
 import {chooseSharedFolder} from './shared-folder-picker';
 import { TFile, Notice, Modal, Setting, editorInfoField } from 'obsidian';
 import { Compartment, StateEffect, EditorState, Prec } from '@codemirror/state';
 import { EditorView, ViewPlugin, keymap } from '@codemirror/view';
 import * as Y from 'yjs';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
-import { HocuspocusProvider } from '@hocuspocus/provider';
+import { SharedFolderProvider } from './shared-folder-provider';
 import { IndexeddbPersistence } from 'y-indexeddb';
-import { safeRelative, folderPaths, bytesToBase64, base64ToBytes, MAX_FILE_BYTES, MAX_FOLDER_BYTES, MAX_FILES } from './folder-model.mjs';
+import { safeRelative, folderPaths, bytesToBase64, base64ToBytes } from './folder-model.mjs';
 import { textChange } from './collab-diff.mjs';
 import { createSyncFeedback, folderSyncFailure } from './sync-feedback.mjs';
 import { Logger, LOG_LEVEL_VERBOSE } from 'octagonal-wheels/common/logger';
@@ -131,38 +132,27 @@ export class SharedFolders {
         const files = this.app.vault.getFiles().filter((f: any) => f.path.startsWith(mount + '/'));
         if (!files.length)
             throw Error('Выберите существующую папку с файлами');
-        if (files.length > MAX_FILES)
-            throw Error('В общей папке допускается до 100 файлов');
-        const seed: {path:string;type:string;content:string}[] = [];
-        let total = 0;
-        for (const f of files) {
-            if (!safeRelative(f.path.slice(mount.length + 1)) || f.stat.size > MAX_FILE_BYTES)
-                throw Error('Проверьте имена файлов: лимит вложения — 1 МБ');
-            const binary = await this.app.vault.readBinary(f);
-            total += binary.byteLength;
-            if (total > MAX_FOLDER_BYTES / 1.5)
-                throw Error('Содержимое общей папки слишком большое: вместе со служебными данными допускается до 4 МБ');
-            seed.push({ path: f.path.slice(mount.length + 1), type: f.extension === 'md' ? 'text' : 'binary', content: f.extension === 'md' ? await this.app.vault.read(f) : bytesToBase64(new Uint8Array(binary)) });
-        }
+        for (const file of files)
+            if (!safeRelative(file.path.slice(mount.length + 1)))
+                throw Error('Недопустимое имя файла в общей папке');
         const result = await this.plugin.collaboration.api('create', { title: mount, kind: 'folder' });
         await this.plugin.collaboration.api('mount', { id: result.id, mount });
         const r = { ...result, mount };
         this.records.push(r);
         await this.save();
         const e = await this.ensure(r);
-        e.doc.transact(() => { for (const item of seed) {
+        // Upload and register one file at a time; do not retain an entire folder seed.
+        for (const file of files) {
+            const data = new Uint8Array(await this.app.vault.readBinary(file));
+            const reference = file.extension === 'md' ? null : await this.upload(e, data);
+            this.assertWritable(e);
             const f = new Y.Map();
-            f.set('path', item.path);
-            f.set('type', item.type);
-            if (item.type === 'text') {
-                const text = new Y.Text();
-                text.insert(0, item.content);
-                f.set('content', text);
-            }
-            else
-                f.set('content', item.content);
-            e.files.set(uuid(), f);
-        } }, 'seed');
+            f.set('path', file.path.slice(mount.length + 1));
+            f.set('type', reference ? 'blob' : 'text');
+            if (reference) { f.set('content', reference.hash); f.set('size', reference.size); }
+            else { const text = new Y.Text(); text.insert(0, new TextDecoder().decode(data)); f.set('content', text); }
+            e.doc.transact(() => e.files.set(uuid(), f), 'seed');
+        }
         await this.project(e);
         new Notice('Папка опубликована. Теперь создайте приглашение для редактора или читателя.');
         return r;
@@ -212,6 +202,7 @@ export class SharedFolders {
                 if (a.kind !== 'folder')
                     throw Error('Некорректная общая папка');
                 r.role = a.role;
+                if (r.role !== 'viewer') await this.restoreReferences(e);
                 await this.save();
             }
             catch (error: any) {
@@ -223,9 +214,9 @@ export class SharedFolders {
             }
             if (e.denied)
                 return e;
-            e.provider = new HocuspocusProvider({ url: this.plugin.collaboration.socketUrl, name: r.id, document: e.doc, token: () => this.plugin.collaboration.auth(), onSynced: ({ state }: any) => { if (state) {
+            e.provider = new SharedFolderProvider({ url: this.plugin.collaboration.socketUrl, name: r.id, document: e.doc, token: () => JSON.stringify({ authorization: this.plugin.collaboration.auth(), folder_protocol: 2 }), onSynced: ({ state }: any) => { if (state) {
                     e.ready = true;
-                    void this.project(e);
+                    this.scheduleProject(e);
                     this.refresh();
                 } }, onAuthenticated: ({ scope }: any) => { void this.authenticated(e, scope); }, onAuthenticationFailed: ({ reason }: any) => { if (reason === 'Service temporarily unavailable' || reason === 'Storage paused') {
                     if (reason === 'Storage paused') this.storagePaused(e);
@@ -242,10 +233,10 @@ export class SharedFolders {
                     new Notice('Общая папка превысила лимит размера или места владельца. Локальные правки сохранены.');
                 } } });
             e.provider.setAwarenessField('user', { name: r.role === 'viewer' ? 'Читатель' : 'Участник', color: '#4b75c9', colorLight: '#dceaff' });
-            e.files.observeDeep(() => { void this.project(e); this.refresh(); });
+            e.files.observeDeep(() => { this.scheduleProject(e); this.refresh(); });
             e.ready = e.files.size > 0;
             if (e.ready)
-                void this.project(e);
+                this.scheduleProject(e);
             return e;
         })();
         return e.promise;
@@ -316,27 +307,70 @@ export class SharedFolders {
         if (!await this.app.vault.adapter.exists(folder))
             await this.app.vault.createFolder(folder);
     } }
+    assertWritable(e: any) {
+        if (this.disposed || e.denied || e.record.role === 'viewer')
+            throw Error('Общая папка недоступна для записи. Локальные файлы сохранены.');
+    }
+    async restoreReferences(e: any) {
+        const refs = [...e.files.values()].filter((f: any) => f.get('type') === 'blob');
+        for (let start = 0; start < refs.length; start += 256) {
+            const batch = refs.slice(start, start + 256);
+            try {
+                await this.plugin.collaboration.api('blob-check', {id:e.record.id, references:batch.map((f: any) => ({hash:f.get('content'),size:f.get('size')}))});
+                continue;
+            } catch (error: any) { if (error.status !== 409) throw error; }
+            for (const f of batch) {
+                try { await this.plugin.collaboration.api('blob-check', {id:e.record.id,references:[{hash:f.get('content'),size:f.get('size')}]}); continue; }
+                catch (error: any) { if (error.status !== 409) throw error; }
+                const file = this.app.vault.getAbstractFileByPath(e.record.mount + '/' + f.get('path'));
+                if (!(file instanceof TFile)) continue; // The server may have removed this stale offline record.
+                const data = new Uint8Array(await this.app.vault.readBinary(file)), ref = await this.upload(e, data);
+                this.assertWritable(e);
+                e.doc.transact(() => { f.set('content',ref.hash);f.set('size',ref.size); }, 'restore');
+            }
+        }
+    }
+    async upload(e: any, data: Uint8Array) {
+        this.assertWritable(e);
+        return uploadSharedBlob((action: string, body: any) => this.plugin.collaboration.api(action, body), e.record.id, data);
+    }
+    scheduleProject(e: any) {
+        void this.project(e).catch((error: any) => {
+            if (this.disposed || e.denied) return;
+            Logger(error, LOG_LEVEL_VERBOSE);
+            if (e.projectionError !== error.message) new Notice(error.message);
+            e.projectionError = error.message;
+        });
+    }
     async project(e: any) {
         e.projecting = e.projecting.catch(() => { }).then(async () => {
-            if (this.disposed || e.denied || !e.ready)
-                return;
+            if (this.disposed || e.denied || !e.ready) return;
             const next = folderPaths(e.files);
-            for (const [id, relative] of e.paths) {
-                if (next.has(id))
-                    continue;
-                const path = e.record.mount + '/' + relative, file = this.app.vault.getAbstractFileByPath(path);
-                if (file instanceof TFile) {
-                    const data = bytesToBase64(new Uint8Array(await this.app.vault.readBinary(file)));
-                    if (e.disk.get(id) !== data) {
-                        await this.app.vault.adapter.writeBinary(this.plugin.pilotDirectory + '/folder-conflict-' + id + '-' + Date.now(), base64ToBytes(data).buffer);
-                    }
-                    e.disk.set(path, null);
-                    await this.app.vault.trash(file, true);
-                }
-                e.disk.delete(id);
-            }
+            // Materialize every changed file before processing removals. A failed
+            // download must never turn a partial projection into local deletions.
             for (const [id, relative] of next) {
-                const f = e.files.get(id), path = e.record.mount + '/' + relative, old = e.paths.get(id);
+                const f = e.files.get(id), content = f.get('content'), type = f.get('type');
+                const snapshot = type === 'text' ? content.toString() : content, size = f.get('size');
+                const path = e.record.mount + '/' + relative, old = e.paths.get(id);
+                let file = this.app.vault.getAbstractFileByPath(path);
+                const previous = e.disk.get(id);
+                const signature = file instanceof TFile && Number.isFinite(file.stat?.mtime) ? file.stat.mtime + ':' + file.stat.size : null;
+                if (type === 'blob' && old === relative && signature && e.signatures?.get(id) === signature && e.disk.get(id) === snapshot && !e.dirtyPaths?.has(path)) continue;
+                let currentData = file instanceof TFile ? new Uint8Array(await this.app.vault.readBinary(file)) : null;
+                let current = currentData ? await blobDigest(currentData) : null;
+                if (this.disposed || e.denied) return;
+                if (type === 'blob' && current === snapshot && old === relative) {
+                    e.disk.set(path, snapshot); e.disk.set(id, snapshot);
+                    e.signatures ||= new Map(); if (signature) e.signatures.set(id,signature); continue;
+                }
+                const data = type === 'text' ? new TextEncoder().encode(snapshot) : type === 'blob'
+                    ? await downloadSharedBlob((action: string, body: any) => this.plugin.collaboration.api(action, body), e.record.id, snapshot, size)
+                    : base64ToBytes(snapshot);
+                // Membership, path or content may change while awaiting the network.
+                if (this.disposed || e.denied || e.files.get(id) !== f || f.get('path') !== relative
+                    || f.get('type') !== type || (type === 'text' ? f.get('content').toString() : f.get('content')) !== snapshot || f.get('size') !== size)
+                    return; // A newer observer projection is already queued; never apply this stale snapshot.
+                const encoded = type === 'blob' ? snapshot : await blobDigest(data);
                 await this.parents(path);
                 if (old && old !== relative) {
                     const source = this.app.vault.getAbstractFileByPath(e.record.mount + '/' + old);
@@ -345,30 +379,42 @@ export class SharedFolders {
                         await this.app.fileManager.renameFile(source, path);
                     }
                 }
-                const content = f.get('content'), data = f.get('type') === 'text' ? new TextEncoder().encode(content.toString()) : base64ToBytes(content), encoded = bytesToBase64(data);
-                let file = this.app.vault.getAbstractFileByPath(path);
-                const previous = e.disk.get(id);
+                file = this.app.vault.getAbstractFileByPath(path);
+                currentData = file instanceof TFile ? new Uint8Array(await this.app.vault.readBinary(file)) : null;
+                current = currentData ? await blobDigest(currentData) : null;
                 if (file instanceof TFile) {
-                    const current = bytesToBase64(new Uint8Array(await this.app.vault.readBinary(file)));
-                    // A projection for another file must not overwrite an unprocessed local edit.
                     if (current !== encoded && current !== previous) {
-                        if (encoded === previous && e.record.role !== 'viewer')
-                            continue;
-                        await this.app.vault.adapter.writeBinary(this.plugin.pilotDirectory + '/folder-conflict-' + id + '-' + Date.now(), base64ToBytes(current).buffer);
+                        if (encoded === previous && e.record.role !== 'viewer') continue;
+                        await this.app.vault.adapter.writeBinary(this.plugin.pilotDirectory + '/folder-conflict-' + id + '-' + Date.now(), currentData!.buffer);
                         new Notice('Внешняя и удалённая правки совпали. Локальная копия сохранена в каталоге плагина.');
                     }
-                    e.disk.set(path, encoded);
-                    e.disk.set(id, encoded);
-                    if (current !== encoded)
-                        await this.app.vault.modifyBinary(file, data.buffer);
-                }
-                else {
-                    e.disk.set(path, encoded);
-                    e.disk.set(id, encoded);
+                    e.disk.set(path, encoded); e.disk.set(id, encoded);
+                    if (current !== encoded) await this.app.vault.modifyBinary(file, data.buffer);
+                } else {
+                    e.disk.set(path, encoded); e.disk.set(id, encoded);
                     await this.app.vault.createBinary(path, data.buffer);
                 }
+                const stored = this.app.vault.getAbstractFileByPath(path);
+                e.signatures ||= new Map();
+                if (stored instanceof TFile && Number.isFinite(stored.stat?.mtime)) e.signatures.set(id,stored.stat.mtime + ':' + stored.stat.size);
+            }
+            // Abort deletions if another remote transaction arrived during projection.
+            if ([...folderPaths(e.files)].some(([id, relative]) => next.get(id) !== relative) || next.size !== e.files.size)
+                return; // Preserve removals for the queued projection of the new structure.
+            for (const [id, relative] of e.paths) {
+                if (next.has(id)) continue;
+                const path = e.record.mount + '/' + relative, file = this.app.vault.getAbstractFileByPath(path);
+                if (file instanceof TFile) {
+                    const data = new Uint8Array(await this.app.vault.readBinary(file));
+                    if (e.disk.get(id) !== await blobDigest(data))
+                        await this.app.vault.adapter.writeBinary(this.plugin.pilotDirectory + '/folder-conflict-' + id + '-' + Date.now(), data.buffer);
+                    if (this.disposed || e.denied || e.files.has(id)) return;
+                    e.disk.set(path, null); await this.app.vault.trash(file, true);
+                }
+                e.disk.delete(id);
             }
             e.paths = next;
+            e.projectionError = null;
             this.refresh();
         });
         await e.projecting;
@@ -380,8 +426,15 @@ export class SharedFolders {
         const e = await this.ensure(r);
         if (this.disposed || e.denied || !e.ready)
             return;
+        e.dirtyPaths ||= new Map(); const changedPath=file.path; e.dirtyPaths.set(changedPath,(e.dirtyPaths.get(changedPath)||0)+1);
+        e.changing = (e.changing || Promise.resolve()).catch(() => {}).then(() => this.applyChange(e, event, file)).finally(() => { const remaining=e.dirtyPaths.get(changedPath)-1; if(remaining)e.dirtyPaths.set(changedPath,remaining);else e.dirtyPaths.delete(changedPath); });
+        return e.changing;
+    }
+    async applyChange(e: any, event: string, file: any) {
+        const r = e.record;
         await e.projecting;
-        let id = [...e.paths].find(([, p]) => r.mount + '/' + p === file.path)?.[0];
+        if (this.disposed || e.denied || !e.ready) return;
+        let id = [...folderPaths(e.files)].find(([, p]) => r.mount + '/' + p === file.path)?.[0] || [...e.paths].find(([, p]) => r.mount + '/' + p === file.path)?.[0];
         if (event === 'delete') {
             if (e.disk.has(file.path) && e.disk.get(file.path) === null) {
                 e.disk.delete(file.path);
@@ -397,7 +450,7 @@ export class SharedFolders {
         }
         if (!this.app.vault.getAbstractFileByPath(file.path))
             return;
-        const data = new Uint8Array(await this.app.vault.readBinary(file)), encoded = bytesToBase64(data);
+        const data = new Uint8Array(await this.app.vault.readBinary(file)), encoded = await blobDigest(data);
         if (encoded === e.disk.get(file.path))
             return;
         if (r.role === 'viewer') {
@@ -410,22 +463,25 @@ export class SharedFolders {
             new Notice('Эта папка доступна только для чтения. Локальная правка сохранена в каталоге плагина.');
             return;
         }
-        if (data.length > MAX_FILE_BYTES || e.files.size >= MAX_FILES && !id)
-            throw Error('Лимит общей папки: 100 файлов, до 1 МБ каждый');
-        if (Y.encodeStateAsUpdate(e.doc).length + data.length > MAX_FOLDER_BYTES && !id)
-            throw Error('Общая папка превысит лимит 4 МБ');
-        if ([...this.views.keys()].some(v => this.filePath(v) === file.path) && id && file.extension === 'md')
-            return;
+        if ([...this.views.keys()].some(v => this.filePath(v) === file.path) && id && file.extension === 'md') return;
+        const existing = id && e.files.get(id), previousContent = existing?.get('content');
+        const reference = file.extension === 'md' ? null : await this.upload(e, data);
+        this.assertWritable(e);
+        if (!this.app.vault.getAbstractFileByPath(file.path) || (id && (e.files.get(id) !== existing || existing.get('content') !== previousContent)))
+            throw Error('Файл общей папки изменился во время загрузки. Локальная копия сохранена.');
         if (id) {
             const f = e.files.get(id);
-            if (f.get('type') === 'text') {
+            if (file.extension === 'md' && f.get('type') === 'text') {
                 const text = f.get('content'), value = new TextDecoder().decode(data), change = textChange(text.toString(), value);
                 e.doc.transact(() => { if (change.remove)
                     text.delete(change.from, change.remove); if (change.insert)
                     text.insert(change.from, change.insert); }, 'disk');
             }
-            else
-                f.set('content', encoded);
+            else if (file.extension === 'md') {
+                const text = new Y.Text(); text.insert(0, new TextDecoder().decode(data));
+                e.doc.transact(() => { f.set('type', 'text'); f.set('content', text); f.delete('size'); }, 'disk');
+            } else
+                e.doc.transact(() => { f.set('type', 'blob'); f.set('content', reference!.hash); f.set('size', reference!.size); }, 'disk');
         }
         else {
             const relative = file.path.slice(r.mount.length + 1);
@@ -433,16 +489,16 @@ export class SharedFolders {
                 throw Error('Недопустимое имя файла в общей папке');
             const f = new Y.Map();
             f.set('path', relative);
-            f.set('type', file.extension === 'md' ? 'text' : 'binary');
+            f.set('type', file.extension === 'md' ? 'text' : 'blob');
             if (file.extension === 'md') {
                 const text = new Y.Text();
                 text.insert(0, new TextDecoder().decode(data));
                 f.set('content', text);
             }
-            else
-                f.set('content', encoded);
+            else { f.set('content', reference!.hash); f.set('size', reference!.size); }
             e.files.set(uuid(), f);
         }
+        e.disk.set(file.path, encoded); e.disk.set(id || [...e.files].find(([, f]: any) => r.mount + '/' + f.get('path') === file.path)?.[0], encoded);
         await this.project(e);
     }
     async renamed(file: any, old: string) { const r = this.record(old); if (!r)
@@ -521,7 +577,7 @@ export class SharedFolders {
         modal.open();
     }
     render(el: HTMLElement, gate:(control:HTMLElement)=>void=()=>{}) {
-        new Setting(el).setName('Общие папки').setDesc('Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Пилот: до 100 файлов, 1 МБ на файл, 4 МБ на папку.')
+        new Setting(el).setName('Общие папки').setDesc('Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Размер ограничен свободным местом в хранилище владельца.')
             .addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => chooseSharedFolder(this.app,{title:'Поделиться папкой',description:'Выберите папку для совместной работы. Сервер и приглашённые участники получат доступ к её содержимому.',action:'Поделиться папкой',unavailable:path=>{try{this.validateMount(path);return this.app.vault.getFiles().some((f:any)=>f.path.startsWith(path+'/'))?'':'Папка пуста';}catch(e:any){return e.message;}},select:async path=>{await this.create(path);await load();}})); gate(b.buttonEl); })
             .addButton(b => b.setButtonText('Присоединиться').onClick(() => this.plugin.collaboration.prompt('Общая папка', 'Код приглашения', async (code: string) => {
                 const r = await this.plugin.collaboration.api('join', { code });
