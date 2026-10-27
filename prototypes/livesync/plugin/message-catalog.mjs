@@ -1,6 +1,11 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+["Invite editors and readers. The server sees only the selected shared folder. Size is limited by free space in the owner's storage.", "Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Размер ограничен свободным местом в хранилище владельца."],
+["The shared folder is not writable. Local files are preserved.", "Общая папка недоступна для записи. Локальные файлы сохранены."],
+["The shared folder changed during download. Please retry synchronization.", "Состояние общей папки изменилось во время загрузки. Повторите синхронизацию."],
+["The shared folder structure changed during download.", "Структура общей папки изменилась во время загрузки."],
+["The shared file changed during upload. The local copy is preserved.", "Файл общей папки изменился во время загрузки. Локальная копия сохранена."],
 ["I confirm", "Подтверждаю"],
 ["The participant will lose access to the shared folder. Their local files will be preserved.", "Участник потеряет доступ к общей папке. Его локальные файлы сохранятся."],
 ["Access will end on all your devices. Local files will be preserved.", "Доступ будет прекращён на всех ваших устройствах. Локальные файлы сохранятся."],

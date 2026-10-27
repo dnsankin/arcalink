@@ -1,4 +1,8 @@
-import test from 'node:test';import assert from 'node:assert/strict';import * as Y from '../collaboration/node_modules/yjs/dist/yjs.mjs';import {bytesToBase64} from '../plugin/folder-model.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';import * as Y from '../collaboration/node_modules/yjs/dist/yjs.mjs';import {bytesToBase64,base64ToBytes,folderPaths,safeRelative} from '../plugin/folder-model.mjs';
+import {webcrypto} from 'node:crypto';
+import {blobDigest,uploadSharedBlob,downloadSharedBlob} from '../plugin/shared-folder-blobs.mjs';
+globalThis.crypto??=webcrypto;
+class TestFile {constructor(path){this.path=path;this.extension=path.split('.').at(-1);}}
 function file(doc,id,path,content,type='text'){const f=new Y.Map();f.set('path',path);f.set('type',type);if(type==='text'){const t=new Y.Text();t.insert(0,content);f.set('content',t);}else f.set('content',content);doc.getMap('files').set(id,f);return f;}
 import fs from 'node:fs';import {stripTypeScriptTypes} from 'node:module';import {runInNewContext} from 'node:vm';
 import {createSyncFeedback,folderSyncFailure} from '../plugin/sync-feedback.mjs';
@@ -6,7 +10,7 @@ import {unsupportedVersionMessage} from '../plugin/pilot-http.mjs';
 import {createStartupNoticeGate} from '../plugin/startup-notices.mjs';
 import {createMessageTranslator} from '../plugin/message-language.mjs';
 import catalog from '../plugin/message-catalog.mjs';
-function controller(){const notices=[];const ctx={Y,createSyncFeedback,folderSyncFailure,Logger:()=>{},LOG_LEVEL_VERBOSE:0,EditorState:{readOnly:{of:v=>({readOnly:v})}},EditorView:{editable:{of:v=>({editable:v})}},Prec:{highest:v=>v},StateEffect:{appendConfig:{of:v=>v}},yCollab:()=>({binding:true}),keymap:{of:v=>v},yUndoManagerKeymap:[],Notice:class{constructor(message){this.message=message;notices.push(this);}hide(){this.hidden=true;}}};const source=fs.readFileSync(new URL('../plugin/folders.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/\bexport /g,'');runInNewContext(stripTypeScriptTypes(source,{mode:'transform'})+'\nglobalThis.Controller=SharedFolders;',ctx);const settings={isConfigured:true,couchDB_DBNAME:'personal',couchDB_USER:'pilot_test',couchDB_PASSWORD:'test-only'};const manager=new ctx.Controller({app:{},core:{services:{setting:{currentSettings:()=>settings}}},unifiedVault:{base:'https://example.invalid/api'},collaboration:{api:async()=>({role:'owner'})}});manager.settings=settings;manager.notices=notices;manager.save=async()=>{};manager.refresh=()=>{};return manager;}
+function controller(){const notices=[];const ctx={Y,crypto:webcrypto,TextEncoder,TextDecoder,TFile:TestFile,blobDigest,uploadSharedBlob,downloadSharedBlob,bytesToBase64,base64ToBytes,folderPaths,safeRelative,createSyncFeedback,folderSyncFailure,Logger:()=>{},LOG_LEVEL_VERBOSE:0,EditorState:{readOnly:{of:v=>({readOnly:v})}},EditorView:{editable:{of:v=>({editable:v})}},Prec:{highest:v=>v},StateEffect:{appendConfig:{of:v=>v}},yCollab:()=>({binding:true}),keymap:{of:v=>v},yUndoManagerKeymap:[],Notice:class{constructor(message){this.message=message;notices.push(this);}hide(){this.hidden=true;}}};const source=fs.readFileSync(new URL('../plugin/folders.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/\bexport /g,'');runInNewContext(stripTypeScriptTypes(source,{mode:'transform'})+'\nglobalThis.Controller=SharedFolders;',ctx);const settings={isConfigured:true,couchDB_DBNAME:'personal',couchDB_USER:'pilot_test',couchDB_PASSWORD:'test-only'};const manager=new ctx.Controller({app:{},core:{services:{setting:{currentSettings:()=>settings}}},unifiedVault:{base:'https://example.invalid/api'},collaboration:{api:async()=>({role:'owner'})}});manager.settings=settings;manager.notices=notices;manager.save=async()=>{};manager.refresh=()=>{};return manager;}
 test('mobile shared-folder startup keeps its failure state without showing transient popups',async()=>{
  const manager=controller();manager.plugin.startupSyncNotices=createStartupNoticeGate({enabled:true,translate:createMessageTranslator(catalog),readState:async()=>({}),notify:()=>{},schedule:()=>1,cancel:()=>{}});
  manager.discover=async()=>{throw Error('network timeout');};assert.equal(await manager.refreshBeforeSync(),false);
@@ -171,4 +175,89 @@ test('closed shared folders discovered on another device become ordinary without
 test('failed stop sharing keeps the shared binding',async()=>{
  const m=controller();m.records=[{id:'team',mount:'Team',role:'owner'}];m.plugin.collaboration.api=async()=>{throw Error('offline');};
  await assert.rejects(m.stopSharing('team'),/offline/);assert.equal(m.contains('Team/note.md'),true);
+});
+
+function projectionFixture() {
+ const manager=controller(),record={id:'a'.repeat(32),mount:'Team',role:'owner'},doc=new Y.Doc();
+ const e={record,doc,files:doc.getMap('files'),ready:true,denied:false,disk:new Map(),paths:new Map(),projecting:Promise.resolve()};
+ const local=new Map(),writes=[],trash=[];
+ manager.records=[record];manager.ensure=async()=>e;manager.plugin.pilotDirectory='_private';
+ manager.app.vault={
+  getAbstractFileByPath:path=>local.get(path)?.file,
+  readBinary:async f=>local.get(f.path).data.slice().buffer,
+  getFiles:()=>[...local.values()].map(v=>v.file),
+  adapter:{exists:async()=>true,writeBinary:async(path,data)=>writes.push([path,new Uint8Array(data).slice()])},
+  modifyBinary:async(f,data)=>{local.get(f.path).data=new Uint8Array(data).slice();},
+  createBinary:async(path,data)=>local.set(path,{file:new TestFile(path),data:new Uint8Array(data).slice()}),
+  trash:async f=>{trash.push(f.path);local.delete(f.path);}
+ };
+ manager.app.fileManager={renameFile:async(f,path)=>{const entry=local.get(f.path);local.delete(f.path);f.path=path;local.set(path,entry);}};
+ return {manager,e,local,writes,trash,put:(path,data)=>{const f=new TestFile(path);local.set(path,{file:f,data});return f;}};
+}
+test('failed attachment download preserves existing files and postpones all removals',async()=>{
+ const x=projectionFixture(),id='b'.repeat(32),removed='c'.repeat(32);
+ x.put('Team/old.jpg',new Uint8Array([9]));x.e.paths.set(removed,'old.jpg');
+ const f=file(x.e.doc,id,'new.jpg','a'.repeat(64),'blob');f.set('size',5*1024*1024);
+ x.manager.plugin.collaboration.api=async()=>{throw Error('offline');};
+ await assert.rejects(x.manager.project(x.e),/offline/);
+ assert.ok(x.local.has('Team/old.jpg'));assert.deepEqual(x.trash,[]);assert.equal(x.e.paths.has(removed),true);
+});
+test('failed upload never changes accepted metadata or deletes the local attachment',async()=>{
+ const x=projectionFixture(),id='b'.repeat(32),f=file(x.e.doc,id,'photo.jpg','AA==','binary');
+ const local=x.put('Team/photo.jpg',new Uint8Array(2*1024*1024));x.e.paths.set(id,'photo.jpg');
+ x.manager.plugin.collaboration.api=async()=>{throw Error('quota');};
+ await assert.rejects(x.manager.changed('modify',local),/quota/);
+ assert.equal(f.get('type'),'binary');assert.equal(f.get('content'),'AA==');assert.ok(x.local.has(local.path));assert.deepEqual(x.trash,[]);
+});
+test('referenced projection verifies content and preserves conflicting local changes',async()=>{
+ const x=projectionFixture(),id='b'.repeat(32),data=new Uint8Array([1,2,3]),hash=await blobDigest(data);
+ const f=file(x.e.doc,id,'photo.jpg',hash,'blob');f.set('size',3);
+ x.put('Team/photo.jpg',new Uint8Array([9]));x.e.paths.set(id,'photo.jpg');x.e.disk.set(id,await blobDigest(new Uint8Array([8])));
+ x.manager.plugin.collaboration.api=async()=>({data:'AQID',offset:3,size:3});
+ await x.manager.project(x.e);
+ assert.deepEqual(x.local.get('Team/photo.jpg').data,data);assert.equal(x.writes.length,1);assert.deepEqual(x.writes[0][1],new Uint8Array([9]));
+});
+test('folder creation seeds over 100 files sequentially and stores large attachments as references',async()=>{
+ const x=projectionFixture();x.manager.validateMount=()=>{};x.manager.project=async()=>{};
+ for(let i=0;i<105;i++)x.put('Team/photo-'+i+'.jpg',new Uint8Array(i===0?5*1024*1024+1:2));
+ let offset=0,size=0,hash,uploads=0;
+ x.manager.plugin.collaboration.api=async(action,body)=>{
+  if(action==='create')return {id:x.e.record.id,role:'owner',kind:'folder'};
+  if(action==='mount')return {};
+  if(action==='blob-begin'){uploads++;size=body.size;hash=body.hash;offset=0;return {upload:'a'.repeat(32),offset:0};}
+  if(action==='blob-chunk'){assert.equal(body.offset,offset);offset+=Buffer.from(body.data,'base64').length;return {offset};}
+  if(action==='blob-finish')return {complete:true,hash,size};
+  throw Error(action);
+ };
+ await x.manager.create('Team');assert.equal(uploads,105);assert.equal(x.e.files.size,105);
+ for(const f of x.e.files.values()) {assert.equal(f.get('type'),'blob');assert.match(f.get('content'),/^[a-f0-9]{64}$/);}
+ assert.equal(x.local.size,105);assert.deepEqual(x.trash,[]);
+});
+
+test('missing server copies are rebuilt from local attachments before reconnect',async()=>{
+ const x=projectionFixture(),id='b'.repeat(32),bytes=new Uint8Array([1,2,3]),hash=await blobDigest(bytes);
+ const f=file(x.e.doc,id,'photo.jpg',hash,'blob');f.set('size',3);x.put('Team/photo.jpg',bytes);
+ let completed=false;
+ x.manager.plugin.collaboration.api=async(action,body)=>{
+  if(action==='blob-check')throw Object.assign(Error('missing'),{status:409});
+  if(action==='blob-begin')return {upload:'a'.repeat(32),offset:0};
+  if(action==='blob-chunk')return {offset:3};
+  if(action==='blob-finish'){completed=true;return {complete:true,hash,size:3};}
+  throw Error(action);
+ };
+ await x.manager.restoreReferences(x.e);assert.equal(completed,true);assert.equal(f.get('content'),hash);assert.deepEqual(x.local.get('Team/photo.jpg').data,bytes);
+});
+test('unchanged attachments reuse verified disk signatures instead of re-reading every photo',async()=>{
+ const x=projectionFixture(),id='b'.repeat(32),bytes=new Uint8Array([1,2,3]),hash=await blobDigest(bytes);
+ const f=file(x.e.doc,id,'photo.jpg',hash,'blob');f.set('size',3);const local=x.put('Team/photo.jpg',bytes);local.stat={mtime:1,size:3};x.e.paths.set(id,'photo.jpg');
+ let reads=0;x.manager.app.vault.readBinary=async()=>{reads++;return bytes.slice().buffer;};
+ await x.manager.project(x.e);assert.equal(reads,1);await x.manager.project(x.e);assert.equal(reads,1);
+});
+
+test('a newer folder snapshot during download postpones projection without an unhandled error',async()=>{
+ const x=projectionFixture(),id='b'.repeat(32),data=new Uint8Array([1,2,3]),hash=await blobDigest(data);
+ const f=file(x.e.doc,id,'before.jpg',hash,'blob');f.set('size',3);
+ x.manager.plugin.collaboration.api=async()=>{f.set('path','after.jpg');return {data:'AQID',offset:3,size:3};};
+ await x.manager.project(x.e);assert.equal(x.local.size,0);assert.deepEqual(x.trash,[]);
+ await x.manager.project(x.e);assert.deepEqual(x.local.get('Team/after.jpg').data,data);
 });

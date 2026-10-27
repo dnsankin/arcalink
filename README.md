@@ -8,12 +8,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25)**. После обновления перезапустите Obsidian.
+Текущая версия: **[1.0.26](https://github.com/dnsankin/arcalink/releases/tag/1.0.26)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.26](https://github.com/dnsankin/arcalink/releases/tag/1.0.26) | 27.10.2026 | Общие папки: сняты пилотные ограничения 100 файлов, 1 МБ на файл и 4 МБ на папку; действует общая квота владельца. Вложения передаются частями с проверкой целостности и продолжением после обрыва. Крупные изменения структуры папки также передаются частями. |
 | [1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25) | 26.10.2026 | Кнопка «Прекратить общий доступ» возвращает папку в обычную синхронизацию хранилища, сохраняя файлы и отзывая доступ участников. Для подтверждения действий с доступом достаточно кнопки «Подтверждаю». |
 | [1.0.24](https://github.com/dnsankin/arcalink/releases/tag/1.0.24) | 26.10.2026 | Общие папки доступны на всех действующих платных тарифах, включая Begin. Исправлены серверная проверка тарифа и доступность кнопок в плагине; лимит участников сохранён. |
 | [1.0.23](https://github.com/dnsankin/arcalink/releases/tag/1.0.23) | 26.10.2026 | Общие папки: единая карточка с владельцем, правами и приглашениями; выбор папки из дерева; выход участника с сохранением локальных файлов. |
@@ -135,12 +136,13 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 
 ## Version history
 
-Current version: **[1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25)**. Restart Obsidian after updating.
+Current version: **[1.0.26](https://github.com/dnsankin/arcalink/releases/tag/1.0.26)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.26](https://github.com/dnsankin/arcalink/releases/tag/1.0.26) | 2026-10-27 | Shared folders: removed pilot caps of 100 files, 1 MiB per file and 4 MiB per folder; owner storage quota still applies. Attachments use verified resumable chunk transfers; large folder metadata updates are also chunked. |
 | [1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25) | 2026-10-26 | Stop sharing restores ordinary vault synchronization while preserving files and revoking participant access. Access actions now use an explicit confirmation button instead of typed words. |
 | [1.0.24](https://github.com/dnsankin/arcalink/releases/tag/1.0.24) | 2026-10-26 | Shared folders are available on every active paid plan, including Begin. Server entitlement checks and plugin controls updated; participant limits preserved. |
 | [1.0.23](https://github.com/dnsankin/arcalink/releases/tag/1.0.23) | 2026-10-26 | Shared folders: grouped cards with owner, permissions and invitations; folder tree picker; participants can leave while preserving local files. |
