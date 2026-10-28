@@ -2,6 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import * as
 import {webcrypto} from 'node:crypto';
 import {blobDigest,uploadSharedBlob,downloadSharedBlob} from '../plugin/shared-folder-blobs.mjs';
 globalThis.crypto??=webcrypto;
+class TestFolder {constructor(path,children=[]){this.path=path;this.children=children;}}
 class TestFile {constructor(path){this.path=path;this.extension=path.split('.').at(-1);}}
 function file(doc,id,path,content,type='text'){const f=new Y.Map();f.set('path',path);f.set('type',type);if(type==='text'){const t=new Y.Text();t.insert(0,content);f.set('content',t);}else f.set('content',content);doc.getMap('files').set(id,f);return f;}
 import fs from 'node:fs';import {stripTypeScriptTypes} from 'node:module';import {runInNewContext} from 'node:vm';
@@ -10,7 +11,7 @@ import {unsupportedVersionMessage} from '../plugin/pilot-http.mjs';
 import {createStartupNoticeGate} from '../plugin/startup-notices.mjs';
 import {createMessageTranslator} from '../plugin/message-language.mjs';
 import catalog from '../plugin/message-catalog.mjs';
-function controller(){const notices=[];const ctx={Y,crypto:webcrypto,TextEncoder,TextDecoder,TFile:TestFile,blobDigest,uploadSharedBlob,downloadSharedBlob,bytesToBase64,base64ToBytes,folderPaths,safeRelative,createSyncFeedback,folderSyncFailure,Logger:()=>{},LOG_LEVEL_VERBOSE:0,EditorState:{readOnly:{of:v=>({readOnly:v})}},EditorView:{editable:{of:v=>({editable:v})}},Prec:{highest:v=>v},StateEffect:{appendConfig:{of:v=>v}},yCollab:()=>({binding:true}),keymap:{of:v=>v},yUndoManagerKeymap:[],Notice:class{constructor(message){this.message=message;notices.push(this);}hide(){this.hidden=true;}}};const source=fs.readFileSync(new URL('../plugin/folders.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/\bexport /g,'');runInNewContext(stripTypeScriptTypes(source,{mode:'transform'})+'\nglobalThis.Controller=SharedFolders;',ctx);const settings={isConfigured:true,couchDB_DBNAME:'personal',couchDB_USER:'pilot_test',couchDB_PASSWORD:'test-only'};const manager=new ctx.Controller({app:{},core:{services:{setting:{currentSettings:()=>settings}}},unifiedVault:{base:'https://example.invalid/api'},collaboration:{api:async()=>({role:'owner'})}});manager.settings=settings;manager.notices=notices;manager.save=async()=>{};manager.refresh=()=>{};return manager;}
+function controller(){const notices=[];const ctx={Y,crypto:webcrypto,TextEncoder,TextDecoder,TFile:TestFile,TFolder:TestFolder,blobDigest,uploadSharedBlob,downloadSharedBlob,bytesToBase64,base64ToBytes,folderPaths,safeRelative,createSyncFeedback,folderSyncFailure,Logger:()=>{},LOG_LEVEL_VERBOSE:0,EditorState:{readOnly:{of:v=>({readOnly:v})}},EditorView:{editable:{of:v=>({editable:v})}},Prec:{highest:v=>v},StateEffect:{appendConfig:{of:v=>v}},yCollab:()=>({binding:true}),keymap:{of:v=>v},yUndoManagerKeymap:[],Notice:class{constructor(message){this.message=message;notices.push(this);}hide(){this.hidden=true;}}};const source=fs.readFileSync(new URL('../plugin/folders.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/\bexport /g,'');runInNewContext(stripTypeScriptTypes(source,{mode:'transform'})+'\nglobalThis.Controller=SharedFolders;',ctx);const settings={isConfigured:true,couchDB_DBNAME:'personal',couchDB_USER:'pilot_test',couchDB_PASSWORD:'test-only'};const manager=new ctx.Controller({app:{},core:{services:{setting:{currentSettings:()=>settings}}},unifiedVault:{base:'https://example.invalid/api'},collaboration:{api:async()=>({role:'owner'})}});manager.settings=settings;manager.notices=notices;manager.save=async()=>{};manager.refresh=()=>{};return manager;}
 test('mobile shared-folder startup keeps its failure state without showing transient popups',async()=>{
  const manager=controller();manager.plugin.startupSyncNotices=createStartupNoticeGate({enabled:true,translate:createMessageTranslator(catalog),readState:async()=>({}),notify:()=>{},schedule:()=>1,cancel:()=>{}});
  manager.discover=async()=>{throw Error('network timeout');};assert.equal(await manager.refreshBeforeSync(),false);
@@ -311,4 +312,29 @@ test('shared attachment activity counter covers pending requests and clears afte
  const pending=m.download(e,'a'.repeat(64),3);
  assert.equal(m.transferCount,1);reject(Error('offline'));
  await assert.rejects(pending,/offline/);assert.equal(m.transferCount,0);
+});
+test('directory deletion removes descendants in one shared transaction, preserves sibling prefixes and propagates',async()=>{
+ const x=projectionFixture();x.manager.entries.set(x.e.record.id,x.e);
+ file(x.e.doc,'a','ТИС/a.md','a');file(x.e.doc,'b','ТИС/sub/b.md','b');file(x.e.doc,'c','ТИС-other/c.md','c');file(x.e.doc,'d','else/d.md','d');
+ const peer=new Y.Doc();Y.applyUpdate(peer,Y.encodeStateAsUpdate(x.e.doc));let updates=0;x.e.doc.on('update',u=>{updates++;Y.applyUpdate(peer,u)});
+ await x.manager.changed('delete',new TestFolder('Team/ТИС'));
+ assert.deepEqual([...x.e.files.keys()],['c','d']);assert.deepEqual([...peer.getMap('files').keys()],['c','d']);assert.equal(updates,1);
+});
+test('directory deletion invalidates a projection waiting for a download without waiting for it',async()=>{
+ const x=projectionFixture();x.manager.entries.set(x.e.record.id,x.e);file(x.e.doc,'a','ТИС/a.bin','hash','blob').set('size',1);
+ let release,started;x.manager.download=()=>new Promise(r=>{release=r;started=true});const projecting=x.manager.project(x.e);
+ while(!started)await new Promise(r=>setImmediate(r));
+ await x.manager.changed('delete',new TestFolder('Team/ТИС'));assert.equal(x.e.files.size,0);
+ release(new Uint8Array([1]));await projecting;assert.equal(x.local.size,0);
+});
+test('viewer cannot publish directory deletion and denied binding stays unchanged',async()=>{
+ const x=projectionFixture();x.manager.entries.set(x.e.record.id,x.e);file(x.e.doc,'a','ТИС/a.md','a');x.e.record.role='viewer';let projections=0;x.manager.project=async()=>projections++;
+ await x.manager.changed('delete',new TestFolder('Team/ТИС'));assert.equal(x.e.files.size,1);assert.equal(projections,1);
+ x.e.denied=true;await x.manager.changed('delete',new TestFolder('Team/ТИС'));assert.equal(x.e.files.size,1);assert.equal(projections,1);
+});
+test('remote removal prunes empty directories inside mount but preserves root and nonempty folders',async()=>{
+ const x=projectionFixture();const root=new TestFolder('Team'),dir=new TestFolder('Team/ТИС'),sub=new TestFolder('Team/ТИС/sub');const folders=new Map([[root.path,root],[dir.path,dir],[sub.path,sub]]);
+ x.manager.app.vault.getAbstractFileByPath=p=>folders.get(p);x.manager.app.vault.trash=async f=>{x.trash.push(f.path);folders.delete(f.path)};
+ await x.manager.pruneEmptyParents(x.e,'Team/ТИС/sub/a.md');assert.deepEqual(x.trash,['Team/ТИС/sub','Team/ТИС']);assert.ok(folders.has('Team'));
+ folders.set(dir.path,new TestFolder(dir.path,[new TestFile(dir.path+'/local.md')]));await x.manager.pruneEmptyParents(x.e,'Team/ТИС/a.md');assert.equal(x.trash.length,2);
 });
