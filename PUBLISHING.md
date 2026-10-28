@@ -34,8 +34,8 @@ The root manifest and built files are the Community release, not the internal `a
 
 Before release, verify all of the following:
 
-- `manifest.json` has ID `arcalink-sync` and version `1.0.26`.
-- `versions.json` maps `1.0.26` to the tested minimum Obsidian version.
+- `manifest.json` has ID `arcalink-sync` and version `1.0.29`.
+- `versions.json` maps `1.0.29` to the tested minimum Obsidian version.
 - `main.js` contains no self-update downloader, installer, update journal, or update controls.
 - The release includes `main.js`, `manifest.json`, and `styles.css` as individual GitHub Release assets.
 - The public repository root contains `README.md`, `LICENSE`, `manifest.json`, `versions.json`, the corresponding source, build instructions, and third-party notices.
@@ -52,13 +52,13 @@ The README presents Russian first and retains the English documentation. The man
 
 ## GitHub release
 
-Create a GitHub release with tag `1.0.26` — without a `v` prefix — and attach these files individually:
+Create a GitHub release with tag `1.0.29` — without a `v` prefix — and attach these files individually:
 
 - `main.js`
 - `manifest.json`
 - `styles.css`
 
-Do not publish a GitHub release until its source commit, manifest version, tag, and attached files all match. For 1.0.26 use the reviewed notes in `docs/releases/community-1.0.26.md` from the product monorepo, including validation results and known limits. A GitLab commit/push does not publish this GitHub release.
+Do not publish a GitHub release until its source commit, manifest version, tag, and attached files all match. For 1.0.29 use the reviewed notes in `docs/releases/community-1.0.29.md` from the product monorepo, including validation results and known limits. A GitLab commit/push does not publish this GitHub release.
 
 ## Obsidian submission
 

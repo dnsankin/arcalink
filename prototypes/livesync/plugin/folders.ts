@@ -1,6 +1,6 @@
 import {blobDigest, uploadSharedBlob, downloadSharedBlob} from './shared-folder-blobs.mjs';
 import {chooseSharedFolder} from './shared-folder-picker';
-import { TFile, Notice, Modal, Setting, editorInfoField } from 'obsidian';
+import { TFile, TFolder, Notice, Modal, Setting, editorInfoField } from 'obsidian';
 import { Compartment, StateEffect, EditorState, Prec } from '@codemirror/state';
 import { EditorView, ViewPlugin, keymap } from '@codemirror/view';
 import * as Y from 'yjs';
@@ -380,6 +380,7 @@ export class SharedFolders {
                     return; // A newer observer projection is already queued; never apply this stale snapshot.
                 const encoded = type === 'blob' ? snapshot : await blobDigest(data);
                 await this.parents(path);
+                if (this.disposed || e.denied || e.files.get(id) !== f) return;
                 if (old && old !== relative) {
                     const source = this.app.vault.getAbstractFileByPath(e.record.mount + '/' + old);
                     if (source instanceof TFile && !this.app.vault.getAbstractFileByPath(path)) {
@@ -390,6 +391,7 @@ export class SharedFolders {
                 file = this.app.vault.getAbstractFileByPath(path);
                 currentData = file instanceof TFile ? new Uint8Array(await this.app.vault.readBinary(file)) : null;
                 current = currentData ? await blobDigest(currentData) : null;
+                if (this.disposed || e.denied || e.files.get(id) !== f) return;
                 if (file instanceof TFile) {
                     if (current !== encoded && current !== previous) {
                         if (encoded === previous && e.record.role !== 'viewer') continue;
@@ -419,6 +421,7 @@ export class SharedFolders {
                     if (this.disposed || e.denied || e.files.has(id)) return;
                     e.disk.set(path, null); await this.app.vault.trash(file, true);
                 }
+                await this.pruneEmptyParents(e, path);
                 e.disk.delete(id);
             }
             e.paths = next;
@@ -469,11 +472,34 @@ export class SharedFolders {
             this.scheduleProject(e);
         }
     }
+    async pruneEmptyParents(e: any, removedPath: string) {
+        let path = removedPath.slice(0, removedPath.lastIndexOf('/'));
+        while (path.startsWith(e.record.mount + '/')) {
+            if (this.disposed || e.denied) return;
+            const prefix = path + '/';
+            if ([...folderPaths(e.files).values()].some(relative => (e.record.mount + '/' + relative).startsWith(prefix))) return;
+            const folder = this.app.vault.getAbstractFileByPath(path);
+            if (!(folder instanceof TFolder) || folder.children.length) return;
+            await this.app.vault.trash(folder, true);
+            path = path.slice(0, path.lastIndexOf('/'));
+        }
+    }
     async changed(event: string, file: any) {
         const r = this.record(file.path);
-        if (!r || !(file instanceof TFile))
+        if (!r || (!(file instanceof TFile) && !(event === 'delete' && file instanceof TFolder)))
             return;
-        const e = await this.ensure(r);
+        // A directory delete must invalidate an in-flight projection immediately,
+        // before waiting for its downloads or queued individual file events.
+        const e = file instanceof TFolder ? (this.entries.get(r.id) || await this.ensure(r)) : await this.ensure(r);
+        if (event === 'delete' && file instanceof TFolder) {
+            if (this.disposed || e.denied || !e.ready) return;
+            if (r.role === 'viewer') { await this.project(e); return; }
+            this.assertWritable(e);
+            const prefix = file.path + '/';
+            const ids = [...folderPaths(e.files)].filter(([, path]) => (r.mount + '/' + path).startsWith(prefix)).map(([id]) => id);
+            e.doc.transact(() => { for (const id of ids) e.files.delete(id); }, 'disk');
+            return;
+        }
         if (this.disposed || e.denied || !e.ready)
             return;
         e.dirtyPaths ||= new Map(); const changedPath=file.path; e.dirtyPaths.set(changedPath,(e.dirtyPaths.get(changedPath)||0)+1);
