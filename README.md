@@ -6,14 +6,17 @@
 
 ArcaLink Sync синхронизирует заметки Obsidian между устройствами через сервис ArcaLink. Плагин поддерживает личные хранилища, общие папки, совместное редактирование, шифрование личных заметок и получение сообщений и вложений из Telegram.
 
+Android-помощник подготовлен отдельно: получение подписанного APK, обменник и подтверждения точных версий заметок. Для него нужны отдельное приложение и работающий Obsidian; интеграция из main сохраняется, но не объявляется частью опубликованного плагина 1.0.27.
+
 ### История версий
 
-Текущая версия: **[1.0.27](https://github.com/dnsankin/arcalink/releases/tag/1.0.27)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
+Текущая версия: **[1.0.28](https://github.com/dnsankin/arcalink/releases/tag/1.0.28)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.28](https://github.com/dnsankin/arcalink/releases/tag/1.0.28) | 28.10.2026 | Исправлено переполнение памяти при восстановлении крупных вложений на компьютерах; добавлен голубой индикатор передачи. Локальные копии исключённых папок можно перемещать в корзину из единой карточки. Дерево выбора папок открывается свёрнутым. |
 | [1.0.27](https://github.com/dnsankin/arcalink/releases/tag/1.0.27) | 27.10.2026 | Исправлено переполнение памяти при восстановлении крупных вложений на Android: блоки декодируются последовательно без накопления всего файла в base64. Добавлена команда «Досинхронизировать файлы» для добавления пропущенных файлов общей папки; существующие общие файлы сохраняются. |
 | [1.0.26](https://github.com/dnsankin/arcalink/releases/tag/1.0.26) | 27.10.2026 | Общие папки: сняты пилотные ограничения 100 файлов, 1 МБ на файл и 4 МБ на папку; действует общая квота владельца. Вложения передаются частями с проверкой целостности и продолжением после обрыва. Крупные изменения структуры папки также передаются частями. |
 | [1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25) | 26.10.2026 | Кнопка «Прекратить общий доступ» возвращает папку в обычную синхронизацию хранилища, сохраняя файлы и отзывая доступ участников. Для подтверждения действий с доступом достаточно кнопки «Подтверждаю». |
@@ -135,14 +138,17 @@ ArcaLink Sync использует и изменяет код [Self-hosted LiveS
 
 ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink service. It supports personal vaults, shared folders, collaborative editing, optional encryption for personal notes, and importing messages and attachments from Telegram.
 
+The separately prepared Android companion adds signed APK delivery and exact-version receipts. It requires its own app and running Obsidian; the main-branch integration is retained but is not claimed as part of the published 1.0.27 plugin.
+
 ## Version history
 
-Current version: **[1.0.27](https://github.com/dnsankin/arcalink/releases/tag/1.0.27)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
+Current version: **[1.0.28](https://github.com/dnsankin/arcalink/releases/tag/1.0.28)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.28](https://github.com/dnsankin/arcalink/releases/tag/1.0.28) | 2026-10-28 | Bounded memory use while restoring large desktop attachments; blue transfer activity indicator. Excluded local folders can be moved to the vault trash from one card. Folder picker starts collapsed. |
 | [1.0.27](https://github.com/dnsankin/arcalink/releases/tag/1.0.27) | 2026-10-27 | Fixed Android out-of-memory crashes while restoring large attachments through sequential chunk decoding. Added an additive shared-folder rescan action to upload missing local files without replacing existing shared files. |
 | [1.0.26](https://github.com/dnsankin/arcalink/releases/tag/1.0.26) | 2026-10-27 | Shared folders: removed pilot caps of 100 files, 1 MiB per file and 4 MiB per folder; owner storage quota still applies. Attachments use verified resumable chunk transfers; large folder metadata updates are also chunked. |
 | [1.0.25](https://github.com/dnsankin/arcalink/releases/tag/1.0.25) | 2026-10-26 | Stop sharing restores ordinary vault synchronization while preserving files and revoking participant access. Access actions now use an explicit confirmation button instead of typed words. |

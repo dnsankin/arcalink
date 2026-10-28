@@ -1,3 +1,4 @@
+import {patchIdbMemory} from './patch-idb-memory.mjs';
 import {patchLargeContent,patchDecodedBinary} from './patch-large-content.mjs';
 import { mkdir, readFile, writeFile, copyFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -114,7 +115,7 @@ const configSyncRibbon=`        this.addRibbonIcon("custom-sync", $msg("cmdConfi
 if(configSyncSource.split(configSyncRibbon).length!==2)throw Error('Unexpected upstream customization ribbon registration');
 await writeFile(configSyncPath,configSyncSource.replace(configSyncRibbon,''));
 
-for (const name of ['main.ts','publication.ts','publication-model.mjs','content-retry.mjs','large-content-gate.mjs','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','folder-exclusions.mjs','folder-exclusions.ts','folder-rules-ui.ts','folder-rules-tree.mjs','folder-policy.mjs','folder-policy-store.mjs','folder-policies.ts','folder-local-database.mjs','folder-cleanup.mjs','folder-crypto.mjs','folder-mode-proof.mjs','environment.mjs','sync-parameters.mjs','sync-feedback.mjs','mobile-sync-state.mjs','mobile-sync-status.ts','startup-notices.mjs','folders.ts','shared-folder-picker.ts','folder-model.mjs','shared-folder-blobs.mjs','shared-folder-provider.ts','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
+for (const name of ['shared-folder-provider.ts','shared-folder-blobs.mjs','large-content-gate.mjs','main.ts','companion-bridge.ts','companion-proof.mjs','mobile-assistant.ts','assistant-download.mjs','publication.ts','publication-model.mjs','content-retry.mjs','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','folder-exclusions.mjs','folder-exclusions.ts','folder-rules-ui.ts','folder-rules-tree.mjs','folder-policy.mjs','folder-policy-store.mjs','folder-policies.ts','folder-local-database.mjs','folder-cleanup.mjs','folder-crypto.mjs','folder-mode-proof.mjs','environment.mjs','sync-parameters.mjs','sync-feedback.mjs','mobile-sync-state.mjs','mobile-sync-status.ts','startup-notices.mjs','folders.ts','shared-folder-picker.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
   const input = path.join(root, 'plugin', name), output = path.join(source, 'src', name);
   if (communityRelease && ['free-relay.ts', 'workspaces.ts'].includes(name)) {
     await writeFile(output, patchCommunityOnboarding(await readFile(input, 'utf8'), name));
@@ -298,6 +299,10 @@ const contentSource=await readFile(contentPath,'utf8'),contentMarker='function i
 if(contentSource.split(contentMarker).length!==2)throw Error('Unexpected upstream content decoding boundary');
 await writeFile(contentPath,contentSource.replace(contentMarker,contentMarker+'\n  if (doc.type == "newnote" || doc.datatype == "newnote") return false;'));
 execFileSync('npm', ['ci','--include=dev','--ignore-scripts','--no-audit','--no-fund'],{cwd:path.join(root,'collaboration'),env,stdio:'inherit'});
+for(const name of ['index.js','index.es.js']){
+ const idbPath=path.join(source,'node_modules/pouchdb-adapter-idb/lib',name);
+ await writeFile(idbPath,patchIdbMemory(await readFile(idbPath,'utf8')));
+}
 const largeReaderPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/managers/EntryManager/EntryManagerImpls.js');
 await writeFile(largeReaderPath,patchLargeContent(await readFile(largeReaderPath,'utf8')));
 const binaryDecoderPath=path.join(source,'node_modules/octagonal-wheels/dist/binary/index.js');

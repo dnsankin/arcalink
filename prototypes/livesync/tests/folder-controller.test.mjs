@@ -305,3 +305,10 @@ test('fresh projection reuses matching local attachment bytes without redownload
  await x.manager.project(x.e);
  assert.equal(x.e.paths.get(id),'existing.png');assert.equal(x.e.disk.get(id),hash);assert.equal(x.writes.length,0);assert.equal(x.trash.length,0);
 });
+test('shared attachment activity counter covers pending requests and clears after failure',async()=>{
+ const m=controller(),e={record:{id:'team',role:'owner'}};let reject;
+ m.plugin.collaboration.api=()=>new Promise((_,r)=>reject=r);
+ const pending=m.download(e,'a'.repeat(64),3);
+ assert.equal(m.transferCount,1);reject(Error('offline'));
+ await assert.rejects(pending,/offline/);assert.equal(m.transferCount,0);
+});

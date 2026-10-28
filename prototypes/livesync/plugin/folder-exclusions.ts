@@ -1,13 +1,15 @@
 import {Modal, Notice, Setting, TFolder, type App, type ToggleComponent} from 'obsidian';
-import {excludedFolders, folderContains, withExcludedFolders} from './folder-exclusions.mjs';
+import {excludedFolders, folderContains, withExcludedFolders,excludedLocalFolderRoots,localFolderCleanupBlock,trashExcludedLocalFolder} from './folder-exclusions.mjs';
 import {FolderRulesModal,renderCommonFolderStatus} from './folder-rules-ui';
 import {localizeMessage} from './localized-obsidian';
 
 export function renderFolderExclusions(el:HTMLElement, pilot:any) {
   const service=pilot.core.services.setting;
   const row=new Setting(el).setName('Исключённые папки');
+  const cleanup=el.createDiv();
   const refresh=()=>{
     const count=excludedFolders(service.currentSettings().syncIgnoreRegEx||'').length;
+    renderLocalFolderCleanup(cleanup,pilot);
     row.setDesc(pilot.folderPolicies?.available?'Локальные исключения: '+count+'. Общие исключения: '+(pilot.folderPolicies.state?.policy?.folders?.length||0)+'.':'Выбрано папок: '+count+'. Выбор действует только на этом устройстве.');
   };
   refresh();
@@ -18,6 +20,48 @@ export function renderFolderExclusions(el:HTMLElement, pilot:any) {
       if(pilot.workspaces.busy||await pilot.workspaces.pendingMerge())throw Error('Сначала завершите слияние хранилищ');
     },refresh).open();
   }));
+}
+
+function renderLocalFolderCleanup(el:HTMLElement,pilot:any) {
+  el.empty();
+  el.addClass('arcalink-folder-access-card','arcalink-local-folder-cleanup');
+  const snapshot=()=>{
+    const settings=pilot.core.services.setting.currentSettings();
+    const policy=pilot.folderPolicies;
+    return {rules:settings.syncIgnoreRegEx||'',caseSensitive:!!settings.handleFilenameCaseSensitive,
+      common:policy?.importReady?.()&&!policy?.remoteOperation?(policy.state?.policy?.folders||[]):[],
+      paths:pilot.app.vault.getAllLoadedFiles().filter((file:any)=>file instanceof TFolder&&file.path&&file.path!=='/').map((file:any)=>file.path),
+      shared:(pilot.folders?.records||[]).map((record:any)=>record.mount),
+      protectedPaths:[pilot.app.vault.configDir,pilot.pilotDirectory].filter(Boolean)};
+  };
+  const state=snapshot(),paths=excludedLocalFolderRoots(state);
+  new Setting(el).setName('Локальные копии исключённых папок')
+    .setDesc('Удаление перемещает папку в корзину Obsidian на этом устройстве. Правило исключения сохраняется. Облачные копии и другие устройства не удаляются.')
+    .addButton(button=>button.setButtonText('Обновить список').onClick(()=>renderLocalFolderCleanup(el,pilot)));
+  if(!paths.length){el.createEl('p',{text:localizeMessage('На этом устройстве нет локальных копий исключённых папок.')});return;}
+  for(const path of paths){
+    const blocked=localFolderCleanupBlock(path,state);
+    const row=new Setting(el);row.nameEl.createSpan({text:path,attr:{'data-arcalink-user-content':''}});
+    if(blocked)row.setDesc(blocked);
+    row.addButton(button=>button.setButtonText('Удалить локальную копию').setDisabled(!!blocked).onClick(()=>{
+      const modal=new Modal(pilot.app);modal.titleEl.setText(localizeMessage('Удалить локальную копию папки?'));
+      modal.contentEl.createEl('p',{text:path,attr:{'data-arcalink-user-content':''}});
+      modal.contentEl.createEl('p',{text:localizeMessage('Папка со всем содержимым будет перемещена в корзину Obsidian на этом устройстве. Исключение из синхронизации останется включённым. Серверные копии и файлы других устройств не удаляются.')});
+      const error=modal.contentEl.createEl('p');
+      new Setting(modal.contentEl).addButton(cancel=>cancel.setButtonText('Отмена').onClick(()=>modal.close()))
+        .addButton(confirm=>confirm.setButtonText('Удалить локальную копию').setWarning().onClick(async()=>{
+          confirm.setDisabled(true);error.setText('');
+          try{
+            if(pilot.workspaces.busy||await pilot.workspaces.pendingMerge())throw Error('Сначала завершите слияние хранилищ');
+            await trashExcludedLocalFolder(path,{snapshot,getFolder:(name:string)=>{const file=pilot.app.vault.getAbstractFileByPath(name);return file instanceof TFolder?file:null;},trash:(folder:any)=>pilot.app.vault.trash(folder,false)});
+            new Notice('Локальная папка перемещена в корзину Obsidian. Исключение сохранено.');
+            modal.close();renderLocalFolderCleanup(el,pilot);
+          }catch(e:any){error.setText(e.message||'Не удалось удалить локальную копию папки.');}
+          finally{confirm.setDisabled(false);}
+        }));
+      modal.open();
+    }));
+  }
 }
 
 export class FolderExclusionsModal extends Modal {

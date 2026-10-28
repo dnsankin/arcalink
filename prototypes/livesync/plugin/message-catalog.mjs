@@ -1,6 +1,15 @@
 // Supplemental messages absent from the pinned engine's language catalogue.
 // ${...} captures are deliberately opaque: paths, vault names and codes are user data.
 export default Object.fromEntries([
+["Local copies of excluded folders", "Локальные копии исключённых папок"],
+["Delete local copy", "Удалить локальную копию"],
+["Delete the local folder copy?", "Удалить локальную копию папки?"],
+["There are no local copies of excluded folders on this device.", "На этом устройстве нет локальных копий исключённых папок."],
+["The local folder was moved to the Obsidian trash. Its exclusion is preserved.", "Локальная папка перемещена в корзину Obsidian. Исключение сохранено."],
+["This moves the folder to the Obsidian trash on this device. The exclusion rule is preserved. Cloud copies and other devices are not deleted.", "Удаление перемещает папку в корзину Obsidian на этом устройстве. Правило исключения сохраняется. Облачные копии и другие устройства не удаляются."],
+["The folder and all its contents will be moved to the Obsidian trash on this device. Its sync exclusion stays enabled. Server copies and files on other devices are not deleted.", "Папка со всем содержимым будет перемещена в корзину Obsidian на этом устройстве. Исключение из синхронизации останется включённым. Серверные копии и файлы других устройств не удаляются."],
+["The folder contains shared or service data. Removal is unavailable here.", "Папка содержит совместные или служебные материалы. Удаление здесь недоступно."],
+
 ["Invite editors and readers. The server sees only the selected shared folder. Size is limited by free space in the owner's storage.", "Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Размер ограничен свободным местом в хранилище владельца."],
 ["The shared folder is not writable. Local files are preserved.", "Общая папка недоступна для записи. Локальные файлы сохранены."],
 ["The shared folder changed during download. Please retry synchronization.", "Состояние общей папки изменилось во время загрузки. Повторите синхронизацию."],

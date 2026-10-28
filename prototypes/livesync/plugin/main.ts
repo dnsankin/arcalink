@@ -1,4 +1,7 @@
+import {chunkFetchCounts} from '@vrtmrz/livesync-commonlib/compat/mock_and_interop/stores';
 import {NotePublications} from './publication';
+import {CompanionBridge} from './companion-bridge';
+import {MobileAssistant} from './mobile-assistant';
 import {settingsState,settingsStateLabel,capabilityHint} from './settings-state.mjs';
 import {UnifiedVault} from './unified-vault';
 import {VaultControls} from './vault-controls';
@@ -9,7 +12,7 @@ import {openObsidianSettings} from './common/obsidianSettings';
 import {VIEW_TYPE_LOG} from './modules/features/Log/LogPaneView';
 import { Notice, requestUrl, PluginSettingTab, Setting, Platform, setTooltip, setIcon } from 'obsidian';
 import {diagnosticMessage,parameterFailure} from './diagnostic.mjs';
-import {createSyncFeedback,syncLampState,syncUserMessages} from './sync-feedback.mjs';
+import {createSyncFeedback,syncLampState,syncUserMessages,createSyncActivityTracker} from './sync-feedback.mjs';
 import {requestPilot,responseData,responseError,connectionFailure} from './pilot-http.mjs';
 import {Logger,LOG_LEVEL_INFO} from 'octagonal-wheels/common/logger';
 import { createRecoveryLoop,nativeConnectionReachable } from './recovery.mjs';
@@ -85,6 +88,7 @@ export default class ArcaLinkPilot extends LiveSync {
   }
   async connectPilot(email:string,password:string){return this.workspaces.login(email,password);}
   mobileSyncStatus: any;
+  mobileAssistant=new MobileAssistant(this);
   openMobileSyncSettings(){this.pilotSettingsTab='sync';openObsidianSettings(this.app,this.manifest.id);}
   pilotSyncFeedback: any;
   startupSyncNotices: any;
@@ -115,6 +119,8 @@ export default class ArcaLinkPilot extends LiveSync {
     try{this.folders.records=JSON.parse(await this.app.vault.adapter.read(this.folders.registry));}catch{/* No registry exists on a fresh install. */}
     super.onload();
     this.publications.init();
+    void this.mobileAssistant.init();
+    this.register(()=>this.mobileAssistant.dispose());
 
     const openVaultControls=()=>{this.pilotSettingsTab='vaults';openObsidianSettings(this.app,this.manifest.id);};
     window.addEventListener('arcalink-open-vault-controls',openVaultControls);
@@ -142,6 +148,10 @@ export default class ArcaLinkPilot extends LiveSync {
     this.pilotStorageWarning=createStorageWarning({load:()=>this.loadPilotStorageStatus(),notify:(message:string)=>{new Notice(message,15000);}});
     services.appLifecycle.onLoaded.addHandler(async()=>{void this.pilotStorageWarning.tick();return true;},600);
     this.app.workspace.onLayoutReady(()=>{void this.pilotStorageWarning.tick();this.registerInterval(window.setInterval(()=>void this.pilotStorageWarning.tick(),5*60*1000));});
+    const companionBridge=new CompanionBridge(this);
+    this.register(()=>companionBridge.dispose());
+    this.app.workspace.onLayoutReady(()=>{void companionBridge.tick();this.registerInterval(window.setInterval(()=>void companionBridge.tick(),15000));
+      void this.mobileAssistant.poll().catch(()=>{});this.registerInterval(window.setInterval(()=>void this.mobileAssistant.poll().catch(()=>{}),30000));});
     this.mobileSyncStatus=Platform.isMobileApp?createMobileSyncStatus(this):null;
     this.register(()=>this.mobileSyncStatus?.dispose());
     const lamp=this.addStatusBarItem();
@@ -152,6 +162,7 @@ export default class ArcaLinkPilot extends LiveSync {
     const openPilotSettings=()=>openObsidianSettings(this.app,this.manifest.id);
     this.registerDomEvent(lamp,'click',openPilotSettings);
     this.registerDomEvent(lamp,'keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openPilotSettings();}});
+    const syncActivity=createSyncActivityTracker();
     let lampBusy=false,lastMessage='',lastTooltip='';
     const refreshLamp=async()=>{
       if(lampBusy)return;lampBusy=true;
@@ -159,6 +170,7 @@ export default class ArcaLinkPilot extends LiveSync {
         const errors=(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean).map(String);
         const state=services.replicator.replicationStatics.value;
         const status=String(state.syncStatus||'');
+        const activity=syncActivity({sent:state.sent,arrived:state.arrived,counts:[services.replication.databaseQueueCount.value,services.replication.storageApplyingCount.value,services.replication.replicationResultCount.value,chunkFetchCounts.value.initial,this.folders.transferCount]});
         const editor=this.app.workspace.containerEl.querySelector('.livesync-status');
         const log=editor?.querySelector('.livesync-status-logmessage')?.textContent?.trim();
         if(log)lastMessage=log;
@@ -166,9 +178,9 @@ export default class ArcaLinkPilot extends LiveSync {
         const summary=editor?.querySelector('.livesync-status-statusline')?.textContent?.trim()||'';
         const offline=!navigator.onLine;
         const settings=services.setting.currentSettings();
-        if(isFreeRelay(settings)){const connected=this.arcalinkP2P?.transportLifecycle.isConnected,peers=this.arcalinkP2P?.peerDirectory.getPeers()||[];this.mobileSyncStatus?.update({free:true,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});lamp.dataset.state=offline?'offline':connected&&peers.length?'ready':'idle';setTooltip(lamp,offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':'Free: второе устройство подключено; состояние передачи — в панели устройств',{placement:'top'});return;}
+        if(isFreeRelay(settings)){const connected=this.arcalinkP2P?.transportLifecycle.isConnected,peers=this.arcalinkP2P?.peerDirectory.getPeers()||[];this.mobileSyncStatus?.update({free:true,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});lamp.dataset.state=offline?'offline':connected&&peers.length?(activity?'active':'ready'):'idle';setTooltip(lamp,offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':activity?'Синхронизация выполняется':'Free: второе устройство подключено; состояние передачи — в панели устройств',{placement:'top'});return;}
         const paused=services.appLifecycle.isSuspended(),automaticOff=settings.isConfigured&&!settings.liveSync;
-        const kind=syncLampState({errors,status,offline,paused,automaticOff});
+        const kind=syncLampState({errors,status,offline,paused,automaticOff,active:activity});
         lamp.dataset.state=kind;
         this.mobileSyncStatus?.update({kind,status,offline,configured:settings.isConfigured,ready:services.appLifecycle.isReady(),paused,automaticOff,sent:state.sent,arrived:state.arrived,errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
         const label=kind==='idle'&&paused?'Синхронизация приостановлена':kind==='idle'&&automaticOff?'Автоматическая синхронизация выключена':{error:'Ошибка синхронизации',offline:'Нет подключения к интернету',ready:'Синхронизация подключена',active:'Синхронизация выполняется',idle:'Синхронизация ожидает'}[kind];
@@ -258,6 +270,7 @@ class PilotTab extends PluginSettingTab {
       {id:'sharing',label:'Совместная работа',icon:'users-round'},
       {id:'telegram',label:'Telegram',icon:'send'},
       {id:'publications',label:'Публикации',icon:'globe'},
+      {id:'assistant',label:'Мобильный помощник',icon:'smartphone'},
       {id:'desktop',label:'Трей и горячие клавиши',icon:'keyboard'},
       {id:'help',label:'Краткая инструкция',icon:'book-open'},
       {id:'changes',label:'История изменений',icon:'history'}
@@ -329,6 +342,7 @@ class PilotTab extends PluginSettingTab {
     this.pilot.folders.render(panels.sharing,button=>tariffGate(button,'collaboration'));
     if(isFreeRelay(settings))new VaultControls(this.pilot).render(panels.vaults);
     this.pilot.desktop.render(panels.desktop);
+    this.pilot.mobileAssistant.render(panels.assistant);
     this.pilot.publications.rememberPublications([]);
     loadPublications=this.pilot.publications.render(panels.publications);
     void loadPublications();
