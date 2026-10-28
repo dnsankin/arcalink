@@ -37,6 +37,18 @@ export function createSyncFeedback({diagnose,notify}) {
   }
  };
 }
-export function syncLampState({errors,status,offline,paused,automaticOff}) {
- return errors.length||/ERRORED|FAILED/.test(status)?'error':offline?'offline':paused?'idle':/STARTED|JOURNAL/.test(status)?'active':automaticOff?'idle':/CONNECTED|PAUSED|COMPLETED/.test(status)?'ready':'idle';
+export function syncLampState({errors,status,offline,paused,automaticOff,active=false}) {
+ return errors.length||/ERRORED|FAILED/.test(status)?'error':offline?'offline':paused?'idle':active||/STARTED|JOURNAL/.test(status)?'active':automaticOff?'idle':/CONNECTED|PAUSED|COMPLETED/.test(status)?'ready':'idle';
+}
+
+// Display-only samples. Cumulative counters establish a baseline, never activity by themselves.
+export function createSyncActivityTracker({now=Date.now,holdMs=2000}={}) {
+ let previous=null,until=0;
+ return ({sent,arrived,counts=[]})=>{
+  const stamp=now(),current=[sent,arrived];
+  const changed=previous&&current.some((value,i)=>Number.isFinite(value)&&Number.isFinite(previous[i])&&value>previous[i]);
+  if(changed||counts.some(value=>Number.isFinite(value)&&value>0))until=stamp+holdMs;
+  previous=current;
+  return stamp<until;
+ };
 }

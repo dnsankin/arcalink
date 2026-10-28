@@ -33,3 +33,10 @@ test('decoded buffers are reused by the generated binary decoder and Blob adapte
  const data=new Uint8Array([0,128,255,11]).buffer,doc={type:'newnote',datatype:'newnote',path:'clip.mp4',data};
  assert.equal(readContent(doc),data);assert.equal(readAsBlob(doc).size,4);assert.deepEqual([...new Uint8Array(await readAsBlob(doc).arrayBuffer())],[0,128,255,11]);
 });
+test('generated reader bounds large files on desktop as well as Android',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const reader=await readFile(new URL('../.cache/source/node_modules/@vrtmrz/livesync-commonlib/dist/managers/EntryManager/EntryManagerImpls.js',import.meta.url),'utf8');
+ assert.ok(reader.includes('meta, [dump, waitForReady, localOnly], true,'));
+ assert.ok(reader.includes('if (meta.type === "newnote"'));
+ assert.ok(!reader.includes('arcaPlatform'));
+});

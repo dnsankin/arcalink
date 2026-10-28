@@ -19,6 +19,7 @@ export class SharedFolders {
     entries = new Map<string, any>();
     views = new Map<any, any>();
     disposed = false;
+    transferCount = 0;
     queue = Promise.resolve();
     lastRefresh = 0;
     refreshAttempt = 0;
@@ -332,7 +333,14 @@ export class SharedFolders {
     }
     async upload(e: any, data: Uint8Array) {
         this.assertWritable(e);
-        return uploadSharedBlob((action: string, body: any) => this.plugin.collaboration.api(action, body), e.record.id, data);
+        this.transferCount++;
+        try { return await uploadSharedBlob((action: string, body: any) => this.plugin.collaboration.api(action, body), e.record.id, data); }
+        finally { this.transferCount--; }
+    }
+    async download(e: any, hash: string, size: number) {
+        this.transferCount++;
+        try { return await downloadSharedBlob((action: string, body: any) => this.plugin.collaboration.api(action, body), e.record.id, hash, size); }
+        finally { this.transferCount--; }
     }
     scheduleProject(e: any) {
         void this.project(e).catch((error: any) => {
@@ -364,7 +372,7 @@ export class SharedFolders {
                     e.signatures ||= new Map(); if (signature) e.signatures.set(id,signature); continue;
                 }
                 const data = type === 'text' ? new TextEncoder().encode(snapshot) : type === 'blob'
-                    ? await downloadSharedBlob((action: string, body: any) => this.plugin.collaboration.api(action, body), e.record.id, snapshot, size)
+                    ? await this.download(e, snapshot, size)
                     : base64ToBytes(snapshot);
                 // Membership, path or content may change while awaiting the network.
                 if (this.disposed || e.denied || e.files.get(id) !== f || f.get('path') !== relative

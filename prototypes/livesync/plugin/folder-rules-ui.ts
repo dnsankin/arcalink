@@ -41,7 +41,7 @@ export class FolderRulesModal extends Modal {
     if(!controller.available)this.contentEl.createEl('p',{text:localizeMessage('Общие исключения сейчас недоступны. Можно изменить локальные исключения.')});
     const available=this.app.vault.getAllLoadedFiles().filter((f:any)=>f instanceof TFolder&&f.path&&f.path!=='/').map((f:any)=>f.path);
     const paths=[...new Set<string>([...available,...local,...common])];
-    const tree=folderTree(paths),expanded=new Set<string>(tree.roots.map((node:any)=>node.path));
+    const tree=folderTree(paths),expanded=new Set<string>();
     let query='';const rows:any[]=[];let search:any,save:any,cancel:any;
     const list=this.contentEl.createDiv({cls:'arcalink-folder-tree'});
     const header=list.createDiv({cls:'arcalink-folder-tree-header'});

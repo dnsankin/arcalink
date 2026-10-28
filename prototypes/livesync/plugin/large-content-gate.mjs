@@ -1,4 +1,4 @@
-/** Bound large Android reconstructions; keep different revisions/options independent. */
+/** Bound large reconstructions on every platform; keep different revisions/options independent. */
 const owners=new WeakMap();
 export function readLargeContent(owner,meta,options,mobile,task) {
  if(!mobile||!Number.isFinite(meta?.size)||meta.size<32*1024*1024)return task();

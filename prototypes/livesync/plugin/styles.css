@@ -44,7 +44,7 @@
 .livesync-status, .syncstatusbar { display: none !important; }
  .arcalink-sync-lamp { color: #808080; font-size: 16px; }
 .arcalink-sync-lamp[data-state="ready"] { color: #238636; }
-.arcalink-sync-lamp[data-state="active"] { color: #0969da; }
+.arcalink-sync-lamp[data-state="active"] { color: #38bdf8; text-shadow: 0 0 6px #38bdf866; }
 .arcalink-sync-lamp[data-state="offline"] { color: #bf8700; }
 .arcalink-sync-lamp[data-state="error"] { color: #cf222e; }
 
@@ -204,3 +204,7 @@
     .arcalink-folder-access-card .setting-item { flex-direction: column; align-items: stretch; gap: 10px; }
     .arcalink-folder-access-card .setting-item-control { justify-content: flex-start; }
 }
+
+/* Keep cleanup description and all folder actions inside one card. */
+.arcalink-local-folder-cleanup > .setting-item:first-child { padding-top: 0; }
+.arcalink-local-folder-cleanup > .setting-item:last-child { padding-bottom: 0; border-bottom: 0; }

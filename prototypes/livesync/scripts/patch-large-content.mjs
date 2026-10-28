@@ -2,8 +2,8 @@ export function patchLargeContent(source) {
  const marker='async function getDBEntryFromMeta(host, { localDatabase, chunkManager }, meta, dump = false, waitForReady = true, localOnly = false) {';
  if(source.split(marker).length!==2)throw Error('Unexpected upstream large content reader');
  source=patchBinaryAssembly(source);
- return `import {Platform as arcaPlatform} from 'obsidian';\nimport {readLargeContent,assembleBinaryChunks} from '../../../../../../src/large-content-gate.mjs';\n`+source.replace(marker,`function getDBEntryFromMeta(host, managers, meta, dump = false, waitForReady = true, localOnly = false) {
-  return readLargeContent(managers.localDatabase, meta, [dump, waitForReady, localOnly], arcaPlatform.isAndroidApp,
+ return `import {readLargeContent,assembleBinaryChunks} from '../../../../../../src/large-content-gate.mjs';\n`+source.replace(marker,`function getDBEntryFromMeta(host, managers, meta, dump = false, waitForReady = true, localOnly = false) {
+  return readLargeContent(managers.localDatabase, meta, [dump, waitForReady, localOnly], true,
     () => readUnboundedDBEntryFromMeta(host, managers, meta, dump, waitForReady, localOnly));
 }
 async function readUnboundedDBEntryFromMeta(host, { localDatabase, chunkManager }, meta, dump = false, waitForReady = true, localOnly = false) {`);
@@ -16,7 +16,7 @@ function patchBinaryAssembly(source) {
  if(a<0||b<0||source.indexOf(start,a+1)!==-1)throw Error('Unexpected upstream binary assembly');
  const original=source.slice(a,b);
  const replaced=`    let assembledData;
-    if (arcaPlatform.isAndroidApp && meta.type === "newnote" && Number.isSafeInteger(meta.size) && meta.size >= 32 * 1024 * 1024) {
+    if (meta.type === "newnote" && Number.isSafeInteger(meta.size) && meta.size >= 32 * 1024 * 1024) {
       assembledData = await assembleBinaryChunks(meta,
         ids => chunkManager.read(ids, {skipCache: true, waitForDelivery, preventRemoteRequest}, edenChunks),
         data => decodeBinary(data));

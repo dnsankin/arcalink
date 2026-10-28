@@ -29,3 +29,23 @@ export function withExcludedFolders(rules, folders, caseSensitive = false) {
   const preserved = (rules || '').split(delimiter).filter(rule => rule && ruleFolder(rule) === null);
   return [...preserved, ...roots.map(folderRule)].join(delimiter);
 }
+
+// Only real folder-picker exclusions: never infer whole-folder exclusion from arbitrary regexes.
+export function excludedLocalFolderRoots({rules='',common=[],paths=[],caseSensitive=false}) {
+ const roots=[...excludedFolders(rules),...common];
+ const selected=paths.filter(path=>validPath(path)&&roots.some(root=>folderContains(root,path,caseSensitive)));
+ return selected.sort((a,b)=>a.length-b.length||a.localeCompare(b)).filter((path,index,all)=>!all.slice(0,index).some(parent=>folderContains(parent,path,caseSensitive)));
+}
+export function localFolderCleanupBlock(path,{shared=[],protectedPaths=[],caseSensitive=false}={}) {
+ if(!validPath(path))return 'Недопустимый путь папки';
+ if([...shared,...protectedPaths].some(root=>folderContains(root,path,caseSensitive)||folderContains(path,root,caseSensitive)))return 'Папка содержит совместные или служебные материалы. Удаление здесь недоступно.';
+ return '';
+}
+export async function trashExcludedLocalFolder(path,{snapshot,getFolder,trash}) {
+ const state=snapshot();
+ if(!excludedLocalFolderRoots(state).includes(path))throw Error('Папка больше не исключена из синхронизации. Обновите список.');
+ const blocked=localFolderCleanupBlock(path,state);if(blocked)throw Error(blocked);
+ const folder=getFolder(path);if(!folder)throw Error('Локальная папка уже отсутствует. Обновите список.');
+ // No await between the final eligibility check and invoking the native trash operation.
+ await trash(folder);
+}
