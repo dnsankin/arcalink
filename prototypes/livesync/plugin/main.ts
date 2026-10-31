@@ -1,6 +1,10 @@
+import {Shared2} from './shared2';
+import {shared2Message} from './shared2-messages.mjs';
 import {chunkFetchCounts} from '@vrtmrz/livesync-commonlib/compat/mock_and_interop/stores';
 import {NotePublications} from './publication';
 import {CompanionBridge} from './companion-bridge';
+import {CompanionSync} from './companion-sync';
+import {CompanionOwnership} from './companion-ownership';
 import {MobileAssistant} from './mobile-assistant';
 import {settingsState,settingsStateLabel,capabilityHint} from './settings-state.mjs';
 import {UnifiedVault} from './unified-vault';
@@ -56,6 +60,7 @@ export default class ArcaLinkPilot extends LiveSync {
   }
   collaboration!: CollaborativeNotes;
   folders=new SharedFolders(this);
+  shared2=new Shared2(this);
   telegram=new TelegramInbox(this);
   desktop=new DesktopControls(this);
   publications=new NotePublications(this);
@@ -74,6 +79,7 @@ export default class ArcaLinkPilot extends LiveSync {
   sharedFeatures:Promise<void>|null=null;
   async initializeCloudFeatures(){
     if(pluginEnvironment(this.manifest).lab)return;
+    void this.shared2.init();
     const free=isFreeRelay(this.core.services.setting.currentSettings());
     // Existing shared files still need their cached CRDT and read-only binding on Free.
     if(free&&!this.folders.records.length&&!await this.app.vault.adapter.exists(this.collaboration.registry))return;
@@ -89,6 +95,7 @@ export default class ArcaLinkPilot extends LiveSync {
   async connectPilot(email:string,password:string){return this.workspaces.login(email,password);}
   mobileSyncStatus: any;
   mobileAssistant=new MobileAssistant(this);
+  companionOwnership=new CompanionOwnership(this);
   openMobileSyncSettings(){this.pilotSettingsTab='sync';openObsidianSettings(this.app,this.manifest.id);}
   pilotSyncFeedback: any;
   startupSyncNotices: any;
@@ -109,6 +116,8 @@ export default class ArcaLinkPilot extends LiveSync {
   // Upstream currently declares onload as void even though Obsidian supports an async hook.
   // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Upstream still declares this supported Obsidian lifecycle hook as void.
   override async onload() {
+    await this.companionOwnership.load();
+    this.companionOwnership.attachBeforeStart();
     this.startupSyncNotices=createStartupNoticeGate({enabled:Platform.isMobileApp,
       readState:()=>this.startupSyncNoticeState(),translate:messageInEnglish,
       notify:(message:string)=>new Notice(message,10000)});
@@ -127,9 +136,10 @@ export default class ArcaLinkPilot extends LiveSync {
     this.register(()=>window.removeEventListener('arcalink-open-vault-controls',openVaultControls));
     this.app.workspace.onLayoutReady(()=>{for(const type of ['p2p-server-status','p2p-replicator'])for(const leaf of this.app.workspace.getLeavesOfType(type))leaf.detach();});
     const services = this.core.services;
+    this.app.workspace.onLayoutReady(()=>{void this.companionOwnership.tick();this.registerInterval(window.setInterval(()=>void this.companionOwnership.tick(),5000));});
     this.folderPolicies.attach();
     this.pilotSyncFeedback=createSyncFeedback({diagnose:()=>this.syncDiagnostic(),notify:(message:string)=>{Logger(message,LOG_LEVEL_INFO);return new Notice(message,10000);}});
-    services.appLifecycle.getUnresolvedMessages.addHandler(async()=>[...this.pilotSyncFeedback.messages,...this.folders.syncFeedback.messages]);
+    services.appLifecycle.getUnresolvedMessages.addHandler(async()=>[...this.pilotSyncFeedback.messages,...this.folders.syncFeedback.messages,...(this.shared2.enabled&&this.shared2.warning?[shared2Message(this.shared2.warning)]:[])]);
     // Preparation succeeded. Clear only our previous diagnostic, never other
     // modules' unresolved errors, and hide its still-visible notification.
     services.replication.onBeforeReplicate.addHandler(async()=>{this.pilotSyncFeedback.clear();return true;},-10);
@@ -150,6 +160,13 @@ export default class ArcaLinkPilot extends LiveSync {
     this.app.workspace.onLayoutReady(()=>{void this.pilotStorageWarning.tick();this.registerInterval(window.setInterval(()=>void this.pilotStorageWarning.tick(),5*60*1000));});
     const companionBridge=new CompanionBridge(this);
     this.register(()=>companionBridge.dispose());
+    if(Platform.isAndroidApp){
+      const companionSync=new CompanionSync(this);
+      this.register(()=>companionSync.dispose());
+      const tick=()=>{if(!this.companionOwnership.blocksOrdinary)void companionSync.tick();};
+      this.app.workspace.onLayoutReady(()=>{tick();this.registerInterval(window.setInterval(tick,5000));});
+      this.registerDomEvent(document,'visibilitychange',()=>{if(!document.hidden)tick();});
+    }
     this.app.workspace.onLayoutReady(()=>{void companionBridge.tick();this.registerInterval(window.setInterval(()=>void companionBridge.tick(),15000));
       void this.mobileAssistant.poll().catch(()=>{});this.registerInterval(window.setInterval(()=>void this.mobileAssistant.poll().catch(()=>{}),30000));});
     this.mobileSyncStatus=Platform.isMobileApp?createMobileSyncStatus(this):null;
@@ -170,7 +187,7 @@ export default class ArcaLinkPilot extends LiveSync {
         const errors=(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean).map(String);
         const state=services.replicator.replicationStatics.value;
         const status=String(state.syncStatus||'');
-        const activity=syncActivity({sent:state.sent,arrived:state.arrived,counts:[services.replication.databaseQueueCount.value,services.replication.storageApplyingCount.value,services.replication.replicationResultCount.value,chunkFetchCounts.value.initial,this.folders.transferCount]});
+        const activity=syncActivity({sent:state.sent,arrived:state.arrived,counts:[services.replication.databaseQueueCount.value,services.replication.storageApplyingCount.value,services.replication.replicationResultCount.value,chunkFetchCounts.value.initial,this.folders.transferCount,this.shared2.transferCount]});
         const editor=this.app.workspace.containerEl.querySelector('.livesync-status');
         const log=editor?.querySelector('.livesync-status-logmessage')?.textContent?.trim();
         if(log)lastMessage=log;
@@ -202,7 +219,7 @@ export default class ArcaLinkPilot extends LiveSync {
     this.pilotRecovery = createRecoveryLoop({
       eligible: () => {
         const s = services.setting.currentSettings();
-        return !isFreeRelay(s) && s.isConfigured && s.liveSync && services.appLifecycle.isReady()
+        return !this.companionOwnership.blocksOrdinary && !isFreeRelay(s) && s.isConfigured && s.liveSync && services.appLifecycle.isReady()
           && !services.appLifecycle.isSuspended() && services.API.isOnline;
       },
       reachable: async () => {
@@ -218,20 +235,22 @@ export default class ArcaLinkPilot extends LiveSync {
     this.addCommand({ id: 'pilot-recovery-status', name: 'Синхронизация: состояние восстановления', callback: () => {
       new Notice(JSON.stringify(this.pilotRecovery.status));
     }});
-    const reconcileVault=()=>{void this.unifiedVault.poll();};
+    const reconcileVault=()=>{if(!this.companionOwnership.blocksOrdinary)void this.unifiedVault.poll();};
     services.appLifecycle.onLoaded.addHandler(async()=>{reconcileVault();return true;},650);
     this.registerInterval(window.setInterval(reconcileVault,60000));
     window.addEventListener('online',reconcileVault);this.register(()=>window.removeEventListener('online',reconcileVault));
-    const renewFree=()=>{void this.freeRelay.renew().catch(()=>{});};
+    const renewFree=()=>{if(!this.companionOwnership.blocksOrdinary)void this.freeRelay.renew().catch(()=>{});};
     this.registerInterval(window.setInterval(renewFree,15000));
     for(const name of ['online','focus','pageshow','arcalink-free-signal-change']){window.addEventListener(name,renewFree);this.register(()=>window.removeEventListener(name,renewFree));}
     document.addEventListener('visibilitychange',renewFree);this.register(()=>document.removeEventListener('visibilitychange',renewFree));
     await this.desktop.init();
   }
   override onunload() {
+    this.companionOwnership.dispose();
     this.desktop.dispose();
     this.pilotSyncFeedback?.clear();
     this.telegram.dispose();
+    void this.shared2.dispose().catch(()=>{});
     this.folders.dispose();
     this.workspaces.dispose();
     this.collaboration?.dispose();

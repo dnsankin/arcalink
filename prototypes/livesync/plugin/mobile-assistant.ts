@@ -1,4 +1,4 @@
-import {Modal,Notice,Platform,Setting} from 'obsidian';
+import {Modal,Notice,Platform,Setting,setIcon} from 'obsidian';
 import {requestUrl} from './localized-obsidian';
 import {ASSISTANT_SITE,ASSISTANT_CATALOG,validateAssistantRelease,boundedOfficialGet,verifyAssistantApk} from './assistant-download.mjs';
 import {sha256,safeCompanionPath} from './companion-proof.mjs';
@@ -10,6 +10,7 @@ export class MobileAssistant {
  private journalWrites:Promise<void>=Promise.resolve();private installerWrites:Promise<void>=Promise.resolve();
  private attempt:{cancelled:boolean;committed:boolean;controller:AbortController;record:any}|null=null;
  constructor(private plugin:any){}
+ isBusy(){return this.busy||this.polling||!!this.attempt;}
  private get journal(){return this.plugin.pilotDirectory+'/assistant-delivery.json';}
  async init(){try{this.last=JSON.parse(await this.plugin.app.vault.adapter.read(this.journal));this.state=this.last?.delivery?.state||'';}catch{/* Optional feature has no journal on first use. */}}
  dispose(){this.disposed=true;this.controller?.abort();this.views.clear();}
@@ -27,13 +28,22 @@ export class MobileAssistant {
  private refresh(){for(const el of this.views){if(!el.isConnected){this.views.delete(el);continue;}this.fill(el);}}
  render(el:HTMLElement){this.views.add(el);this.fill(el);}
  private fill(el:HTMLElement){
-  el.empty();new Setting(el).setName('Мобильный помощник').setHeading();
-  el.createEl('p',{text:'Заметки и список дел на рабочем столе Android. Быстрые записи, фото, голос и обмен файлами.'});
+  el.empty();el.style.overflowWrap='anywhere';new Setting(el).setName('Мобильный помощник').setHeading();
+  el.createEl('p',{text:'ArcaLink Компаньон для Android: заметки и задачи на рабочем столе, быстрые записи, фото, голос и обмен файлами.'});
+  new Setting(el).setName('Как пользоваться').addButton(button=>button.setButtonText('Открыть справку').onClick(()=>new CompanionHelp(this.plugin).open()));
+  const ownership=this.plugin.companionOwnership;
+  if(ownership?.blocksOrdinary){
+   el.createEl('p',{text:ownership.committed?'Обычные файлы синхронизирует Компаньон. Общие папки и совместные заметки продолжает синхронизировать плагин.':'Передача синхронизации Компаньону ожидает завершения проверки. Файлы и прежняя локальная база сохранены.'});
+   if(ownership.committed&&ownership.state.scopeWindow?.status==='open')el.createEl('p',{text:'Компаньон приостановлен: можно изменить набор общих папок. После изменений нажмите «Применить изменения и продолжить» в Компаньоне.'});
+   if(ownership.error)el.createEl('p',{text:ownership.error});
+   if(ownership.committed)new Setting(el).addButton(button=>button.setButtonText('Синхронизировать через Компаньон').onClick(()=>ownership.requestNativeSync()));
+   else if(['preparing','held'].includes(ownership.state?.phase))new Setting(el).addButton(button=>button.setButtonText('Отменить подключение и вернуть плагину').onClick(()=>void ownership.cancel()));
+  }
   if(this.release){
    el.createEl('p',{text:`Версия ${this.release.version} · ${new Date(this.release.releasedAt).toLocaleDateString()} · ${(this.release.size/1048576).toFixed(1)} МиБ`});
    const changes=el.createEl('details');changes.createEl('summary',{text:'Что нового'});changes.createEl('p',{text:this.release.changes});
   }
-  new Setting(el).addButton(b=>b.setButtonText('Получить свежий ассистент').setDisabled(this.busy).onClick(()=>void this.prepare()));
+  new Setting(el).addButton(b=>b.setButtonText('Получить свежий ассистент').setCta().setDisabled(this.busy).onClick(()=>void this.prepare()));
   const site=el.createEl('a',{text:'Скачать с сайта ArcaLink',href:ASSISTANT_SITE,attr:{target:'_blank',rel:'noopener noreferrer'}});
   site.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();window.open(ASSISTANT_SITE,'_blank','noopener,noreferrer');});
   el.createEl('p',{text:deliveryLabel(this.state)+(this.message?' · '+this.message:'')});
@@ -211,6 +221,52 @@ export class MobileAssistant {
    }
   }finally{this.polling=false;}
  }
+}
+class CompanionHelp extends Modal {
+ constructor(private plugin:any){super(plugin.app);}
+ override onOpen(){
+  this.titleEl.setText('Как пользоваться Компаньоном');
+  this.modalEl.style.width='min(42rem, calc(100vw - 2rem))';
+  this.modalEl.style.maxWidth='calc(100vw - 2rem)';
+  this.modalEl.style.maxHeight='calc(100dvh - 2rem)';
+  const el=this.contentEl;el.empty();el.style.overflowY='auto';el.style.overflowWrap='anywhere';
+  el.createEl('p',{text:'Компаньон сохраняет текст, фото и голос в файлы Obsidian на телефоне. Справку можно открыть здесь в любое время.'});
+  this.section('С чего начать','smartphone');
+  el.createEl('p',{text:'На телефоне откройте Компаньон → «Настройки» → «Выбрать хранилище Obsidian». Выберите корень существующего хранилища. Затем сохраните первую запись — приложение покажет, куда она попала.'});
+  this.section('Написать себе','send');
+  el.createEl('p',{text:'«Обмен» — личный обменник, как «Избранное» в Telegram. Откройте «Обмен» → «Написать себе», введите текст и сохраните. Через «Прикрепить» добавьте фото, голос или файл. Можно также отправить текст и вложения из другого приложения через «Поделиться» → «ArcaLink Компаньон».'});
+  this.section('Новая заметка','file-plus');
+  el.createEl('p',{text:'Нажмите «Новая заметка» и введите текст. Заголовок необязателен: имя файла получится из текста. Новая заметка попадёт в папку быстрых заметок. Если настроено дописывание в одну заметку, кнопка называется «Быстрая запись»; отдельный файл можно выбрать через «Выбрать назначение» → «Новая заметка».'});
+  this.section('Задача','list-checks');
+  el.createEl('p',{text:'Нажмите «Задача», введите текст и сохраните. По умолчанию используется «Задачи.md». Другую заметку можно выбрать в настройках Компаньона, в поле «Заметка задач».'});
+  this.section('Виджеты на экране Android','layout-grid');
+  const steps=el.createEl('ol');
+  for(const text of ['Удерживайте пустое место на главном экране телефона и откройте «Виджеты».','Найдите «ArcaLink Компаньон» и добавьте виджет заметок, быстрых действий или обменника.','Для виджета заметок выберите заметки и нажмите «Сохранить». Размер виджета можно изменить на главном экране.'])steps.createEl('li',{text});
+  this.section('Где лежат файлы','folder-open');
+  el.createEl('p',{text:'На телефоне проверьте «Настройки» → «Куда сохранять». Начальные назначения: «Быстрые заметки», «Задачи.md», «Exchange» и «Attachments». Пустая папка означает корень. Назначения запоминаются отдельно для каждого хранилища; папки телефона и компьютера могут отличаться.'});
+  if(!Platform.isMobileApp){
+   el.createEl('p',{text:'В этом Obsidian на компьютере сейчас выбраны:'});
+   const paths=el.createEl('ul'),settings=this.plugin.desktop.settings;
+   for(const [label,path] of [['Хранилище',this.plugin.app.vault.getName()],['Быстрые заметки',settings.quickNoteFolder||'Корень хранилища'],['Обмен',settings.exchangeFolder]]){
+    const row=paths.createEl('li',{text:label+': '});row.createEl('code',{text:path});
+   }
+   new Setting(el).addButton(button=>button.setButtonText('Настройки папок на компьютере').onClick(()=>{this.close();this.plugin.openDesktopSettings();}));
+  }
+  this.section('Как передать на другое устройство','refresh-cw');
+  el.createEl('p',{text:'Для локальных записей подключение синхронизации необязательно. Для самостоятельной передачи откройте на телефоне «Настройки» → «Аккаунт и синхронизация». Первое подключение подтверждается в Компаньоне и плагине Obsidian. После подключения обычные файлы передаёт Компаньон без запущенного Obsidian; общие папки и совместные заметки обслуживает плагин. В режиме Free нужно доступное второе устройство.'});
+  const ownership=this.plugin.companionOwnership;
+  el.createEl('p',{text:ownership?.committed
+   ?ownership.state?.scopeWindow?.status==='open'?'В этом Obsidian подключение Компаньона подтверждено, передача приостановлена для изменения общих папок. Продолжение — в Компаньоне.':'В этом Obsidian подключение Компаньона подтверждено. Текущее состояние передачи смотрите на телефоне.'
+   :ownership?.blocksOrdinary?'В этом Obsidian подключение Компаньона ещё не завершено. Проверьте состояние подключения в обоих приложениях.':'Этот Obsidian не подтверждает подключение Компаньона на телефоне. Проверьте его в «Аккаунт и синхронизация» на телефоне.'});
+  el.createEl('p',{text:'«Сохранено на устройстве» означает локальный файл. «Ожидает передачи» ещё не подтверждает получение. В «Аккаунт и синхронизация» откройте «Передача файлов»: «В облаке» или «Получено устройством…» подтверждают конкретную передачу. Если запись не пришла, проверьте выбранное хранилище, интернет, исключения и состояние операции на телефоне.'});
+  new Setting(el).addButton(button=>button.setButtonText('Настройки синхронизации плагина').onClick(()=>{this.close();this.plugin.openMobileSyncSettings();}));
+  new Setting(el).addButton(button=>button.setButtonText('Готово').onClick(()=>this.close()));
+ }
+ private section(title:string,icon:string){
+  const heading=this.contentEl.createEl('h3');heading.style.display='flex';heading.style.alignItems='center';heading.style.gap='0.5em';
+  const mark=heading.createSpan({attr:{'aria-hidden':'true'}});mark.style.flexShrink='0';setIcon(mark,icon);heading.createSpan({text:title});
+ }
+ override onClose(){this.contentEl.empty();}
 }
 class AssistantExchangeConfirmation extends Modal {
  constructor(app:any,private owner:MobileAssistant,private release:any,private workspace:string){super(app);}

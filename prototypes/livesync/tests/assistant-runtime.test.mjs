@@ -6,6 +6,7 @@ const root=new URL('../',import.meta.url),esbuild=await import(new URL('.cache/s
 const uiStub=[
  'export class Modal { constructor(){this.titleEl={setText:text=>this.title=text};this.contentEl=globalThis.__assistantElement();} open(){globalThis.__assistantDialogs.push(this);this.onOpen();} close(){} }',
  'export class Notice {}',
+ 'export function setIcon() {}',
  'export class Setting { constructor(){} addButton(callback){const button={setButtonText(text){this.text=text;return this;},setCta(){return this;},setDisabled(){return this;},onClick(click){this.click=click;return this;}};callback(button);return this;} setName(){return this;} setHeading(){return this;} addDropdown(callback){const dropdown={addOption(){return this;},setValue(){return this;},onChange(){return this;}};callback(dropdown);return this;} }',
  'export const Platform={get isAndroidApp(){return globalThis.__assistantAndroid===true;}};',
  'export const requestUrl=options=>globalThis.__assistantNetwork(options);'
@@ -19,7 +20,7 @@ const workspace='a'.repeat(32),target={id:'phone',name:'Phone'};
 function defer(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 function environment(){
  globalThis.__assistantAndroid=false;globalThis.__assistantUi=[];globalThis.__assistantDialogs=[];
- globalThis.__assistantElement=(tag='root',options={})=>({tag,...options,children:[],isConnected:true,handlers:{},addEventListener(name,callback){this.handlers[name]=callback;},empty(){this.children=[];},createEl(childTag,childOptions){const child=globalThis.__assistantElement(childTag,childOptions);this.children.push(child);globalThis.__assistantUi.push(child);return child;}});
+ globalThis.__assistantElement=(tag='root',options={})=>({tag,...options,children:[],isConnected:true,style:{},handlers:{},addEventListener(name,callback){this.handlers[name]=callback;},empty(){this.children=[];},createEl(childTag,childOptions){const child=globalThis.__assistantElement(childTag,childOptions);this.children.push(child);globalThis.__assistantUi.push(child);return child;}});
  const memory=new Map(),calls=[];let writes=0;
  const delivery={id:'b'.repeat(32),sender:'sender',target:'phone',path:'Exchange/ArcaLink Android/0.1.0/'+release.filename,state:'preparing',version:release.version};
  globalThis.fetch=async()=>new Response(bytes);
@@ -130,7 +131,7 @@ test('release notes stay collapsed while the main description remains short',()=
  const el=globalThis.__assistantElement();e.assistant.render(el);
  assert.equal(el.children.some(item=>item.text?.includes('Long release details')),false);
  const details=el.children.find(item=>item.tag==='details');assert.ok(details);assert.equal(details.attr?.open,undefined);
- assert.ok(el.children.find(item=>item.tag==='p'&&item.text?.includes('Заметки и список дел')));e.assistant.dispose();
+ assert.ok(el.children.find(item=>item.tag==='p'&&item.text?.includes('ArcaLink Компаньон для Android: заметки и задачи')));e.assistant.dispose();
 });
 
 for(const action of ['cancel','dispose'])test(`${action} during Android installer registration cannot report exchange completion`,async()=>{

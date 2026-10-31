@@ -6,16 +6,17 @@
 
 ArcaLink Sync синхронизирует заметки Obsidian между устройствами через сервис ArcaLink. Плагин поддерживает личные хранилища, общие папки, совместное редактирование, шифрование личных заметок и получение сообщений и вложений из Telegram.
 
-[Android-помощник](https://arcalink.ru/android) добавляет виджеты заметок и списка дел, быстрые записи, фото и голос. В разделе «Мобильный помощник» можно получить APK с любого устройства в общий обменник; он появится на устройствах, синхронизирующих эту папку. Установка на Android выполняется вручную. Для обмена Obsidian должен быть запущен.
+[Android-помощник](https://arcalink.ru/android) добавляет виджеты заметок и списка дел, быстрые записи, фото и голос. В разделе «Мобильный помощник» можно получить APK с любого устройства в общий обменник; он появится на устройствах, синхронизирующих эту папку. Установка на Android выполняется вручную. В версии 1.0.30 совместимый Компаньон может самостоятельно передавать обычные файлы после подтверждения подключения в обоих приложениях. Общие папки и совместные заметки продолжает обслуживать плагин; для Free нужно доступное второе устройство.
 
 ### История версий
 
-Текущая версия: **[1.0.29](https://github.com/dnsankin/arcalink/releases/tag/1.0.29)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
+Текущая версия: **[1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30) | 01.11.2026 | Подключение самостоятельной синхронизации Компаньона с проверкой кода и передачей управления обычными файлами; общие папки остаются у плагина. Постоянная справка «Как пользоваться». Поддержка нового серверного режима общих папок: фоновые переносы, приглашения по email, отдельное шифрование и подтверждение ключей, сверка прежних копий, прекращение общего доступа и восстановление серверной копии. Режим включается сервисом отдельно; существующие папки переносятся вручную. |
 | [1.0.29](https://github.com/dnsankin/arcalink/releases/tag/1.0.29) | 28.10.2026 | Получение Android-помощника с любого устройства в общий обменник без выбора телефона. Короткое описание и исправленная ссылка на сайт загрузки. Удаление каталога общей папки передаётся участникам; устранено восстановление удалённых файлов запоздавшей загрузкой. |
 | [1.0.28](https://github.com/dnsankin/arcalink/releases/tag/1.0.28) | 28.10.2026 | Исправлено переполнение памяти при восстановлении крупных вложений на компьютерах; добавлен голубой индикатор передачи. Локальные копии исключённых папок можно перемещать в корзину из единой карточки. Дерево выбора папок открывается свёрнутым. |
 | [1.0.27](https://github.com/dnsankin/arcalink/releases/tag/1.0.27) | 27.10.2026 | Исправлено переполнение памяти при восстановлении крупных вложений на Android: блоки декодируются последовательно без накопления всего файла в base64. Добавлена команда «Досинхронизировать файлы» для добавления пропущенных файлов общей папки; существующие общие файлы сохраняются. |
@@ -51,7 +52,7 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 | Тариф | Стоимость | Синхронизация и место |
 | --- | --- | --- |
 | Free | Бесплатно | Оба устройства должны быть онлайн одновременно. Серверное хранилище не предоставляется. |
-| Begin | 100 ₽ за 30 дней | 300 МБ серверного хранилища. Устройства могут синхронизироваться в разное время. |
+| Begin | 100 ₽ за 30 дней | 300 МБ серверного хранилища, общие папки. Устройства могут синхронизироваться в разное время. |
 | Pro | 250 ₽ за 30 дней | 1 ГБ серверного хранилища, общие папки, одновременное редактирование и до трёх приглашённых участников. |
 
 Для получения сообщений из Telegram нужны платный тариф и настроенный личный бот. Поддерживаются текст, фотографии и вложения голосовых сообщений; распознавание речи не выполняется. Перед оплатой проверьте действующие условия на сайте ArcaLink: они имеют приоритет.
@@ -62,9 +63,21 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### Данные и шифрование
 
-Для личных хранилищ доступно сквозное шифрование, если оно включено при настройке. При выключенном шифровании сервер может читать содержимое личных заметок. Совместные заметки, общие папки и сообщения, получаемые из Telegram, не защищены сквозным шифрованием личного хранилища и доступны серверу.
+Для личных хранилищ доступно сквозное шифрование, если оно включено при настройке. При выключенном шифровании сервер может читать содержимое личных заметок. Совместные заметки, прежний формат общих папок и сообщения из Telegram доступны серверу. В новом режиме для общей папки можно включить собственное сквозное шифрование и передавать ключи участникам после проверки отпечатков устройств. Ключ личного хранилища сам по себе не защищает совместную работу.
 
-Сохраняйте собственные резервные копии важных заметок: **восстановление предыдущей версии заметки не предоставляется**. Не включайте одновременно другой плагин синхронизации всего хранилища.
+Сохраняйте собственные резервные копии важных заметок: сервис не заменяет резервную копию и не гарантирует полную историю каждой заметки. Не включайте одновременно другой плагин синхронизации всего хранилища.
+
+### Общие папки нового режима
+
+Этот режим требует обновления и отдельного включения на стороне сервиса. До включения используется прежний режим. Перенос существующей папки запускается вручную в настройках общих папок.
+
+После запуска можно закрыть настройки и продолжить работу: файлы загружаются в фоне, пока Obsidian открыт. Приглашения по email принимаются или отклоняются в плагине. В карточке папки видны владелец, участники и права; владелец меняет роли и отзывает доступ, участник может выйти, сохранив локальные файлы.
+
+Папка использует отдельное серверное хранилище и при необходимости собственный ключ шифрования. Перенос проверяет содержимое и сохранённые версии перед переключением; затем прежний серверный источник очищается. Во время переноса нужны временные копии, а локальные резервные версии сохраняются для проверки. Место учитывается в общей квоте владельца.
+
+«Сверить прежние копии» объединяет доступные личные и общие истории после отдельного подтверждения. Несовместимые данные останавливают перенос. «Прекратить общий доступ» возвращает папку в обычную синхронизацию и закрывает доступ участников. Уже скачанные файлы остаются у получателей; для защиты будущих изменений после отзыва доступа смените ключ.
+
+После удаления серверной копии по сроку хранения владелец может явно восстановить её с устройства с полным локальным кэшем. Оплата сама по себе удалённую копию не восстанавливает. Сохраняйте собственные резервные копии.
 
 ### Исключение папок
 
@@ -139,16 +152,17 @@ ArcaLink Sync использует и изменяет код [Self-hosted LiveS
 
 ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink service. It supports personal vaults, shared folders, collaborative editing, optional encryption for personal notes, and importing messages and attachments from Telegram.
 
-The [Android companion](https://arcalink.ru/android) provides note and task-list widgets, quick entries, photos and voice. Mobile assistant settings can add its APK from any device to the shared exchange folder; devices syncing that folder receive the file. Android installation remains manual. Obsidian must be running to exchange files.
+The [Android companion](https://arcalink.ru/android) provides note and task-list widgets, quick entries, photos and voice. Mobile assistant settings can add its APK from any device to the shared exchange folder; devices syncing that folder receive the file. Android installation remains manual. In version 1.0.30, a compatible companion can transfer ordinary files itself after connection approval in both apps. The plugin continues to handle shared folders and collaborative notes; Free requires an available second device.
 
 ## Version history
 
-Current version: **[1.0.29](https://github.com/dnsankin/arcalink/releases/tag/1.0.29)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
+Current version: **[1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30) | 2026-11-01 | Companion pairing, code comparison and ordinary-file handoff; persistent How to use help. Support for the new shared-folder service mode: background migrations, email invitations, independent encryption and verified keys, legacy-copy reconciliation, unsharing and server-copy restoration. The service enables this mode separately; existing folders migrate manually. |
 | [1.0.29](https://github.com/dnsankin/arcalink/releases/tag/1.0.29) | 2026-10-28 | Get the Android companion from any device into the shared exchange folder without selecting a phone. Shorter description and an explicit browser action for the download link. Shared-directory deletion now propagates to participants and late downloads cannot recreate removed files. |
 | [1.0.28](https://github.com/dnsankin/arcalink/releases/tag/1.0.28) | 2026-10-28 | Bounded memory use while restoring large desktop attachments; blue transfer activity indicator. Excluded local folders can be moved to the vault trash from one card. Folder picker starts collapsed. |
 | [1.0.27](https://github.com/dnsankin/arcalink/releases/tag/1.0.27) | 2026-10-27 | Fixed Android out-of-memory crashes while restoring large attachments through sequential chunk decoding. Added an additive shared-folder rescan action to upload missing local files without replacing existing shared files. |
@@ -184,7 +198,7 @@ An ArcaLink account and an internet connection are required. The plugin connects
 | Plan | Price | Synchronization and storage |
 | --- | --- | --- |
 | Free | Free | Two devices must be online together; no cloud storage. |
-| Begin | 100 RUB per 30 days | 300 MB of cloud storage; devices can synchronize at different times. |
+| Begin | 100 RUB per 30 days | 300 MB of cloud storage and shared folders; devices can synchronize at different times. |
 | Pro | 250 RUB per 30 days | 1 GB of cloud storage, shared folders, simultaneous editing, and up to three invited participants. |
 
 Telegram import requires a paid plan and a configured personal bot. It accepts text, photos, and voice-message attachments; it does not transcribe speech. The current conditions shown before payment on the ArcaLink website take precedence.
@@ -195,9 +209,21 @@ The plugin contains no client-side analytics or advertising. Account, device, su
 
 ## Data and encryption
 
-Personal vaults can use end-to-end encryption when encryption is enabled during setup. If encryption is disabled, the server can read personal note contents. Shared notes, shared folders, and Telegram imports are not covered by personal-vault end-to-end encryption and can be read by the server.
+Personal vaults can use end-to-end encryption when encryption is enabled during setup. If encryption is disabled, the server can read personal note contents. Shared notes, legacy shared folders and Telegram imports can be read by the server. In the new mode, a shared folder can use independent end-to-end encryption, with keys delivered after device-fingerprint confirmation. Personal-vault encryption alone does not protect collaboration.
 
-Keep your own backups of important notes: restoring a previous version of a note is not provided. Do not enable another whole-vault synchronization plugin for the same vault at the same time.
+Keep independent backups of important notes: the service is not a backup and does not guarantee complete history for every note. Do not enable another whole-vault synchronization plugin for the same vault at the same time.
+
+## New shared-folder mode
+
+This mode requires a service update and separate account enablement. Until then, the existing mode remains in use. Existing folders migrate only through an explicit action in shared-folder settings.
+
+After starting a transfer, close settings and continue working: files transfer in the background while Obsidian stays open. Email invitations are accepted or declined inside the plugin. A folder card shows its owner, participants and permissions; owners can change roles and revoke access, and participants can leave while keeping local files.
+
+Each folder uses an independent server database and can have its own encryption key. Migration verifies contents and retained versions before switching authority, then cleans up the retired server source. Temporary copies are required during migration; local safety versions remain available for review. Storage counts against the owner's overall quota.
+
+Reconcile previous copies merges available personal and shared histories after separate confirmation. Incompatible data stops the migration. Stop sharing returns the folder to ordinary vault synchronization and removes participant access. Recipients keep previously downloaded files; rotate the key after revocation to protect future changes.
+
+After retention deletes a server copy, its owner can explicitly restore it from a device with a complete local cache. Payment alone does not recreate erased data. Keep independent backups.
 
 ## Folder exclusions
 

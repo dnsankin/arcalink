@@ -1050,3 +1050,13 @@ body.is-mobile .livesync-compatibility-review-notice {
 /* Keep cleanup description and all folder actions inside one card. */
 .arcalink-local-folder-cleanup > .setting-item:first-child { padding-top: 0; }
 .arcalink-local-folder-cleanup > .setting-item:last-child { padding-bottom: 0; border-bottom: 0; }
+
+.arcalink-shared2-card {
+  margin: 16px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-secondary);
+}
+.arcalink-shared2-card > .setting-item:first-child { border-top: 0; }
+.arcalink-shared2-card .setting-item { background: transparent; }

@@ -1,3 +1,4 @@
+import {foldersContainingFiles} from './folder-rules-tree.mjs';
 import {blobDigest, uploadSharedBlob, downloadSharedBlob} from './shared-folder-blobs.mjs';
 import {chooseSharedFolder} from './shared-folder-picker';
 import { TFile, TFolder, Notice, Modal, Setting, editorInfoField } from 'obsidian';
@@ -33,7 +34,7 @@ export class SharedFolders {
     contains(path: string) { return this.records.some(r => path.toLowerCase() === r.mount.toLowerCase() || path.toLowerCase().startsWith(r.mount.toLowerCase() + '/')); }
     record(path: string) { return this.records.find(r => path === r.mount || path.startsWith(r.mount + '/')); }
     async save() { this.queue = this.queue.catch(() => { }).then(() => this.app.vault.adapter.write(this.registry, JSON.stringify(this.records))); await this.queue; }
-    validateMount(mount: string) { this.plugin.folderPolicies?.assertSharedMount(mount);if (!safeRelative(mount) || mount === 'ArcaLink Shared' || this.records.some(r => mount.toLowerCase().startsWith(r.mount.toLowerCase() + '/') || r.mount.toLowerCase().startsWith(mount.toLowerCase() + '/') || r.mount.toLowerCase() === mount.toLowerCase()))
+    validateMount(mount: string) { this.plugin.companionOwnership?.assertSharedScopeChange();this.plugin.folderPolicies?.assertSharedMount(mount);if (!safeRelative(mount) || mount.toLowerCase() === 'arcalink shared' || mount.toLowerCase().startsWith('arcalink shared/') || this.records.some(r => mount.toLowerCase().startsWith(r.mount.toLowerCase() + '/') || r.mount.toLowerCase().startsWith(mount.toLowerCase() + '/') || r.mount.toLowerCase() === mount.toLowerCase()))
         throw Error('Выберите обычную папку вне других общих папок'); }
     async init() {
         if (await this.app.vault.adapter.exists(this.registry))
@@ -112,12 +113,18 @@ export class SharedFolders {
         return promise;
     }
     async copyBindings() {
+        const run=()=>this.copyBindingsWithScopeLease();
+        return this.plugin.companionOwnership?this.plugin.companionOwnership.sharedScopeMutation(run):run();
+    }
+    private async copyBindingsWithScopeLease() {
+        this.plugin.companionOwnership?.assertSharedScopeChange();
         // Previously admitted discovery cannot validate a newly selected workspace.
         this.refreshAttempt++;
         this.pendingRefresh = undefined;
         this.refreshedScope = undefined;
         this.lastRefresh = 0;
         for (const r of this.records) {
+        if (r.protocol === 2) continue;
         if (this.entries.get(r.id)?.denied)
             continue;
         try {
@@ -129,6 +136,10 @@ export class SharedFolders {
         }
     } this.lastRefresh = 0; }
     async create(mount: string) {
+        const run=()=>this.createWithScopeLease(mount);
+        return this.plugin.companionOwnership?this.plugin.companionOwnership.sharedScopeMutation(run):run();
+    }
+    private async createWithScopeLease(mount: string) {
         this.validateMount(mount);
         const files = this.app.vault.getFiles().filter((f: any) => f.path.startsWith(mount + '/'));
         if (!files.length)
@@ -168,7 +179,11 @@ export class SharedFolders {
     finally {
         b.setDisabled(false);
     } })); m.open(); }
-    async mount(result: any, mount: string) { const previous = this.records.find(r => r.id === result.id); if (previous) {
+    async mount(result: any, mount: string) {
+        const run=()=>this.mountWithScopeLease(result,mount);
+        return this.plugin.companionOwnership?this.plugin.companionOwnership.sharedScopeMutation(run):run();
+    }
+    private async mountWithScopeLease(result: any, mount: string) { const previous = this.records.find(r => r.id === result.id); if (previous) {
         await this.plugin.collaboration.api('mount', { id: result.id, mount: previous.mount });
         const old = this.entries.get(result.id);
         previous.role = result.role;
@@ -187,7 +202,9 @@ export class SharedFolders {
     } if (result.kind !== 'folder')
         throw Error('Это приглашение в заметку'); this.validateMount(mount); if (this.app.vault.getFiles().some((f: any) => f.path.startsWith(mount + '/')))
         throw Error('Папка должна быть пустой, чтобы сохранить ваши локальные файлы'); await this.plugin.collaboration.api('mount', { id: result.id, mount }); const r = { ...result, mount }; this.records.push(r); await this.save(); await this.plugin.initializeCloudFeatures(); await this.ensure(r); return r; }
-    async ensure(r: any) {
+    async ensure(r: any, shared2Preparation = false) {
+        if (r.protocol === 2 || r.shared2Preparing && !shared2Preparation) return { record: r, denied: true, ready: false };
+        if(this.plugin.companionOwnership?.acceptsSharedRoot(r.mount)===false)throw Error('Дождитесь обновления набора общих папок в Компаньоне. Локальные файлы сохранены.');
         if (this.entries.has(r.id))
             return this.entries.get(r.id).promise;
         const e: any = { record: r, doc: new Y.Doc(), files: null, denied: false, ready: false, projecting: Promise.resolve(), disk: new Map(), paths: new Map(), undo: new Map() };
@@ -207,6 +224,13 @@ export class SharedFolders {
                 await this.save();
             }
             catch (error: any) {
+                if (error.code === 'shared2_legacy_fenced') {
+                    e.denied = true;
+                    e.migrationPaused = true;
+                    this.refresh();
+                    new Notice('Общая папка переносится в новое хранилище. Локальные файлы сохранены; старое подключение приостановлено.');
+                    return e;
+                }
                 if (error.code === 'collaboration_retention_paused') this.storagePaused(e);
                 else if ([400, 401, 403, 404].includes(error.status))
                     this.deny(e);
@@ -270,6 +294,13 @@ export class SharedFolders {
             if (v.added)
                 view.dispatch({ effects: v.c.reconfigure([]) });
             v.bound = null;
+            return;
+        }
+        if (r.protocol === 2 || r.shared2Preparing) {
+            const readOnly = r.protocol !== 2 || !this.plugin.shared2?.canEdit(r.id);
+            const extensions = [EditorState.readOnly.of(readOnly), Prec.highest(EditorView.editable.of(!readOnly))];
+            view.dispatch({ effects: v.added ? v.c.reconfigure(extensions) : StateEffect.appendConfig.of(v.c.of(extensions)) });
+            v.added = true; v.bound = 'shared2:' + r.id + ':' + readOnly;
             return;
         }
         if (loading) {
@@ -486,7 +517,7 @@ export class SharedFolders {
     }
     async changed(event: string, file: any) {
         const r = this.record(file.path);
-        if (!r || (!(file instanceof TFile) && !(event === 'delete' && file instanceof TFolder)))
+        if (!r || r.protocol === 2 || r.shared2Preparing || (!(file instanceof TFile) && !(event === 'delete' && file instanceof TFolder)))
             return;
         // A directory delete must invalidate an in-flight projection immediately,
         // before waiting for its downloads or queued individual file events.
@@ -577,7 +608,7 @@ export class SharedFolders {
         e.disk.set(file.path, encoded); e.disk.set(id || [...e.files].find(([, f]: any) => r.mount + '/' + f.get('path') === file.path)?.[0], encoded);
         await this.project(e);
     }
-    async renamed(file: any, old: string) { const r = this.record(old); if (!r)
+    async renamed(file: any, old: string) { const r = this.record(old); if (!r || r.protocol === 2 || r.shared2Preparing)
         return; const e = await this.ensure(r); if (e.denied)
         return; if (e.disk.has(old) && e.disk.get(old) === null) {
         e.disk.delete(old);
@@ -599,6 +630,11 @@ export class SharedFolders {
             e.files.get(id)?.set('path', relative);
         } await this.project(e); }
     async leave(id: string) {
+        const run=()=>this.leaveWithScopeLease(id);
+        return this.plugin.companionOwnership?this.plugin.companionOwnership.sharedScopeMutation(run):run();
+    }
+    private async leaveWithScopeLease(id: string) {
+        this.plugin.companionOwnership?.assertSharedScopeChange();
         const record = this.records.find(r => r.id === id);
         if (record?.role === 'owner') throw Error('Владелец не может покинуть свою папку');
         await this.plugin.collaboration.api('leave', {id});
@@ -625,6 +661,11 @@ export class SharedFolders {
         this.refresh();
     }
     async stopSharing(id: string) {
+        const run=()=>this.stopSharingWithScopeLease(id);
+        return this.plugin.companionOwnership?this.plugin.companionOwnership.sharedScopeMutation(run):run();
+    }
+    private async stopSharingWithScopeLease(id: string) {
+        this.plugin.companionOwnership?.assertSharedScopeChange();
         await this.plugin.collaboration.api('stop-sharing', {id});
         this.refreshAttempt++;
         this.pendingRefresh = undefined;
@@ -653,8 +694,9 @@ export class SharedFolders {
         modal.open();
     }
     render(el: HTMLElement, gate:(control:HTMLElement)=>void=()=>{}) {
+        if (this.plugin.shared2?.render(el,gate)) return;
         new Setting(el).setName('Общие папки').setDesc('Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Размер ограничен свободным местом в хранилище владельца.')
-            .addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => chooseSharedFolder(this.app,{title:'Поделиться папкой',description:'Выберите папку для совместной работы. Сервер и приглашённые участники получат доступ к её содержимому.',action:'Поделиться папкой',unavailable:path=>{try{this.validateMount(path);return this.app.vault.getFiles().some((f:any)=>f.path.startsWith(path+'/'))?'':'Папка пуста';}catch(e:any){return e.message;}},select:async path=>{await this.create(path);await load();}})); gate(b.buttonEl); })
+            .addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => { const populated=foldersContainingFiles(this.app.vault.getFiles()); chooseSharedFolder(this.app,{title:'Поделиться папкой',description:'Выберите папку для совместной работы. Сервер и приглашённые участники получат доступ к её содержимому.',action:'Поделиться папкой',unavailable:path=>{try{this.validateMount(path);return populated.has(path)?'':'Папка пуста';}catch(e:any){return e.message;}},select:async path=>{await this.create(path);await load();}}); }); gate(b.buttonEl); })
             .addButton(b => b.setButtonText('Присоединиться').onClick(() => this.plugin.collaboration.prompt('Общая папка', 'Код приглашения', async (code: string) => {
                 const r = await this.plugin.collaboration.api('join', { code });
                 if (r.kind !== 'folder') throw Error('Это приглашение в заметку');
@@ -678,10 +720,10 @@ export class SharedFolders {
                 if (!result.folders.length) list.createEl('p', {text:'В этом хранилище нет подключённых общих папок.'});
                 new Setting(list).setName('Общих папок: ' + result.folders.length);
                 for (const id of result.removed || []) {
-            if (!current()) return;
-            await this.detachSharedFolder(id);
-        }
-        for (const r of result.folders) {
+                    if (this.disposed || !this.sameRefreshScope(scope)) return;
+                    await this.detachSharedFolder(id);
+                }
+                for (const r of result.folders) {
                     const roleLabel = (role: string) => role === 'owner' ? 'Владелец' : role === 'editor' ? 'Редактор' : 'Только чтение';
                     const card = list.createDiv({cls:'arcalink-folder-access-card'});
                     const row = new Setting(card).setName('Папка').setDesc(roleLabel(r.role));

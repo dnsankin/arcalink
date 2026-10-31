@@ -37,3 +37,13 @@ export function setFolderIncluded(rules,path,included,contains,sensitive){
  for(const root of rules)if(contains(root,path,sensitive)&&contains(path,root,sensitive))rules.delete(root);
  if(!included)rules.add(path);
 }
+
+/** Build the picker availability index once, rather than scan all files per row. */
+export function foldersContainingFiles(files){
+ const populated=new Set();
+ for(const file of files){
+  let path=file.path;let slash=path.lastIndexOf('/');
+  while(slash>0){path=path.slice(0,slash);populated.add(path);slash=path.lastIndexOf('/');}
+ }
+ return populated;
+}

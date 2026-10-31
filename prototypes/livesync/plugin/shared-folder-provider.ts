@@ -39,14 +39,14 @@ export class SharedFolderProvider extends HocuspocusProvider {
         this.sendStateless(JSON.stringify({...body, request}));
         return result;
     }
-    destroy() {
+    override destroy() {
         this.folderDisposed = true;
         this.transferEpoch++;
         for (const pending of this.waiting.values()) { clearTimeout(pending.timer); pending.reject(Error('Shared folder disposed')); }
         this.waiting.clear();
         super.destroy();
     }
-    send(Message: any, args: any) {
+    override send(Message: any, args: any) {
         if ((this as any)._isAttached === false) return;
         const encoded = toUint8Array(new Message().get(args));
         if (encoded.length < 4 * 1024 * 1024) return super.send(Message, args);
@@ -56,7 +56,7 @@ export class SharedFolderProvider extends HocuspocusProvider {
         const type = decoding.readVarUint(decoder);
         if (type !== 1 && type !== 2) return super.send(Message, args);
         // Keep any denied local update unacknowledged and retained in IndexedDB.
-        if (this.authorizedScope === 'read-only') return;
+        if (this.authorizedScope === 'readonly') return;
         const update = decoding.readVarUint8Array(decoder), epoch = this.transferEpoch;
         this.transferQueue = this.transferQueue.catch(() => {}).then(async () => {
             const hash = await blobDigest(update), transfer = crypto.randomUUID();

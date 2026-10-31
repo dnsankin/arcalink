@@ -46,3 +46,10 @@ test('new tree guidance and accessible checkbox labels translate both ways',()=>
   const ru=translate(key,'ru');assert.notEqual(ru,key);assert.equal(translate(ru,'en'),key);
  }
 });
+import {foldersContainingFiles} from '../plugin/folder-rules-tree.mjs';
+test('picker indexes populated ancestors in one pass and preserves sibling boundaries',()=>{
+ let reads=0;const files=Array.from({length:50000},(_,i)=>({get path(){reads++;return 'Root/Child/'+i+'.md'}}));
+ const populated=foldersContainingFiles(files);assert.equal(reads,50000);assert.deepEqual([...populated],['Root/Child','Root']);
+ assert.equal(populated.has('Root/Child-other'),false);assert.equal(populated.has('Root/Empty'),false);
+ assert.deepEqual([...foldersContainingFiles([{path:'root-note.md'}])],[]);
+});

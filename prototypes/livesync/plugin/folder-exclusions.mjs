@@ -36,7 +36,7 @@ export function excludedLocalFolderRoots({rules='',common=[],paths=[],caseSensit
  const selected=paths.filter(path=>validPath(path)&&roots.some(root=>folderContains(root,path,caseSensitive)));
  return selected.sort((a,b)=>a.length-b.length||a.localeCompare(b)).filter((path,index,all)=>!all.slice(0,index).some(parent=>folderContains(parent,path,caseSensitive)));
 }
-export function localFolderCleanupBlock(path,{shared=[],protectedPaths=[],caseSensitive=false}={}) {
+export function localFolderCleanupBlock(path,{shared=/** @type {any[]} */([]),protectedPaths=/** @type {string[]} */([]),caseSensitive=false}={}) {
  if(!validPath(path))return 'Недопустимый путь папки';
  if([...shared,...protectedPaths].some(root=>folderContains(root,path,caseSensitive)||folderContains(path,root,caseSensitive)))return 'Папка содержит совместные или служебные материалы. Удаление здесь недоступно.';
  return '';

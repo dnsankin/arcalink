@@ -2,6 +2,7 @@ import {readAsBlob} from '@vrtmrz/livesync-commonlib/compat/common/utils';
 import {isFreeRelayConnection} from './free-relay-settings.mjs';
 import {safeCompanionPath,validProofRequest,validProofFile,sha256,verifyCloudFile,proofReplyMatches,MAX_PROOF_BYTES} from './companion-proof.mjs';
 
+import {COMPANION_READBACK_V2,peerProofV2,winningPeerMetadata} from './companion-peer-proof.mjs';
 const RPC='arcalinkCompanionReadbackV1';
 /** Read-only receipt capability. Never starts/stops replication or applies a remote file. */
 export class CompanionBridge {
@@ -34,6 +35,18 @@ export class CompanionBridge {
  }
  private registerPeerProof(){
   const host=this.host();if(!host||host.isDisposed||!host.isServing||host.assignedFunctions.has(RPC))return;
+  host.serveFunction(COMPANION_READBACK_V2,async(peerId:string,input:any)=>{
+   if(this.disposed||this.peerBusy)return {schema:2,applied:false};
+   const identity=this.identity();this.peerBusy=true;
+   try{return await peerProofV2(input,{
+    isCurrent:()=>!this.disposed&&identity===this.identity()&&host===this.host(),
+    isAccepted:async()=>await host.evaluatePeerAcceptance(peerId)==='accepted',
+    isTarget:async(path:string)=>!this.plugin.folders?.contains(path)&&await this.plugin.core.services.vault.isTargetFile(path),
+    getMetadata:async(path:string)=>{const id=await this.plugin.core.services.path.path2id(path);return await winningPeerMetadata(this.plugin.core.services.database.localDatabase.localDatabase,id);},
+    readBytes:async(path:string)=>{const file=this.plugin.app.vault.getAbstractFileByPath(path);if(!file)return null;if(!('extension' in file))throw Error('unsupported');return await this.plugin.app.vault.readBinary(file);},
+    readProvenance:async(path:string)=>await this.plugin.core.serviceModules.fileHandler.readProvenanceSnapshot(path),
+   });}catch{return {schema:2,applied:false};}finally{this.peerBusy=false;}
+  });
   host.serveFunction(RPC,async(peerId:string,input:any)=>{
    if(this.disposed||this.peerBusy||!input||input.schema!==1||!/^[a-zA-Z0-9-]{16,100}$/.test(input.nonce)||!validProofFile(input.file))return {schema:1,applied:false};
    const identity=this.identity();this.peerBusy=true;

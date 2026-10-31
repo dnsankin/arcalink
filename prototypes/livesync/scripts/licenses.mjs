@@ -10,7 +10,7 @@ export async function auditBundle(source) {
   const packages = new Map();
   for (const input of Object.keys(meta.inputs)) {
     if (!input.includes('node_modules/')) continue;
-    let dir = path.dirname(path.resolve(source, input));
+    let dir = path.dirname(path.resolve(source, input.replace(/^(?:shared2-core|shared2-replication):/,'')));
     while (dir !== path.dirname(dir)) {
       try {
         const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'));

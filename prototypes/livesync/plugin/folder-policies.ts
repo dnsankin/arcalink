@@ -351,6 +351,7 @@ export class FolderPolicies {
     if(!this.oldSuspended&&s.database.isDatabaseReady()){await s.control.applySettings();await s.vault.scanVault(false,false,true);}
   }
   async preview(folders:string[],expectedRevision:number){
+    if(this.plugin.companionOwnership?.blocksOrdinary)throw Error('Обычные файлы синхронизирует Компаньон. Измените общие исключения с другого подключённого устройства; Компаньон применит опубликованные правила. Локальные файлы сохранены.');
     if(this.previewing||this.holding||this.loading||this.recovering||this.cancelling)throw fail();
     this.previewCancelled=false;
     const preparing=this.preparePreview(folders,expectedRevision);this.previewing=preparing;

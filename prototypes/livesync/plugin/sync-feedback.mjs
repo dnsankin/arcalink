@@ -44,7 +44,7 @@ export function syncLampState({errors,status,offline,paused,automaticOff,active=
 // Display-only samples. Cumulative counters establish a baseline, never activity by themselves.
 export function createSyncActivityTracker({now=Date.now,holdMs=2000}={}) {
  let previous=null,until=0;
- return ({sent,arrived,counts=[]})=>{
+ return ({sent,arrived,counts=/** @type {number[]} */([])})=>{
   const stamp=now(),current=[sent,arrived];
   const changed=previous&&current.some((value,i)=>Number.isFinite(value)&&Number.isFinite(previous[i])&&value>previous[i]);
   if(changed||counts.some(value=>Number.isFinite(value)&&value>0))until=stamp+holdMs;

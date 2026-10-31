@@ -5,6 +5,7 @@ import {EditorView,ViewPlugin,keymap} from '@codemirror/view';
 import * as Y from 'yjs';import {yCollab,yUndoManagerKeymap} from 'y-codemirror.next';
 import {HocuspocusProvider} from '@hocuspocus/provider';import {IndexeddbPersistence} from 'y-indexeddb';
 import {textChange} from './collab-diff.mjs';
+import {safeCompanionPath} from './companion-proof.mjs';
 const FOLDER='ArcaLink Shared',BASE='https://arcalink.ru/sync/api';
 export const reserved=(path:string)=>path.toLowerCase()===FOLDER.toLowerCase()||path.toLowerCase().startsWith(FOLDER.toLowerCase()+'/');
 export class CollaborativeNotes{
@@ -32,7 +33,9 @@ export class CollaborativeNotes{
  }
  prompt(title:string,label:string,task:(text:string)=>Promise<any>){const m=new Modal(this.app);m.titleEl.setText(title);let value='';new Setting(m.contentEl).setName(label).addText(t=>t.onChange(v=>value=v.trim()));new Setting(m.contentEl).addButton(b=>b.setButtonText('Продолжить').setCta().onClick(async()=>{b.setDisabled(true);try{await task(value);m.close();}catch(e:any){new Notice(e.message);}finally{b.setDisabled(false);}}));m.open();}
  async save(){this.registryQueue=this.registryQueue.catch(()=>{}).then(()=>this.app.vault.adapter.write(this.registry,JSON.stringify(this.records)));await this.registryQueue;}
- async add(result:any){let r=this.records.find(r=>r.id===result.id);const previous=this.entries.get(result.id);if(previous&&(previous.denied||r?.role!==result.role)){this.entries.delete(result.id);previous.provider?.destroy();previous.persistence?.destroy();previous.undo?.destroy();previous.doc.destroy();}if(!r){r={id:result.id,title:result.title,role:result.role,path:FOLDER+'/'+result.id+'.md'};this.records.push(r);}else r.role=result.role;
+ private assertProjection(path:string){if(!safeCompanionPath(path)||!reserved(path)||this.plugin.companionOwnership?.acceptsSharedRoot(FOLDER)===false)throw Error('Совместная заметка должна находиться в ArcaLink Shared. Локальные файлы сохранены.');}
+ async add(result:any){this.assertProjection(FOLDER+'/'+result.id+'.md');let r=this.records.find(r=>r.id===result.id);const previous=this.entries.get(result.id);if(previous&&(previous.denied||r?.role!==result.role)){this.entries.delete(result.id);previous.provider?.destroy();previous.persistence?.destroy();previous.undo?.destroy();previous.doc.destroy();}if(!r){r={id:result.id,title:result.title,role:result.role,path:FOLDER+'/'+result.id+'.md'};this.records.push(r);}else r.role=result.role;
+  this.assertProjection(r.path);
   if(!await this.app.vault.adapter.exists(FOLDER))await this.app.vault.createFolder(FOLDER);
   if(!this.app.vault.getAbstractFileByPath(r.path))await this.app.vault.create(r.path,'');await this.save();await this.plugin.initializeCloudFeatures();const e=await this.ensure(r);await this.app.workspace.getLeaf(false).openFile(this.app.vault.getAbstractFileByPath(r.path));return r;}
  async create(title:string,text=''){return this.add(await this.api('create',{title,text}));}
@@ -40,7 +43,7 @@ export class CollaborativeNotes{
  async invite(id:string,role:string){return (await this.api('invite',{id,role})).code;}
  async inviteActive(role:string){try{const r=this.records.find(r=>r.path===this.app.workspace.getActiveFile()?.path);if(!r)throw Error('Откройте совместную заметку');const code=await this.invite(r.id,role);const m=new Modal(this.app);m.titleEl.setText('Приглашение: '+role);m.contentEl.createEl('p',{text:'Передайте этот код участнику. Его аккаунт должен быть подключён к пилоту. Сервер видит текст этой заметки.'});new Setting(m.contentEl).addText(t=>t.setValue(code).setDisabled(true)).addButton(b=>b.setButtonText('Копировать').onClick(()=>void navigator.clipboard.writeText(code)));m.open();}catch(e:any){new Notice(e.message);}}
  filePath(view:any){return view.state.field(editorInfoField,false)?.file?.path||null;}
- async ensure(record:any){if(this.entries.has(record.id))return await this.entries.get(record.id).promise;
+ async ensure(record:any){this.assertProjection(record.path);if(this.entries.has(record.id))return await this.entries.get(record.id).promise;
   const entry:any={record,doc:new Y.Doc(),provider:null,persistence:null,ready:false,denied:false,materializing:Promise.resolve(),lastDisk:null,diskState:null};this.entries.set(record.id,entry);
   entry.promise=(async()=>{entry.text=entry.doc.getText('markdown');entry.undo=new Y.UndoManager(entry.text);
    entry.persistence=new IndexeddbPersistence('arcalink-shared:'+this.plugin.core.services.setting.currentSettings().couchDB_USER+':'+record.id,entry.doc);await entry.persistence.whenSynced;

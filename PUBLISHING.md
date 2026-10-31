@@ -2,11 +2,13 @@
 
 The Community release is intentionally separate from the internal `arcalink-livesync-prototype` release line. The initial public version is `1.0.0`; the Community plugin ID is `arcalink-sync`.
 
+This release line uses Community version `1.0.30`. Publish the tested public export and matching assets together. New shared-folder service mode requires separate server rollout and account enablement; publishing the plugin does not migrate working vaults.
+
 Development takes place in GitLab. GitHub is used only for release publication, which requires a separate explicit command from the project owner. An ordinary development push or deployment does not authorize updating GitHub.
 
 ## Build the Community artifact
 
-From the product monorepo root (in the exported GitHub repository use `npm run build` instead):
+From the product monorepo root in an isolated temporary copy (in the exported GitHub repository use `npm run build` instead). The script rewrites `.cache` and `dist`; preserve the working repository's release artifacts:
 
 ```sh
 ARCALINK_RELEASE_CHANNEL=community node prototypes/livesync/scripts/build-plugin.mjs
@@ -34,8 +36,8 @@ The root manifest and built files are the Community release, not the internal `a
 
 Before release, verify all of the following:
 
-- `manifest.json` has ID `arcalink-sync` and version `1.0.29`.
-- `versions.json` maps `1.0.29` to the tested minimum Obsidian version.
+- `manifest.json` has ID `arcalink-sync` and version `1.0.30`.
+- `versions.json` maps `1.0.30` to the tested minimum Obsidian version.
 - `main.js` contains no self-update downloader, installer, update journal, or update controls.
 - The release includes `main.js`, `manifest.json`, and `styles.css` as individual GitHub Release assets.
 - The public repository root contains `README.md`, `LICENSE`, `manifest.json`, `versions.json`, the corresponding source, build instructions, and third-party notices.
@@ -52,13 +54,13 @@ The README presents Russian first and retains the English documentation. The man
 
 ## GitHub release
 
-Create a GitHub release with tag `1.0.29` — without a `v` prefix — and attach these files individually:
+Create a GitHub release with tag `1.0.30` — without a `v` prefix — and attach these files individually:
 
 - `main.js`
 - `manifest.json`
 - `styles.css`
 
-Do not publish a GitHub release until its source commit, manifest version, tag, and attached files all match. For 1.0.29 use the reviewed notes in `docs/releases/community-1.0.29.md` from the product monorepo, including validation results and known limits. A GitLab commit/push does not publish this GitHub release.
+Do not publish a GitHub release until its source commit, manifest version, tag, and attached files all match. For 1.0.30 use the reviewed notes in `docs/releases/community-1.0.30.md` from the product monorepo, including validation results and known limits. A GitLab commit/push does not publish this GitHub release.
 
 ## Obsidian submission
 

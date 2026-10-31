@@ -1,0 +1,42 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {createShared2AliasTransfers} from '../plugin/shared2-alias-transfers.mjs';
+import {verifyShared2AliasUnionTarget} from '../plugin/shared2-alias-union.mjs';
+const scope={account:'owner',workspace:'work',device:'mac'},folder='a'.repeat(32),jobId='b'.repeat(32),p0='arcalink_p_'+'c'.repeat(32),p1='arcalink_p_'+'d'.repeat(32),s0='arcalink_s_'+'e'.repeat(32),s1='arcalink_s_'+jobId;
+const missing=()=>{throw Object.assign(Error('missing'),{status:404});};
+function emptyView(name){return {identity:async()=>name,info:async()=>({update_seq:1}),async *groups(){},async *revisions(){},revisionIds:async()=>[],read:missing,pathId:async value=>value,chunkId:async value=>'h:'+value,own:async()=>{},forDatabase:db=>emptyView(db.name)};}
+function fixture(){let saved,jobs=[],phase='reserved',lost=false,failSave=false,preparations=0,grantChange=()=>{},rawFailure=false;const calls=[],signed=[],opened=[],engines=[];
+ const job=key=>({id:jobId,folder,workspace:scope.workspace,device:scope.device,kind:'reconcile-aliases',requestKey:key,state:phase});
+ const p=(database,generation,revision,encrypted,keyEpoch)=>({...scope,folder,database,generation,revision,encrypted,keyEpoch,documentRoot:'Team',role:'viewer'}),profiles={source:p(p0,1,0,false,0),private:p(p1,2,1,false,0),sharedSource:p(s0,1,1,true,1),shared:p(s1,2,2,true,2)};
+ function proofs(){const common={protocol:2,operation:'share',job:jobId,owner:scope.account,device:scope.device,workspace:scope.workspace,folder,nonce:'f'.repeat(64),sourceSequenceDigest:'0'.repeat(64),sourceCipherDigest:'1'.repeat(64),targetSequenceDigest:'2'.repeat(64),targetCipherDigest:'3'.repeat(64)};return Object.fromEntries(['private','aliases','shared'].map(side=>{const source=profiles[side==='shared'?'sharedSource':'source'],target=profiles[side==='private'?'private':'shared'];return [side,{...common,source:source.database,target:target.database,sourceGeneration:source.generation,targetGeneration:target.generation,sourceKeyEpoch:source.keyEpoch,targetKeyEpoch:target.keyEpoch}];}));}
+ function resource(name){const value={database:{name,info:async()=>({db_name:name,update_seq:1}),id:async()=>name,changes:async()=>({results:[],last_seq:1}),get:()=>{if(rawFailure)throw Error('broken readback');return missing();}},view:emptyView(name),closed:false,async close(){this.closed=true;}};opened.push(value);return value;}
+ const options={scope,store:{load:async()=>structuredClone(saved),save:async value=>{if(failSave)throw Error('disk unavailable');saved=structuredClone(value);}},keys:{get:async()=>({}),publicIdentity:async()=>({fingerprint:'registered'}),signMigrationProof:async claim=>{signed.push(claim);return {claim};}},prepare:async()=>{preparations++;return {database:p0,revision:0,envelope:{format:'plain-v1',data:'opaque policy'},protectedRevision:null};},request:async(path,options={})=>{calls.push([path,options]);const data=options.body?JSON.parse(options.body):null;
+  if(path==='/shared2/alias-namespaces'&&options.method==='POST'){jobs=[job(data.requestKey)];if(lost){lost=false;throw Error('lost admission');}return {status:202,json:jobs[0]};}
+  if(path==='/shared2/alias-namespaces')return {status:200,json:{jobs:jobs.map(value=>({...value,state:phase}))}};
+  if(path.endsWith('/grant')){const value={id:jobId,fingerprint:'registered',nonce:'f'.repeat(64),selectionHandles:'sha256-v1',state:phase,...profiles,shared:{...profiles.shared,role:phase==='awaiting-device'?'owner':'viewer'},proofs:phase==='awaiting-proof'?proofs():null};grantChange(value);return {status:200,json:value};}
+  if(path.endsWith('/seal'))phase='awaiting-proof';else if(path.endsWith('/approve'))phase='committing';else if(path==='/shared2/alias-intents/cancel')return {status:200,json:{cancelled:true,workspace:scope.workspace,requestKey:data.requestKey}};else if(!['/retry','/frame','/selection'].some(suffix=>path.endsWith(suffix)))throw Error('Unexpected fixture route '+path);
+  return {status:202,json:{}};
+ },openView:async(_job,side,profile)=>resource(profile.database),openRaw:async(_job,side,profile)=>resource(profile.database),openTarget:async()=>resource(s1),createEngine:async profile=>{engines.push(profile);const r=resource(profile.cacheEpoch);r.migration=emptyView(profile.cacheEpoch);return r;}};
+ return {options,calls,signed,opened,engines,phase:value=>phase=value,grant:fn=>grantChange=fn,lost:()=>lost=true,failSave:()=>failSave=true,failRaw:()=>rawFailure=true,state:()=>saved,preparations:()=>preparations};
+}
+test('alias admission survives lost response without preparing twice or persisting secret settings',async()=>{
+ const f=fixture(),a=createShared2AliasTransfers(f.options),intent=await a.plan(folder,'Team');assert.equal(f.calls.length,0);f.lost();await a.step();assert.equal((await a.snapshot()).requests[0].error,'shared2-alias-transfer-failed');await a.close();const b=createShared2AliasTransfers(f.options);await b.refresh();await b.retry(intent.requestKey);await b.step();assert.equal(f.preparations(),1);assert.equal(f.calls.filter(([p,o])=>p==='/shared2/alias-namespaces'&&o.method==='POST').length,1);assert.ok(!JSON.stringify(f.state()).includes('passphrase'));await b.close();
+});
+test('pre-admission cancellation and failed persistence never start a transfer',async()=>{
+ const f=fixture(),a=createShared2AliasTransfers(f.options);f.failSave();await assert.rejects(a.plan(folder,'Team'));assert.equal(f.calls.length,0);await a.close();const g=fixture(),b=createShared2AliasTransfers(g.options),intent=await b.plan(folder,'Team');await b.cancel(intent.requestKey);await b.step();assert.equal(g.preparations(),0);await b.close();
+});
+test('three distinct durable local caches resume upload and all three readbacks precede approval',async()=>{
+ const f=fixture(),a=createShared2AliasTransfers(f.options);await a.plan(folder,'Team');await a.step();f.phase('awaiting-device');await a.refresh();await a.step();assert.ok(f.calls.some(([p])=>p.endsWith('/seal')));assert.equal(f.signed.length,0);const ids=f.engines.map(p=>p.cacheEpoch);assert.equal(new Set(ids).size,3);assert.ok(f.opened.every(r=>r.closed));await a.close();
+ const b=createShared2AliasTransfers(f.options);await b.refresh();await b.step();assert.equal((await b.snapshot()).requests[0].error,undefined);assert.deepEqual(f.engines.slice(3).map(p=>p.cacheEpoch),ids);assert.deepEqual(f.signed.map(c=>[c.source,c.target]),[[p0,p1],[p0,s1],[s0,s1]]);assert.ok(f.calls.some(([p])=>p.endsWith('/approve')));assert.ok(f.opened.every(r=>r.closed));await b.close();
+});
+test('malformed source, epoch, owner or write grants are rejected before any database opens',async()=>{
+ for(const change of [g=>g.shared.documentRoot='Other',g=>g.shared.generation=1,g=>g.private.encrypted=true,g=>g.source.account='foreign',g=>g.sharedSource.role='owner',g=>g.shared.database=g.sharedSource.database,g=>g.shared.keyEpoch=0,g=>g.fingerprint='replaced']){const f=fixture();f.grant(change);const a=createShared2AliasTransfers(f.options);await a.plan(folder,'Team');await a.step();f.phase('awaiting-device');await a.refresh();await a.step();assert.equal(f.opened.length,0);assert.equal((await a.snapshot()).requests[0].error,'shared2-alias-transfer-scope');await a.close();}
+});
+test('a failed private remainder readback cannot sign or approve either shared projection',async()=>{
+ const f=fixture(),a=createShared2AliasTransfers(f.options);await a.plan(folder,'Team');await a.step();f.phase('awaiting-proof');f.failRaw();await a.refresh();await a.step();assert.equal(f.signed.length,0);assert.ok(!f.calls.some(([p])=>p.endsWith('/approve')));assert.ok(f.opened.every(r=>r.closed));await a.close();
+});
+test('selection posts exact opaque empty frames and no target writes or signatures',async()=>{
+ const f=fixture(),a=createShared2AliasTransfers(f.options);await a.plan(folder,'Team');await a.step();f.phase('awaiting-selection');await a.refresh();await a.step();assert.deepEqual(JSON.parse(f.calls.find(([p])=>p.endsWith('/selection'))[1].body),{frames:{copy:0,remove:0}});assert.equal(f.engines.length,0);assert.equal(f.signed.length,0);await a.close();
+});
+test('complete remote union readback rejects extra records even if both source projections could pass',async()=>{
+ const local=emptyView('local'),remote={...emptyView('remote'),async *groups(kind){if(kind==='metadata')yield {id:'f:extra',leaves:['1-extra']};}};await assert.rejects(verifyShared2AliasUnionTarget({local,remote}),/readback-record/);
+});

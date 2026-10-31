@@ -10,7 +10,7 @@ export function chooseSharedFolder(app:App, options:{title:string;description:st
             this.titleEl.setText(localizeMessage(options.title));
             this.contentEl.createEl('p',{text:localizeMessage(options.description)});
             const paths=app.vault.getAllLoadedFiles().filter(f=>f instanceof TFolder&&f.path&&f.path!=='/').map(f=>f.path);
-            const tree=folderTree(paths),expanded=new Set(tree.roots.map((node:any)=>node.path));
+            const tree=folderTree(paths),expanded=new Set<string>();
             let query='',selected='',busy=false,submit:any,search:any;
             const rows:any[]=[];
             const searchRow=new Setting(this.contentEl).setName('Поиск папок');
@@ -20,11 +20,11 @@ export function chooseSharedFolder(app:App, options:{title:string;description:st
             const update=()=>{
                 const matches=folderTreeMatches(tree.nodes,query);
                 empty.hidden=matches.visible.size>0;
-                for(const {node,item,group,branch,radio} of rows){
+                for(const {node,item,group,branch,radio,reason} of rows){
                     item.hidden=!matches.visible.has(node.path);
                     const open=query.trim()?matches.opened.has(node.path):expanded.has(node.path);
                     if(group){group.hidden=!open;branch.setAttribute('aria-expanded',String(open));branch.disabled=busy||!!query.trim();}
-                    radio.checked=selected===node.path;radio.disabled=busy||!!options.unavailable(node.path);
+                    radio.checked=selected===node.path;radio.disabled=busy||!!reason;
                 }
                 selection.empty();selection.createSpan({text:localizeMessage('Выбранная папка')+': '});
                 selection.createSpan({text:selected||localizeMessage('Не выбрана'),attr:{'data-arcalink-user-content':''}});
@@ -46,7 +46,7 @@ export function chooseSharedFolder(app:App, options:{title:string;description:st
                     if(group){branch.addEventListener('click',()=>{if(expanded.has(node.path))expanded.delete(node.path);else expanded.add(node.path);update();});render(node.children,group);}
                     else {branch.disabled=true;branch.tabIndex=-1;branch.setAttribute('aria-hidden','true');branch.addClass('is-leaf');}
                     radio.addEventListener('change',()=>{selected=node.path;update();});
-                    rows.push({node,item,group,branch,radio});
+                    rows.push({node,item,group,branch,radio,reason});
                 }
             };
             render(tree.roots,list.createEl('ul'));
@@ -63,5 +63,7 @@ export function chooseSharedFolder(app:App, options:{title:string;description:st
             update();
         }
     }
-    new Picker(app).open();
+    const picker=new Picker(app);
+    try { picker.open(); }
+    catch(e:any) { picker.close(); new Notice(e.message||localizeMessage('Не удалось открыть выбор папки.')); }
 }

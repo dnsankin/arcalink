@@ -3,6 +3,7 @@ import {publicationHash,publicationEmbed,publicationTypes,replacePublicationLink
 import {bytesToBase64} from './folder-model.mjs';
 import {isFreeRelayConnection} from './free-relay-settings.mjs';
 import {responseError} from './pilot-http.mjs';
+const publicationMimeTypes:Readonly<Partial<Record<string,string>>>=publicationTypes;
 const BASE='https://arcalink.ru/sync/publish/api/';
 
 export class NotePublications {
@@ -79,7 +80,7 @@ export class NotePublications {
     if(link.embedded){replacements.push({start:link.position.start.offset,end:link.position.end.offset,original:link.original,html:'[Вложенная заметка или внешнее медиа не опубликованы]'});warnings.push(link.link);}
     continue;
    }
-   if(!publicationTypes[target.extension.toLowerCase()]){warnings.push(target.path);replacements.push({start:link.position.start.offset,end:link.position.end.offset,original:link.original,html:'[Неподдерживаемое вложение]'});continue;}
+   if(!publicationMimeTypes[target.extension.toLowerCase()]){warnings.push(target.path);replacements.push({start:link.position.start.offset,end:link.position.end.offset,original:link.original,html:'[Неподдерживаемое вложение]'});continue;}
    let asset=byPath.get(target.path);
    if(!asset){
     if(target.stat.size>limits.limit_bytes)throw Error('Вложение превышает квоту хранилища');
@@ -161,7 +162,7 @@ export class NotePublications {
 class PublicationModal extends Modal {
  private previewVersion=0;
  constructor(private owner:NotePublications,private assets:any[],private payload:any,private old:any,private warnings:string[],private encrypted:boolean){super(owner.app);}
- onOpen(){
+ override onOpen(){
   this.titleEl.setText(this.old?'Обновить публичную заметку':'Опубликовать заметку');
   this.contentEl.createEl('p',{text:'Содержимое и перечисленные вложения будут доступны всем, у кого есть ссылка. Обновление — только вручную. Для видео нужен поддерживаемый браузером кодек.'});
   new Setting(this.contentEl).setName('Заголовок страницы').addText(t=>t.setValue(this.payload.title).onChange(v=>{this.payload.title=v;this.previewVersion++;publish.setDisabled(true);}));
@@ -181,7 +182,7 @@ class PublicationModal extends Modal {
    const result=await this.owner.api('preview',this.payload);
    if(version!==this.previewVersion)return;
    let html=result.html;
-   for(const a of this.assets){if(!a.bytes){html=html.split('/p/'+result.id+'/assets/'+a.key).join('');continue;}const url='data:'+publicationTypes[a.filename.split('.').pop().toLowerCase()]+';base64,'+bytesToBase64(a.bytes);html=html.split('/p/'+result.id+'/assets/'+a.key).join(url);}
+   for(const a of this.assets){if(!a.bytes){html=html.split('/p/'+result.id+'/assets/'+a.key).join('');continue;}const url='data:'+publicationMimeTypes[a.filename.split('.').pop().toLowerCase()]+';base64,'+bytesToBase64(a.bytes);html=html.split('/p/'+result.id+'/assets/'+a.key).join(url);}
    frame.srcdoc='<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; media-src data:; style-src \'unsafe-inline\'"><style>body{font:16px system-ui;line-height:1.65;padding:20px;color:#eee;background:#202027}img,video{max-width:100%}pre{white-space:pre-wrap}</style><h1>'+publicationAttribute(this.payload.title)+'</h1>'+html;
    publish.setDisabled(false);
   }catch(e){new Notice((e as Error).message);}finally{b.setDisabled(false);}}));
@@ -198,5 +199,5 @@ class PublicationModal extends Modal {
    new Notice('Публичная страница сохранена');
   }catch(e){b.setButtonText(this.old?'Обновить публикацию':'Опубликовать').setDisabled(version!==this.previewVersion);new Notice((e as Error).message);}});});
  }
- onClose(){this.previewVersion++;this.contentEl.empty();}
+ override onClose(){this.previewVersion++;this.contentEl.empty();}
 }
