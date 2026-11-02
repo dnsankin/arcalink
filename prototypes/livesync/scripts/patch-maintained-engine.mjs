@@ -1,7 +1,7 @@
 import {readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {patchIdbMemory} from './patch-idb-memory.mjs';
-import {patchLargeContent,patchDecodedBinary} from './patch-large-content.mjs';
+import {patchLargeContent,patchDecodedBinary,patchBinaryConflictReader} from './patch-large-content.mjs';
 import {patchReplicationBusy} from './patch-replication.mjs';
 import {patchTicketRelayLifecycle,patchFreeChunkRetries,patchTicketedPeerCleanup,patchTicketedRtcRelease,patchTicketedFreshJoin} from './patch-free-relay.mjs';
 
@@ -94,4 +94,6 @@ const largeReaderPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/
 await writeFile(largeReaderPath,patchLargeContent(await readFile(largeReaderPath,'utf8')));
 const binaryDecoderPath=path.join(source,'node_modules/octagonal-wheels/dist/binary/index.js');
 await writeFile(binaryDecoderPath,patchDecodedBinary(await readFile(binaryDecoderPath,'utf8')));
+const conflictManagerPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/managers/ConflictManager.js');
+await writeFile(conflictManagerPath,patchBinaryConflictReader(await readFile(conflictManagerPath,'utf8')));
 }

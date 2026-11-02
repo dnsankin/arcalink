@@ -1,5 +1,7 @@
 # ArcaLink Sync
 
+Синхронизация заметок через ArcaLink. Sync Obsidian notes across devices through ArcaLink, with shared folders, optional encryption and Telegram import.
+
 [Русский](#русский) · [English](#english)
 
 ## Русский
@@ -10,12 +12,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
+Текущая версия: **[1.0.31](https://github.com/dnsankin/arcalink/releases/tag/1.0.31)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.31](https://github.com/dnsankin/arcalink/releases/tag/1.0.31) | 02.11.2026 | Исправлена проверка конфликтов крупных вложений: одинаковые версии больше не остаются недоступными из-за формата буфера. При отмене подключения Компаньона синхронизация плагина возобновляется без его перезагрузки. Уменьшен размер main.js ниже 5 МБ. |
 | [1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30) | 01.11.2026 | Подключение самостоятельной синхронизации Компаньона с проверкой кода и передачей управления обычными файлами; общие папки остаются у плагина. Постоянная справка «Как пользоваться». Поддержка нового серверного режима общих папок: фоновые переносы, приглашения по email, отдельное шифрование и подтверждение ключей, сверка прежних копий, прекращение общего доступа и восстановление серверной копии. Режим включается сервисом отдельно; существующие папки переносятся вручную. |
 | [1.0.29](https://github.com/dnsankin/arcalink/releases/tag/1.0.29) | 28.10.2026 | Получение Android-помощника с любого устройства в общий обменник без выбора телефона. Короткое описание и исправленная ссылка на сайт загрузки. Удаление каталога общей папки передаётся участникам; устранено восстановление удалённых файлов запоздавшей загрузкой. |
 | [1.0.28](https://github.com/dnsankin/arcalink/releases/tag/1.0.28) | 28.10.2026 | Исправлено переполнение памяти при восстановлении крупных вложений на компьютерах; добавлен голубой индикатор передачи. Локальные копии исключённых папок можно перемещать в корзину из единой карточки. Дерево выбора папок открывается свёрнутым. |
@@ -156,12 +159,13 @@ The [Android companion](https://arcalink.ru/android) provides note and task-list
 
 ## Version history
 
-Current version: **[1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
+Current version: **[1.0.31](https://github.com/dnsankin/arcalink/releases/tag/1.0.31)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.31](https://github.com/dnsankin/arcalink/releases/tag/1.0.31) | 2026-11-02 | Fixed conflict checks for large attachments returned as decoded buffers. Cancelling Companion setup resumes the existing plugin engine without reloading plugin code. Reduced main.js below 5 MB. |
 | [1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30) | 2026-11-01 | Companion pairing, code comparison and ordinary-file handoff; persistent How to use help. Support for the new shared-folder service mode: background migrations, email invitations, independent encryption and verified keys, legacy-copy reconciliation, unsharing and server-copy restoration. The service enables this mode separately; existing folders migrate manually. |
 | [1.0.29](https://github.com/dnsankin/arcalink/releases/tag/1.0.29) | 2026-10-28 | Get the Android companion from any device into the shared exchange folder without selecting a phone. Shorter description and an explicit browser action for the download link. Shared-directory deletion now propagates to participants and late downloads cannot recreate removed files. |
 | [1.0.28](https://github.com/dnsankin/arcalink/releases/tag/1.0.28) | 2026-10-28 | Bounded memory use while restoring large desktop attachments; blue transfer activity indicator. Excluded local folders can be moved to the vault trash from one card. Folder picker starts collapsed. |

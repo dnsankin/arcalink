@@ -35,3 +35,16 @@ export function patchDecodedBinary(source) {
  if(source.split(marker).length!==2)throw Error('Unexpected upstream binary decoder');
  return source.replace(marker,marker+'\n    if (src instanceof ArrayBuffer) return src;');
 }
+
+/** The large reader returns decoded buffers, which have no string-array join. */
+export function patchBinaryConflictReader(source) {
+ const marker=`      let data = getDocData(doc.data);
+      if (doc.datatype == "newnote") {
+        data = readString(new Uint8Array(decodeBinary(doc.data)));
+      } else if (doc.datatype == "plain") {
+      }`;
+ if(source.split(marker).length!==2)throw Error('Unexpected upstream binary conflict reader');
+ return source.replace(marker,`      const data = doc.datatype == "newnote"
+        ? readString(new Uint8Array(decodeBinary(doc.data)))
+        : getDocData(doc.data);`);
+}
