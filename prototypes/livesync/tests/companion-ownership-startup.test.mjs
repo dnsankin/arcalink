@@ -39,11 +39,13 @@ function fixture(phase='held'){
  files.set('.obsidian/plugins/arcalink-sync/companion/ownership-state.json',JSON.stringify(journal));
  const services={
   API:{},context:{events:{}},appLifecycle:{onSettingLoaded:()=>hooks.onSettingLoaded.run(),onWireUpEvents:async()=>true,onInitialise:async()=>true,onLoaded:async()=>{calls.push('ordinary-loaded');},onLayoutReady:async()=>true,
-   onFirstInitialise:async()=>{calls.push('watch');return true;},onResumed:new Chain()},
+   onFirstInitialise:async()=>{calls.push('watch');return true;},onResumed:new Chain(),onScanningStartupIssues:async()=>true},
   setting:{currentSettings:()=>settings,loadSettings:async()=>calls.push('settings-loaded'),onBeforeSaveSettingData:hooks.onBeforeSaveSettingData,
    applyPartial:async patch=>{Object.assign(settings,patch);calls.push('settings-saved');}},
   database:{openDatabase:async()=>{calls.push('database-open');},isDatabaseReady:()=>false},
   replication:{onBeforeReplicate:hooks.onBeforeReplicate,replicate:async()=>{calls.push('replicate');return true;}},
+  replicator:{onCloseActiveReplication:async()=>calls.push('replication-closed')},
+  control:{applySettings:async()=>{calls.push('settings-applied');},onReady:async()=>{calls.push('ready');return true;}},
   databaseEvents:{initialiseDatabase:async()=>{calls.push('scan');return true;}},
  };
  const adapter={exists:async path=>files.has(path),stat:async path=>files.has(path)?{type:'file',size:files.get(path).length}:null,
@@ -73,13 +75,41 @@ test('actual ownership startup gate runs after settings and before actual upstre
  assert.ok(main.indexOf('this.companionOwnership.attachBeforeStart();')<main.indexOf('super.onload();'));
 });
 
-test('an interrupted initial preparing journal without source coordinates can safely cancel and restart the original owner offline',async()=>{
+test('an interrupted initial preparing journal can cancel and resume the existing engine offline without reloading plugin code',async()=>{
  const f=fixture('preparing');await f.owner.load();f.owner.attachBeforeStart();
  assert.equal(await f.owner.cancel(),true);
  assert.equal(f.owner.state.phase,'cancelled');assert.equal(f.settings.additionalSuffixOfDatabaseName,'original');assert.equal(f.settings.liveSync,true);
- assert.equal(f.settings.syncIgnoreRegEx,'keep');assert.deepEqual(f.calls.slice(-2),['disable','enable']);
+ assert.equal(f.settings.syncIgnoreRegEx,'keep');assert.equal(f.calls.at(-1),'settings-applied');
+ assert.equal(f.calls.includes('disable')||f.calls.includes('enable'),false);
  const result=JSON.parse(f.files.get('.obsidian/plugins/arcalink-sync/companion/ownership-result.json'));
  assert.equal(result.phase,'cancelled');assert.equal(result.generation,f.identity.generation);
+});
+
+test('cancel after the actual startup gate continues database/load/ready once, without repeating wire-up or initialisation',async()=>{
+ const f=fixture('held');await f.owner.load();f.owner.attachBeforeStart();
+ const main=new ModuleLiveSyncMain(f.plugin.core);
+ let wires=0,inits=0;f.services.appLifecycle.onWireUpEvents=async()=>{wires++;return true;};
+ f.services.appLifecycle.onInitialise=async()=>{inits++;return true;};
+ f.services.control.onReady=()=>main._onLiveSyncReady();
+ assert.equal(await main._onLiveSyncLoad(),false);assert.equal(f.calls.includes('database-open'),false);
+ assert.equal(await f.owner.cancel(),true);assert.equal(f.owner.blocksOrdinary,false);
+ for(const key of ['database-open','ordinary-loaded','scan','watch','settings-applied'])assert.equal(f.calls.filter(x=>x===key).length,1,key);
+ assert.equal(wires,1);assert.equal(inits,1);assert.equal(f.calls.filter(x=>x==='shared-init').length,1);
+ assert.equal(await f.owner.cancel(),false);assert.equal(f.calls.filter(x=>x==='database-open').length,1);
+ assert.equal(f.calls.includes('disable')||f.calls.includes('enable'),false);
+});
+
+test('failed engine continuation fails closed, retains original persisted settings and does not retry partial startup',async()=>{
+ const f=fixture('held');await f.owner.load();f.owner.attachBeforeStart();
+ assert.equal(await new ModuleLiveSyncMain(f.plugin.core)._onLiveSyncLoad(),false);
+ f.services.control.onReady=async()=>{throw Error('startup failure');};
+ assert.equal(await f.owner.cancel(),false);assert.equal(f.owner.state.phase,'cancelled');
+ assert.equal(f.owner.blocksOrdinary,true);assert.equal(f.settings.liveSync,false);assert.equal(f.settings.suspendFileWatching,true);
+ assert.equal(f.calls.includes('replication-closed'),true);assert.equal(await f.services.replication.onBeforeReplicate.run(),false);
+ assert.match(f.owner.error,/Перезапустите Obsidian/);
+ assert.equal(await f.owner.cancel(),false);assert.equal(f.calls.filter(x=>x==='database-open').length,1);
+ const saved=JSON.parse(f.files.get('.obsidian/plugins/arcalink-sync/companion/ownership-state.json'));
+ assert.equal(saved.phase,'cancelled');assert.equal(saved.original.liveSync,true);
 });
 
 test('committing/committed authority cannot be cancelled and an identity change cannot restore source settings',async()=>{

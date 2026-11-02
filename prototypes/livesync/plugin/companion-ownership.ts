@@ -7,6 +7,7 @@ import {isFreeRelayConnection} from './free-relay-settings.mjs';
 import {folderContains} from './folder-exclusions.mjs';
 import {safeCompanionPath,sha256} from './companion-proof.mjs';
 import {waitForReplicationDrain} from './replication-drain.mjs';
+import {createCompanionResume} from './companion-resume.mjs';
 import {keyTransferComparison,sealCompanionIdKey} from './companion-key-transfer.mjs';
 import {OWNERSHIP_FORMAT_FIELDS,assertOwnershipManifest,canonicalOwnership,ownershipDigest,ownershipIdentity,sameOwnershipIdentity,ownershipReadyMatches,proveOwnershipPage,validOwnershipIdentity} from './companion-ownership-model.mjs';
 
@@ -25,10 +26,11 @@ export class CompanionOwnership {
  private writes:Promise<any>=Promise.resolve();private controller:AbortController|null=null;
  private scopeMutations=new Set<Promise<void>>();
  private source:any=null;private sourceOwned=false;private startupAttached=false;private corrupt=false;private cancelling=false;
- constructor(private plugin:any){}
+ private startupBlocked=false;private resumeFailed=false;private resumeOrdinary:()=>Promise<boolean>;
+ constructor(private plugin:any){this.resumeOrdinary=createCompanionResume(plugin.core,()=>this.startupBlocked);}
  get directory(){return this.plugin.pilotDirectory+'/companion';}
  get journalPath(){return this.directory+'/ownership-state.json';}
- get blocksOrdinary(){return this.corrupt||BLOCKING.has(this.state?.phase);}
+ get blocksOrdinary(){return this.corrupt||this.resumeFailed||BLOCKING.has(this.state?.phase);}
  get committed(){return this.state?.phase==='committed';}
  assertSharedScopeChange(){
   if(this.blocksOrdinary&&!(this.committed&&this.state.scopeWindow?.status==='open'))throw Error('Приостановите Компаньон для изменения общих папок, затем примените изменения на его экране. Редактирование подключённых общих папок доступно.');
@@ -58,6 +60,7 @@ export class CompanionOwnership {
   const s=this.plugin.core.services;
   s.appLifecycle.onSettingLoaded.addHandler(async()=>{
    if(!this.blocksOrdinary)return true;
+   this.startupBlocked=true;
    if(this.committed||this.state?.phase==='committing')Object.assign(s.setting.currentSettings(),this.guards());
    // Returning false exits ModuleLiveSyncMain before openDatabase and all ordinary startup hooks.
    // Existing Yjs providers require loaded settings, but do not need the ordinary LiveSync database.
@@ -222,6 +225,7 @@ export class CompanionOwnership {
    this.state={...ownershipIdentity(request),phase:'preparing',mode:isFreeRelayConnection(settings)?'p2p':'cloud',peerId:request.peerId||'',peerName:request.peerName||'',
     original,scope:{...this.scope(settings),ignoreFileBases:[]},pluginDeviceId:bound.session.deviceId,remoteDatabase:settings.couchDB_DBNAME||'',publicKeyFingerprint:keyTransfer.fingerprint,
     quarantineSuffix:'companion-'+request.generation.replace(/-/g,''),startedAt:Date.now(),since:0,pages:0,records:[]};
+   this.resumeOrdinary=createCompanionResume(p.core,()=>this.startupBlocked);
    this.holding=true;await this.save();
    await s.replicator.onCloseActiveReplication();await s.fileProcessing.commitPendingFileEvents();
    const counts=()=>[s.replication.replicationResultCount.value,s.replication.storageApplyingCount.value,s.replication.databaseQueueCount.value,p.telegram?.busy?1:0];
@@ -297,8 +301,16 @@ export class CompanionOwnership {
    await this.write('ownership-result.json',{...ownershipIdentity(this.state),phase:'cancelled'});
    await s.setting.applyPartial(original,true);
    if(this.sourceOwned){await this.source?.close();this.source=null;this.sourceOwned=false;}
-   // This is a user-requested plugin restart, not an automatic opening of Obsidian.
-   await p.app.plugins.disablePlugin(p.manifest.id);await p.app.plugins.enablePlugin(p.manifest.id);return true;
+   try{await this.resumeOrdinary();this.startupBlocked=false;}
+   catch{
+    // Keep a partial initialisation from starting replication; a fresh app launch can retry.
+    this.resumeFailed=true;this.holding=true;
+    Object.assign(settings,Object.fromEntries([...AUTO,...P2P].map(key=>[key,false])),{suspendFileWatching:true,suspendParseReplicationResult:true});
+    await s.replicator.onCloseActiveReplication();
+    this.error='Подключение Компаньона отменено, но синхронизация плагина не возобновилась. Перезапустите Obsidian.';
+    new Notice(this.error,15000);return false;
+   }
+   return true;
   }catch{this.error=fail().message;new Notice(this.error,15000);return false;}
   finally{this.cancelling=false;}
  }
