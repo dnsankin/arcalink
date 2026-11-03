@@ -218,3 +218,23 @@
 }
 .arcalink-shared2-card > .setting-item:first-child { border-top: 0; }
 .arcalink-shared2-card .setting-item { background: transparent; }
+
+/* One scroll viewport keeps saved/current text aligned without scroll handlers. */
+.arcalink-backup-compare-modal { width: min(1200px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
+.arcalink-backup-compare-modal .modal-title { overflow-wrap: anywhere; }
+.arcalink-backup-compare-headings,
+.arcalink-backup-compare-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.arcalink-backup-compare-headings h4 { margin: 12px 0 8px; padding-inline: 12px; }
+.arcalink-backup-compare-scroll {
+    max-height: 55vh; max-height: 55dvh; overflow: auto; overscroll-behavior: contain;
+    border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m);
+    background: var(--background-primary);
+}
+.arcalink-backup-compare-scroll:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.arcalink-backup-compare-columns > pre {
+    margin: 0; padding: 12px; min-width: 0; border: 0; border-radius: 0;
+    white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible;
+    font-family: var(--font-monospace); font-size: var(--font-smaller); line-height: 1.5;
+    tab-size: 4; background: transparent;
+}
+.arcalink-backup-compare-columns > pre + pre { border-inline-start: 1px solid var(--background-modifier-border); }

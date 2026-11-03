@@ -61,3 +61,11 @@ test('Begin shared folders are available without granting Pro capabilities',()=>
  assert.equal(result.capabilities.collaboration,true);assert.equal(result.sections.sharing,'configured');
  assert.equal(settingsState({account:{plan:'begin',billing_status:'expired'}}).capabilities.collaboration,false);
 });
+
+test('backup lamp follows the local enabled setting independently of cloud access',()=>{
+ assert.equal(settingsState().sections.backups,'unconfigured');
+ assert.equal(settingsState({backups:false}).sections.backups,'unconfigured');
+ assert.equal(settingsState({backups:true}).sections.backups,'configured');
+ assert.equal(settingsState({backups:true,policy:{paid:false,writable:false,sync_mode:'relay'}}).sections.backups,'configured');
+ const input={backups:true};assert.equal(settingsState(input).sections.backups,'configured');input.backups=false;assert.equal(settingsState(input).sections.backups,'unconfigured');
+});
