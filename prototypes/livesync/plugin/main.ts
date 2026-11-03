@@ -1,3 +1,4 @@
+import {LocalBackups} from './local-backups';
 import {Shared2} from './shared2';
 import {shared2Message} from './shared2-messages.mjs';
 import {chunkFetchCounts} from '@vrtmrz/livesync-commonlib/compat/mock_and_interop/stores';
@@ -50,6 +51,7 @@ async function api(path:string, body?:any, token?:string) {
 
 export type { LiveSyncCore } from './upstream-main';
 export default class ArcaLinkPilot extends LiveSync {
+  localBackups=new LocalBackups(this);
   pilotRecovery: any;
   pilotStorageWarning: any;
   async loadPilotStorageStatus(){
@@ -116,6 +118,7 @@ export default class ArcaLinkPilot extends LiveSync {
   // Upstream currently declares onload as void even though Obsidian supports an async hook.
   // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Upstream still declares this supported Obsidian lifecycle hook as void.
   override async onload() {
+    await this.localBackups.init();
     await this.companionOwnership.load();
     this.companionOwnership.attachBeforeStart();
     this.startupSyncNotices=createStartupNoticeGate({enabled:Platform.isMobileApp,
@@ -291,6 +294,7 @@ class PilotTab extends PluginSettingTab {
       {id:'publications',label:'Публикации',icon:'globe'},
       {id:'assistant',label:'Мобильный помощник',icon:'smartphone'},
       {id:'desktop',label:'Трей и горячие клавиши',icon:'keyboard'},
+      {id:'backups',label:'Резервные копии',icon:'archive-restore'},
       {id:'help',label:'Краткая инструкция',icon:'book-open'},
       {id:'changes',label:'История изменений',icon:'history'}
     ];
@@ -329,7 +333,7 @@ class PilotTab extends PluginSettingTab {
     for(const id of ['sharing','telegram'])hints[id]=panels[id].createEl('p',{cls:'arcalink-tariff-hint',text:capabilityHint(id==='sharing'?'collaboration':'cloud')});
     updateSectionStates=()=>{
       const current=this.pilot.core.services.setting.currentSettings();
-      const state=settingsState({settings:current,policy:this.pilot.unifiedVault.state,account:accountStatus,signedIn,telegram:this.pilot.telegram.configured,desktop:this.pilot.desktop.settings,shared:!!(this.pilot.collaboration.records.length||this.pilot.folders.records.length),publications:this.pilot.publications.hasActivePublications});
+      const state=settingsState({settings:current,policy:this.pilot.unifiedVault.state,account:accountStatus,signedIn,telegram:this.pilot.telegram.configured,desktop:this.pilot.desktop.settings,shared:!!(this.pilot.collaboration.records.length||this.pilot.folders.records.length),publications:this.pilot.publications.hasActivePublications,backups:this.pilot.localBackups.enabled});
       tabs.forEach((tab,index)=>{
         const value=state.sections[tab.id]||'unconfigured',button=buttons[index];
         if(button.getAttribute('data-state')!==value){
@@ -429,6 +433,7 @@ class PilotTab extends PluginSettingTab {
       'Лампочка внизу показывает состояние синхронизации. Наведите мышь, чтобы прочитать сообщения; нажмите, чтобы открыть настройки. Подробный журнал доступен через «Синхронизация» → «Показать лог».',
       'Режим шифрования, свободное место и управление серверными хранилищами находятся во «Хранилищах». Общие папки и управление доступом — в «Совместной работе», бот — в «Telegram». Обновления устанавливаются через каталог плагинов Obsidian.'
     ])steps.createEl('li',{text});
+    void this.pilot.localBackups.render(panels.backups);
     new Setting(panels.changes).setName('История изменений').setHeading();
     panels.changes.createEl('p',{text:'Установлена версия '+this.pilot.manifest.version+'. Здесь перечислены последние изменения плагина ArcaLink.'});
     for(const [version,items] of [
