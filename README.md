@@ -12,12 +12,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.32](https://github.com/dnsankin/arcalink/releases/tag/1.0.32)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
+Текущая версия: **[1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33) | 04.11.2026 | Резервирование сохраняет промежуточные версии при одновременной записи файлов. Очистка удаляет вытесненные блоки копий, а сравнение крупных файлов ограничивает чтение текста. |
 | [1.0.32](https://github.com/dnsankin/arcalink/releases/tag/1.0.32) | 03.11.2026 | Локальные резервные копии и история версий. Сохранённая и текущая версии текста показаны рядом и прокручиваются вместе. |
 | [1.0.31](https://github.com/dnsankin/arcalink/releases/tag/1.0.31) | 02.11.2026 | Исправлена проверка конфликтов крупных вложений: одинаковые версии больше не остаются недоступными из-за формата буфера. При отмене подключения Компаньона синхронизация плагина возобновляется без его перезагрузки. Уменьшен размер main.js ниже 5 МБ. |
 | [1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30) | 01.11.2026 | Подключение самостоятельной синхронизации Компаньона с проверкой кода и передачей управления обычными файлами; общие папки остаются у плагина. Постоянная справка «Как пользоваться». Поддержка нового серверного режима общих папок: фоновые переносы, приглашения по email, отдельное шифрование и подтверждение ключей, сверка прежних копий, прекращение общего доступа и восстановление серверной копии. Режим включается сервисом отдельно; существующие папки переносятся вручную. |
@@ -160,12 +161,13 @@ The [Android companion](https://arcalink.ru/android) provides note and task-list
 
 ## Version history
 
-Current version: **[1.0.32](https://github.com/dnsankin/arcalink/releases/tag/1.0.32)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
+Current version: **[1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33) | 2026-11-04 | Backups preserve intermediate versions during concurrent writes. Cleanup reclaims evicted backup blocks, and large-file comparison bounds text reads. |
 | [1.0.32](https://github.com/dnsankin/arcalink/releases/tag/1.0.32) | 2026-11-03 | Added local backups and version history, with side-by-side text comparison and shared scrolling. |
 | [1.0.31](https://github.com/dnsankin/arcalink/releases/tag/1.0.31) | 2026-11-02 | Fixed conflict checks for large attachments returned as decoded buffers. Cancelling Companion setup resumes the existing plugin engine without reloading plugin code. Reduced main.js below 5 MB. |
 | [1.0.30](https://github.com/dnsankin/arcalink/releases/tag/1.0.30) | 2026-11-01 | Companion pairing, code comparison and ordinary-file handoff; persistent How to use help. Support for the new shared-folder service mode: background migrations, email invitations, independent encryption and verified keys, legacy-copy reconciliation, unsharing and server-copy restoration. The service enables this mode separately; existing folders migrate manually. |

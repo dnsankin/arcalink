@@ -1,4 +1,5 @@
 import {Modal,Notice,Setting,TFile} from 'obsidian';
+import {localizeMessage} from './localized-obsidian';
 import {createLocalBackupStore,backupPath,backupDefaults} from './local-backup-store.mjs';
 import {installLocalBackupHooks} from './local-backup-hooks.mjs';
 import {createBackupRestorer} from './local-backup-restore.mjs';
@@ -50,7 +51,8 @@ export class LocalBackups {
  private async ensureParents(path:string){let current='';for(const part of path.split('/').slice(0,-1)){current+=(current?'/':'')+part;if(!await this.raw.exists(current))await this.raw.mkdir(current);}}
  async restore(id:string){
   if(this.busy)throw Error('Дождитесь завершения снимка.');
-  const v=await this.store.verify(id);if(!this.accepts(v.path))throw Error('Недопустимый путь.');
+  const retained=await this.store.retain(id);try{
+  const v=retained.version;if(!this.accepts(v.path))throw Error('Недопустимый путь.');
   // Restoring a file must preserve its current state even if background backup
   // was disabled after the selected version was created.
   const before=await this.store.state();this.busy=true;
@@ -68,6 +70,7 @@ export class LocalBackups {
    if((await hashShared2Stream(await this.readStream(v.path))).sha256!==v.sha256)throw Error('Восстановленный файл не прошёл проверку.');
    this.error='';new Notice('Версия восстановлена. Изменение будет передано обычной синхронизацией.');
   }finally{this.busy=false;if(!before.settings.enabled)await this.store.configure({enabled:false});this.redraw();}
+  }finally{await retained.release();}
  }
  private redraw(){if(this.disposed||this.refreshTimer)return;this.refreshTimer=window.setTimeout(()=>{this.refreshTimer=0;for(const el of this.panels){if(!el.isConnected){this.panels.delete(el);continue;}void this.render(el);}},150);}
  private createView(el:HTMLElement){
@@ -114,10 +117,25 @@ export class LocalBackups {
   }catch(e){this.error=friendly(e);}finally{view.loading=undefined;if(!this.disposed)this.updateProgress(view);}})();
   return view.loading;
  }
+ private async comparisonText(path:string){
+  const large=localizeMessage('Текущий файл больше 1 МиБ. Текстовое сравнение недоступно; восстановление доступно.');
+  let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
+  try{
+   const stat=await this.raw.stat(path);if(!stat)return localizeMessage('Файл отсутствует');
+   if(stat.type!=='file'||!Number.isSafeInteger(stat.size)||stat.size<0)return localizeMessage('Не удалось прочитать текущий файл для сравнения.');
+   if(stat.size>1024*1024)return large;
+   const response=await fetch(this.plugin.app.vault.adapter.getResourcePath(path),{cache:'no-store'});
+   if(!response.ok||!response.body)return localizeMessage('Не удалось прочитать текущий файл для сравнения.');
+   reader=response.body.getReader();const decoder=new TextDecoder();let text='',size=0;
+   for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>1024*1024)return large;text+=decoder.decode(part.value,{stream:true});}
+   return text+decoder.decode();
+  }catch{return localizeMessage('Не удалось прочитать текущий файл для сравнения.');}
+  finally{if(reader){try{await reader.cancel();}catch{}reader.releaseLock();}}
+ }
  private async openVersion(v:any){
-  await this.store.verify(v.id,{priority:true});const modal=new Modal(this.plugin.app);modal.titleEl.setText(v.path);modal.contentEl.createEl('p',{text:`Версия от ${new Date(v.time).toLocaleString()}. При восстановлении текущее содержимое будет сохранено в истории. Изменение может синхронизироваться с другими устройствами.`});
+  const retained=await this.store.retain(v.id,{priority:true});try{v=retained.version;const modal=new Modal(this.plugin.app);modal.titleEl.setText(v.path);modal.contentEl.createEl('p',{text:`Версия от ${new Date(v.time).toLocaleString()}. При восстановлении текущее содержимое будет сохранено в истории. Изменение может синхронизироваться с другими устройствами.`});
   if(v.size<=1024*1024&&/\.(md|txt|json|csv|css|js|html|xml)$/i.test(v.path)){
-   const parts=[];for await(const p of this.store.stream(v))parts.push(p);const old=await new Blob(parts).text();let current='Файл отсутствует';try{current=await this.raw.read(v.path);}catch{}
+   const parts=[];for await(const p of this.store.stream(v))parts.push(p);const old=await new Blob(parts).text();const current=await this.comparisonText(v.path);
    modal.modalEl.addClass('arcalink-backup-compare-modal');
    const headings=modal.contentEl.createDiv({cls:'arcalink-backup-compare-headings'});
    for(const title of ['Сохранённая версия','Текущий файл'])headings.createEl('h4',{text:title});
@@ -127,5 +145,6 @@ export class LocalBackups {
    for(const [title,text]of [['Сохранённая версия',old],['Текущий файл',current]])columns.createEl('pre',{text,attr:{'data-arcalink-user-content':'true','aria-label':title}});
   }
   new Setting(modal.contentEl).addButton(b=>b.setButtonText('Отмена').onClick(()=>modal.close())).addButton(b=>b.setButtonText('Подтверждаю восстановление').setCta().onClick(async()=>{b.setDisabled(true);try{await this.restore(v.id);modal.close();}catch(e){new Notice(friendly(e),15000);b.setDisabled(false);}}));modal.open();
+  }finally{await retained.release();}
  }
 }

@@ -15,6 +15,8 @@ export default Object.fromEntries([
 ["Saved version","Сохранённая версия"],
 ["Current file","Текущий файл"],
 ["File is missing","Файл отсутствует"],
+["The current file exceeds 1 MiB. Text comparison is unavailable; restoration remains available.","Текущий файл больше 1 МиБ. Текстовое сравнение недоступно; восстановление доступно."],
+["Could not read the current file for comparison.","Не удалось прочитать текущий файл для сравнения."],
 ["No saved versions.","Сохранённых версий нет."],
 ["The first 100 versions are shown. Narrow the path.","Показаны первые 100 версий. Уточните путь."],
 ["The version was restored. Ordinary sync will transfer the change.","Версия восстановлена. Изменение будет передано обычной синхронизацией."],
