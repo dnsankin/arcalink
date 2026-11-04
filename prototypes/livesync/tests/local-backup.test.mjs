@@ -62,3 +62,110 @@ test('disabling runs after the active capture and before a queued capture backlo
 test('UI history reads can bypass the backlog but never observe a partial capture',async()=>{const f=fixture();f.put('active.md','one');f.put('queued.md','two');let entered,releaseFirst,releaseSecond,secondStarted=false;const started=new Promise(r=>entered=r),firstGate=new Promise(r=>releaseFirst=r),secondGate=new Promise(r=>releaseSecond=r),store=createLocalBackupStore({adapter:f.raw,root:f.root,readStream:async path=>(async function*(){if(path==='active.md'){entered();await firstGate;}else{secondStarted=true;await secondGate;}for await(const bytes of await f.readStream(path))yield bytes;})()});await store.configure({enabled:true});const first=store.capture('active.md');await started;const second=store.capture('queued.md'),view=store.state({priority:true});releaseFirst();try{const state=await view;assert.deepEqual(state.versions.map(v=>v.path),['active.md']);assert.equal(state.versions[0].sha256,hex(enc('one')));}finally{releaseSecond();await Promise.all([first,second]);}assert.equal(secondStarted,true);assert.equal((await store.state()).versions.length,2);});
 test('a rejected settings job does not strand queued captures or idle waiters',async()=>{const f=fixture();f.put('a.md','a');await f.store.configure({enabled:true});const bad=f.store.configure({days:0}),captured=f.store.capture('a.md'),idle=f.store.idle();await assert.rejects(bad,/invalid/);assert.ok(await captured);await idle;assert.equal((await f.store.state()).versions.length,1);});
 test('opening a comparison verifies the saved bytes ahead of a capture backlog',async()=>{const f=fixture();f.put('saved.md','saved version');f.put('active.md','active');f.put('queued.md','queued');let entered,releaseFirst,releaseSecond;const started=new Promise(r=>entered=r),firstGate=new Promise(r=>releaseFirst=r),secondGate=new Promise(r=>releaseSecond=r),store=createLocalBackupStore({adapter:f.raw,root:f.root,readStream:async path=>(async function*(){if(path==='active.md'){entered();await firstGate;}if(path==='queued.md')await secondGate;for await(const bytes of await f.readStream(path))yield bytes;})()});await store.configure({enabled:true});const saved=await store.capture('saved.md'),active=store.capture('active.md');await started;const queued=store.capture('queued.md'),verified=store.verify(saved.id,{priority:true});releaseFirst();try{assert.equal((await verified).sha256,hex(enc('saved version')));}finally{releaseSecond();await Promise.all([active,queued]);}});
+
+const physicalBytes=f=>[...f.files].filter(([p])=>p.startsWith(f.root+'/objects/')).reduce((sum,[,v])=>sum+v.bytes.length,0);
+const distinctFile=seed=>{const b=new Uint8Array(700000);for(let i=0;i<b.length;i++)b[i]=(i+seed)%251^seed;return b;};
+test('repeated quota eviction reclaims physical blocks immediately and both slots remain recoverable',async()=>{
+ const f=fixture();await f.store.configure({enabled:true,maxBytes:1048576});let latest;
+ for(let i=1;i<=10;i++){f.put('a.bin',distinctFile(i));latest=await f.store.capture('a.bin');const state=await f.store.state();assert.equal(state.usedBytes,physicalBytes(f));assert.ok(physicalBytes(f)<=1048576);}
+ assert.equal((await f.store.state()).versions.length,1);
+ for(const slot of ['a','b']){const path=f.root+'/index.'+slot+'.json',saved=f.files.get(path);f.put(path,'torn');assert.equal((await f.reopen().verify(latest.id)).sha256,latest.sha256);f.files.set(path,saved);}
+});
+test('actual usage includes orphan blocks, then the next capture removes them',async()=>{
+ const f=fixture();await f.store.configure({enabled:true});f.put('a.md','kept');const v=await f.store.capture('a.md');const orphan=enc('orphan');f.put(f.root+'/objects/'+hex(orphan),orphan);
+ assert.equal((await f.store.state()).usedBytes,4+orphan.length);assert.equal((await f.store.capture('a.md')).id,v.id);assert.equal(physicalBytes(f),4);
+});
+test('a failed source capture leaves no accumulated unreferenced blocks',async()=>{
+ const f=fixture();await f.store.configure({enabled:true});f.put('kept.md','kept');const kept=await f.store.capture('kept.md');
+ const store=createLocalBackupStore({adapter:f.raw,root:f.root,readStream:async p=>(async function*(){yield enc('new');f.put(p,'changed');})()});
+ for(let i=0;i<3;i++){f.put('a.md','new');await assert.rejects(store.capture('a.md'),/source-changed/);assert.equal(physicalBytes(f),4);}
+ assert.equal((await f.reopen().verify(kept.id)).sha256,kept.sha256);
+});
+test('failure to publish the second GC slot preserves blocks referenced by either recoverable slot',async()=>{
+ const f=fixture();await f.store.configure({enabled:true,maxBytes:1048576});f.put('a.bin',distinctFile(1));const old=await f.store.capture('a.bin');f.put('a.bin',distinctFile(2));
+ const write=f.raw.write;let writes=0;f.raw.write=async(p,s)=>{if(p.includes('/index.')&&++writes>=4)throw Error('manifest unavailable');return write(p,s);};
+ await assert.rejects(f.store.capture('a.bin'),/manifest unavailable/);assert.equal((await f.store.state()).usedBytes,physicalBytes(f));assert.ok(physicalBytes(f)>1048576,'failed GC is reported as physical use');
+ // Each valid slot still points to a complete readable version, even after the other slot is lost.
+ for(const slot of ['a','b']){const path=f.root+'/index.'+slot+'.json',saved=f.files.get(path);f.put(path,'torn');const reopened=f.reopen();for(const v of (await reopened.state()).versions)await reopened.verify(v.id);f.files.set(path,saved);}
+ assert.ok(old.chunks.every(h=>f.files.has(f.root+'/objects/'+h)));
+ f.raw.write=write;await f.store.cleanup();assert.ok(physicalBytes(f)<=1048576);
+});
+test('active readers survive expiry and quota pruning until every reader releases',async()=>{
+ const f=fixture();await f.store.configure({enabled:true,maxBytes:1048576,days:1});f.put('a.bin',distinctFile(1));const v=await f.store.capture('a.bin'),one=await f.store.retain(v.id),two=await f.store.retain(v.id);f.time(3*86400000);
+ f.put('b.bin',distinctFile(2));await assert.rejects(f.store.capture('b.bin'),/quota-too-small/);assert.equal(physicalBytes(f),700000);await f.store.cleanup();await f.store.verify(v.id);
+ let size=0;for await(const chunk of f.store.stream(one.version))size+=chunk.length;assert.equal(size,v.size);
+ await one.release();await one.release();await f.store.cleanup();await f.store.verify(v.id);await two.release();await f.store.cleanup();assert.equal(physicalBytes(f),0);
+});
+
+const gate=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
+const turn=()=>new Promise(setImmediate);
+const hooks=f=>installLocalBackupHooks({adapter:f.adapter,enabled:()=>true,capture:(...args)=>f.store.capture(...args),failed:()=>{}});
+test('two writes preserve the intermediate bytes while capture and mutation hold one path lock',{timeout:3000},async()=>{
+ const f=fixture(),entered=gate(),release=gate();await f.store.configure({enabled:true});f.put('a.md','initial');const write=f.adapter.write;
+ f.adapter.write=async function(path,text){assert.equal(this,f.adapter);if(text==='first'){entered.resolve();await release.promise;}return write.call(this,path,text);};const dispose=hooks(f);
+ const first=f.adapter.write('a.md','first');await entered.promise;let secondDone=false;const second=f.adapter.write('a.md','second').then(()=>secondDone=true);
+ try{await turn();assert.equal(secondDone,false);assert.equal(f.text('a.md'),'initial');}finally{release.resolve();await Promise.all([first,second]);dispose();}
+ assert.equal(f.text('a.md'),'second');assert.deepEqual((await f.store.state()).versions.map(v=>v.sha256),[hex(enc('initial')),hex(enc('first'))]);
+});
+test('unrelated paths proceed while another original write is paused',{timeout:3000},async()=>{
+ const f=fixture(),entered=gate(),release=gate();await f.store.configure({enabled:true});f.put('a.md','A');f.put('b.md','B');const write=f.adapter.write;
+ f.adapter.write=async function(path,text){if(path==='a.md'){entered.resolve();await release.promise;}return write.call(this,path,text);};const dispose=hooks(f),first=f.adapter.write('a.md','A2');await entered.promise;
+ try{await f.adapter.write('b.md','B2');assert.equal(f.text('b.md'),'B2');assert.equal(f.text('a.md'),'A');}finally{release.resolve();await first;dispose();}
+});
+test('rename reserves both source and destination through the actual move',{timeout:3000},async()=>{
+ const f=fixture(),entered=gate(),release=gate();await f.store.configure({enabled:true});f.put('a.md','A');f.put('b.md','B');
+ f.adapter.rename=async function(a,b){assert.equal(this,f.adapter);entered.resolve();await release.promise;await f.raw.remove(b);await f.raw.rename(a,b);return 'moved';};const dispose=hooks(f),renamed=f.adapter.rename('a.md','b.md');await entered.promise;
+ let sourceDone=false,targetDone=false;const source=f.adapter.write('a.md','new source').then(()=>sourceDone=true),target=f.adapter.write('b.md','new target').then(()=>targetDone=true);
+ try{await turn();assert.equal(sourceDone,false);assert.equal(targetDone,false);}finally{release.resolve();assert.equal(await renamed,'moved');await Promise.all([source,target]);dispose();}
+ assert.equal(f.text('a.md'),'new source');assert.equal(f.text('b.md'),'new target');assert.deepEqual((await f.store.state()).versions.filter(v=>v.path==='b.md').map(v=>v.sha256),[hex(enc('B')),hex(enc('A'))]);
+});
+test('recursive folder removal waits for a descendant write and captures its completed bytes',{timeout:3000},async()=>{
+ const f=fixture(),entered=gate(),release=gate();await f.store.configure({enabled:true});f.dirs.add('Team');f.put('Team/a.md','before');const write=f.adapter.write;
+ f.adapter.write=async function(...args){entered.resolve();await release.promise;return write.apply(this,args);};const dispose=hooks(f),first=f.adapter.write('Team/a.md','intermediate');await entered.promise;
+ let removed=false;const removal=f.adapter.rmdir('Team',true).then(()=>removed=true);
+ try{await turn();assert.equal(removed,false);}finally{release.resolve();await Promise.all([first,removal]);dispose();}
+ assert.equal(f.files.has('Team/a.md'),false);assert.deepEqual((await f.store.state()).versions.map(v=>v.sha256),[hex(enc('before')),hex(enc('intermediate'))]);
+});
+test('directory rename locks destination descendants until publication completes',{timeout:3000},async()=>{
+ const f=fixture(),entered=gate(),release=gate();await f.store.configure({enabled:true});f.dirs.add('Team');f.put('Team/a.md','before');
+ f.adapter.rename=async(a,b)=>{entered.resolve();await release.promise;f.dirs.add(b);await f.raw.rename(a+'/a.md',b+'/a.md');f.dirs.delete(a);};const dispose=hooks(f),renamed=f.adapter.rename('Team','Moved');await entered.promise;
+ let written=false;const write=f.adapter.write('Moved/a.md','after').then(()=>written=true);
+ try{await turn();assert.equal(written,false);}finally{release.resolve();await Promise.all([renamed,write]);dispose();}
+ assert.equal(f.text('Moved/a.md'),'after');assert.ok((await f.store.state()).versions.some(v=>v.path==='Moved/a.md'&&v.sha256===hex(enc('before'))));
+});
+test('binary append and removal share the same lock as text writes',{timeout:3000},async()=>{
+ const f=fixture(),entered=gate(),release=gate();await f.store.configure({enabled:true});f.put('a.md','A');const write=f.adapter.write;
+ f.adapter.write=async function(...args){entered.resolve();await release.promise;return write.apply(this,args);};const dispose=hooks(f),first=f.adapter.write('a.md','B');await entered.promise;
+ const appended=f.adapter.appendBinary('a.md',enc('C').buffer),removed=f.adapter.remove('a.md');
+ try{await turn();assert.equal(f.text('a.md'),'A');}finally{release.resolve();await Promise.all([first,appended,removed]);dispose();}
+ assert.equal(f.files.has('a.md'),false);assert.deepEqual((await f.store.state()).versions.map(v=>v.sha256),['A','B','BC'].map(s=>hex(enc(s))));
+});
+test('backup and original-operation failures release locks without rejecting queued successors',{timeout:3000},async()=>{
+ for(const where of ['backup','write']){
+  const f=fixture(),entered=gate(),release=gate();f.put('a.md','before');let first=true,errors=0;const write=f.adapter.write;
+  if(where==='write')f.adapter.write=async function(...args){if(first){first=false;entered.resolve();await release.promise;throw Error('write failure');}return write.apply(this,args);};
+  const dispose=installLocalBackupHooks({adapter:f.adapter,enabled:()=>true,failed:()=>errors++,capture:async()=>{if(where==='backup'&&first){first=false;entered.resolve();await release.promise;throw Error('backup failure');}}});
+  const failed=assert.rejects(f.adapter.write('a.md','bad'),new RegExp(where+' failure'));await entered.promise;const next=f.adapter.write('a.md','good');release.resolve();await Promise.all([failed,next]);dispose();assert.equal(f.text('a.md'),'good');assert.equal(errors,where==='backup'?1:0);
+ }
+});
+test('disabling during an in-flight write cannot let a later mutation overtake it',{timeout:3000},async()=>{
+ const f=fixture(),entered=gate(),release=gate();f.put('a.md','before');let enabled=true,captures=0;const write=f.adapter.write;
+ f.adapter.write=async function(path,text){if(text==='first'){entered.resolve();await release.promise;}return write.call(this,path,text);};
+ const dispose=installLocalBackupHooks({adapter:f.adapter,enabled:()=>enabled,capture:async()=>captures++,failed:()=>{}}),first=f.adapter.write('a.md','first');await entered.promise;enabled=false;
+ let secondDone=false;const second=f.adapter.write('a.md','second').then(()=>secondDone=true);try{await turn();assert.equal(secondDone,false);}finally{release.resolve();await Promise.all([first,second]);dispose();}
+ assert.equal(f.text('a.md'),'second');assert.equal(captures,1);
+});
+test('internal backup writes can re-enter the adapter without waiting on the outer protected write',{timeout:3000},async()=>{
+ const f=fixture();f.put('a.md','old');let captures=0;
+ const dispose=installLocalBackupHooks({adapter:f.adapter,enabled:()=>true,failed:()=>{},capture:async()=>{captures++;await f.adapter.write(f.root+'/test-index','saved');}});
+ await f.adapter.write('a.md','new');dispose();assert.equal(captures,1);assert.equal(f.text(f.root+'/test-index'),'saved');assert.equal(f.text('a.md'),'new');
+});
+test('case and Unicode-equivalent paths are serialized conservatively',{timeout:3000},async()=>{
+ const f=fixture(),entered=gate(),release=gate();let calls=0;const write=f.adapter.write;
+ f.adapter.write=async function(...args){if(++calls===1){entered.resolve();await release.promise;}return write.apply(this,args);};const dispose=hooks(f),first=f.adapter.write('Caf\u00e9.md','one');await entered.promise;
+ const second=f.adapter.write('CAFE\u0301.md','two');try{await turn();assert.equal(calls,1);}finally{release.resolve();await Promise.all([first,second]);dispose();}assert.equal(calls,2);
+});
+test('trash results, original arguments and receiver survive interception',{timeout:3000},async()=>{
+ const f=fixture();f.put('a.md','before');const calls=[];f.adapter.trashSystem=async function(...args){calls.push([this,...args]);return false;};f.adapter.trashLocal=async function(path){calls.push([this,path]);await f.raw.remove(path);};const dispose=hooks(f);
+ assert.equal(await f.adapter.trashSystem('a.md'),false);await f.adapter.trashLocal('a.md');dispose();assert.deepEqual(calls,[[f.adapter,'a.md'],[f.adapter,'a.md']]);assert.equal(f.files.has('a.md'),false);
+});
