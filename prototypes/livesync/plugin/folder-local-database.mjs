@@ -10,6 +10,9 @@ const generationPrefix=logical=>logical+'-arcalink-folder-';
 const isGeneration=(name,logical)=>typeof name==='string'&&name.startsWith(generationPrefix(logical))
   &&/^[a-f0-9]{32}$/.test(name.slice(generationPrefix(logical).length));
 const localName=(name,logical)=>name===logical||isGeneration(name,logical);
+// Match LiveSyncLocalDB. A longer limit can join stems from separate conflict
+// branches and change the ancestry returned for an otherwise identical leaf.
+const stagingOptions=()=>({auto_compaction:false,revs_limit:100});
 function stateKey(state,logical) {
   if(typeof logical!=='string'||!logical.endsWith('-livesync-v2')||logical.length>512
     ||!state||!Number.isSafeInteger(state.revision)||state.revision<1||state.phase!=='ready'
@@ -73,14 +76,14 @@ export async function prepareFolderDatabase({state,logical,source:sourceName,jou
     }
     if(await isMapped(journal.target))throw failure('preparation-target-is-active');
     if(!await isCurrent())throw failure('policy-changed');
-    target=open(journal.target,{auto_compaction:false});
+    target=open(journal.target,stagingOptions());
     if(await source.id()===await target.id())throw failure('target-is-source');
     if(journal.phase==='copying'){
       // A partial, never-published generation belongs solely to this journal.
       // Keep the source on every failure; a retry starts the staging copy clean.
       if((await target.changes({since:0,limit:1})).results.length){
         if(await isMapped(journal.target)||!await isCurrent())throw failure('preparation-target-is-active');
-        await target.destroy();target=open(journal.target,{auto_compaction:false});
+        await target.destroy();target=open(journal.target,stagingOptions());
       }
       const result=await copyCleanupSnapshot(source,target,plan,{isCurrent});
       journal={...journal,phase:'prepared',targetSequence:result.target_sequence,verifiedRevisions:result.verified_revisions};

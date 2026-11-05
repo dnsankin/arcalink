@@ -24,7 +24,7 @@ async function fixture(t,options={}){
  const randomName='controller-'+randomUUID();
  let code=readFileSync(new URL('../plugin/folder-policies.ts',import.meta.url),'utf8').replace(/^import .*;$/gm,'').replace('export class','class');
  code=stripTypeScriptTypes(code,{mode:'transform'})+'\nglobalThis.Controller=FolderPolicies;';
- const context={...policies,...generations,createFolderPolicyStore,pluginEnvironment,folderContains,withExcludedFolders,verifyModeProofPage:options.verify||async function(){return 0;},modeProofMessages:{},waitForReplicationDrain:options.drain||waitForReplicationDrain,crypto,TextEncoder,Uint8Array,btoa,atob,URL,navigator:{onLine:true},window:{setTimeout,setInterval,clearInterval},isFreeRelayConnection:s=>s.remoteType==='ONLY_P2P'};
+ const context={...policies,...generations,createFolderPolicyStore,pluginEnvironment,folderContains,withExcludedFolders,verifyModeProofPage:options.verify||async function(){return 0;},modeProofMessages:{},waitForReplicationDrain:options.drain||waitForReplicationDrain,crypto,TextEncoder,Uint8Array,btoa,atob,URL,navigator:{onLine:true},window:{setTimeout:options.timer||setTimeout,setInterval,clearInterval},isFreeRelayConnection:s=>s.remoteType==='ONLY_P2P'};
  runInNewContext(code,context);const c=new context.Controller(plugin);c.factory={openRaw:open};
  let revision=1,phase='ready',envelope=await policies.encodeFolderPolicy({protocol:1,workspace,folders:['Фото'],caseSensitive:false},{encrypted:false});
  let ackError=false,ackCalls=0;
@@ -320,7 +320,7 @@ test('explicit common-operation cancel still cancels an observed remote preview'
 });
 
 for(const encrypt of [false,true])test('explicit first-rule recovery verifies every proof page before initializing '+encrypt,async t=>{
- const verified=[],f=await fixture(t,{verify:async page=>{verified.push(page);return encrypt?1:0;}});f.settings.encrypt=encrypt;
+ const verified=[],delays=[],f=await fixture(t,{timer:(fn,ms)=>{delays.push(ms);return setTimeout(fn,0);},verify:async page=>{verified.push(page);return encrypt?1:0;}});f.settings.encrypt=encrypt;
  let known=false;const calls=[];f.c.api=async(action,body)=>{
   calls.push([action,body]);
   if(action==='read')return {protocol:1,revision:0,phase:'ready',envelope:null,database,enabled:true,encryption_known:known};
@@ -329,7 +329,7 @@ for(const encrypt of [false,true])test('explicit first-rule recovery verifies ev
  };
  await f.c.fetchState(f.settings,true);assert.equal(known,true);assert.equal(f.acks(),0);
  assert.deepEqual(calls.map(x=>x[0]),['read','initialize','encryption-proof','encryption-proof','initialize','read']);
- assert.equal(calls[3][1].cursor,'signed-cursor');
+ assert.equal(calls[3][1].cursor,'signed-cursor');assert.deepEqual(delays,[600]);
 });
 test('invalid key, closing preview, or changed key prevents metadata initialization and releases preview hold',async t=>{
  for(const reason of ['key','close','change']){
@@ -345,4 +345,24 @@ test('invalid key, closing preview, or changed key prevents metadata initializat
 test('an encrypted final proof without any verified ciphertext is never acknowledged',async t=>{
  const f=await fixture(t);f.settings.encrypt=true;f.c.api=async action=>{assert.equal(action,'encryption-proof');return {cursor:null,proof:'empty-proof'};};
  await assert.rejects(f.c.recoverEncryption(f.settings));
+});
+
+test('first proof admission waits for a draining server write without retrying a partial proof',async t=>{
+ const delays=[],f=await fixture(t,{timer:(fn,ms)=>{delays.push(ms);return setTimeout(fn,0);}});let calls=0,initialized=false;
+ f.c.api=async(action,body)=>{
+  if(action==='initialize'){initialized=true;return {};}
+  assert.equal(action,'encryption-proof');calls++;
+  if(calls===1)throw Object.assign(Error('draining'),{code:'workspace-encryption-changed'});
+  if(calls===2)return {cursor:'next',proof:null};
+  assert.equal(body.cursor,'next');throw Object.assign(Error('changed after admission'),{code:'workspace-encryption-changed'});
+ };
+ await assert.rejects(f.c.recoverEncryption(f.settings),e=>e.code==='workspace-encryption-changed');
+ assert.equal(calls,3);assert.deepEqual(delays,[600,600]);assert.equal(initialized,false);
+});
+test('proof admission retries are bounded and cancellation during the wait prevents another request',async t=>{
+ for(const cancel of [false,true]){
+  const delays=[];let f;f=await fixture(t,{timer:(fn,ms)=>{delays.push(ms);if(cancel)f.c.previewCancelled=true;return setTimeout(fn,0);}});let calls=0;
+  f.c.api=async action=>{assert.equal(action,'encryption-proof');calls++;throw Object.assign(Error('draining'),{code:'workspace-encryption-changed'});};
+  await assert.rejects(f.c.recoverEncryption(f.settings));assert.equal(calls,cancel?1:11);assert.equal(delays.length,cancel?1:10);
+ }
 });

@@ -53,11 +53,11 @@ export function createLocalBackupStore({adapter,root,readStream,now=Date.now,acc
  return {
   state:({priority=false}={})=>serial(async()=>{const s=await load();await used(s.versions);return {...s,usedBytes:await physicalBytes()};},priority),
   configure:patch=>serial(async()=>{const s=await load();s.settings={...s.settings,...patch};check(s);await prune(s);await collect(s);return s.settings;},true),
-  capture:(...args)=>serial(async()=>{try{return await capture(...args);}catch(error){
+  capture:(path,reason='change',{priority=false}={})=>serial(async()=>{try{return await capture(path,reason);}catch(error){
    // Reload authority: a failed slot write may already have committed one valid slot.
    // GC can remove only blocks not referenced by that recoverable state.
    try{await collect(await load());}catch{}throw error;
-  }}),
+  }},priority),
   async version(id){return serial(async()=>{const v=(await load()).versions.find(v=>v.id===id);if(!v)throw fail('backup-version-missing');return v;});},
   verify:(id,{priority=false}={})=>serial(async()=>{const v=(await load()).versions.find(v=>v.id===id);if(!v)throw fail('backup-version-missing');const p=await hashShared2Stream(content(v));if(p.size!==v.size||p.sha256!==v.sha256)throw fail('backup-version-corrupt');return v;},priority),
   retain:(id,{priority=false}={})=>serial(async()=>{

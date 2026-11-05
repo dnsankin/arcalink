@@ -70,3 +70,48 @@ test('encrypted personal extraction releases its hold if another mount appears d
  await assert.rejects(f.manager.prepareEncryptedShare(f.intent,async()=>true),/source-not-ready/);
  assert.equal(f.plugin.folders.records.length,1);assert.equal(f.plugin.folders.records[0].mount,'Team/Sub');assert.equal(f.plugin.folderPolicies.holding,false);
 });
+
+function plainNamespacePreparation(){
+ const f=reversePreparation();f.plugin.folders.records=[];f.plugin.folders.validateMount=()=>{};
+ const session={session:{email:'owner@example.invalid',deviceId:'device'},workspace:f.manager.scope.workspace};
+ f.manager.session=async()=>session;f.manager.context=f.manager.signature(session);f.manager.poll=async()=>{};f.manager.redraw=()=>{};
+ f.plugin.core.services.replicator={runWithActiveReplicatorContext:async task=>task({replicator:{closeReplication:async()=>f.events.push('close-continuous')}})};f.plugin.core.services.control={applySettings:async()=>f.events.push('resume')};
+ f.plugin.core.services.database={localDatabaseDirect:{localDatabase:{info:async()=>({update_seq:5})}}};
+ f.plugin.folderPolicies.hold=async()=>{f.events.push('hold');f.plugin.folderPolicies.holding=true;};
+ f.plugin.folderPolicies.release=async()=>{f.events.push('release');f.plugin.folderPolicies.holding=false;};
+ f.plugin.folderPolicies.fetchState=async()=>{f.events.push('proof');assert.equal(f.plugin.folderPolicies.holding,true);return f.state;};
+ const intent={kind:'share',value:'Team',requestKey:request},marks=[];
+ f.manager.namespaceJobs={mark:async(...args)=>marks.push(args),snapshot:async()=>({requests:[intent]}),submit:async()=>{f.events.push('submit');return {id:'1'.repeat(32),folder:id};}};
+ return {...f,intent,marks};
+}
+test('plain namespace encryption proof runs after replication drains and while exchanges are held',async()=>{
+ const f=plainNamespacePreparation();await f.manager.prepareNamespace(f.intent);
+ assert.deepEqual(f.events,['files','close-continuous','private','hold','proof','release','submit']);
+ assert.equal(f.plugin.folders.records[0].id,id);assert.equal(f.plugin.folderPolicies.holding,false);
+ assert.equal(f.marks.some(row=>row[1]==='error'),false);
+});
+test('failed namespace proof releases exchanges without routing or submitting a partial share',async()=>{
+ const f=plainNamespacePreparation();f.plugin.folderPolicies.fetchState=async()=>{f.events.push('proof');throw Error('workspace-encryption-changed');};
+ await f.manager.prepareNamespace(f.intent);
+ assert.deepEqual(f.events,['files','close-continuous','private','hold','proof','release']);assert.equal(f.plugin.folders.records.length,0);
+ assert.equal(f.plugin.folderPolicies.holding,false);assert.equal(f.marks.at(-1)[2],'workspace-encryption-changed');
+});
+
+test('namespace proof failures explain retry without claiming a service outage',async()=>{
+ const {shared2Message}=await import('../plugin/shared2-messages.mjs');
+ assert.match(shared2Message('workspace-encryption-changed'),/хранилище изменилось/);
+ assert.match(shared2Message('workspace-encryption-proof-invalid'),/устарела/);
+});
+
+test('failed finite namespace drain restores continuous settings and does not publish a route',async()=>{
+ const f=plainNamespacePreparation();f.plugin.core.services.replication.replicate=async()=>{f.events.push('private');return false;};
+ await f.manager.prepareNamespace(f.intent);assert.deepEqual(f.events,['files','close-continuous','private','resume']);
+ assert.equal(f.plugin.folders.records.length,0);assert.equal(f.marks.at(-1)[2],'shared2-source-not-ready');
+});
+
+test('namespace finite drain stops the current connection without retiring its provider',async()=>{
+ const f=plainNamespacePreparation();let active=true,continuous=true;
+ f.plugin.core.services.replicator={runWithActiveReplicatorContext:async task=>{assert.equal(active,true);return task({replicator:{closeReplication:async()=>{continuous=false;f.events.push('close-continuous');}}});},onCloseActiveReplication:async()=>{active=false;}};
+ f.plugin.core.services.replication.replicate=async()=>{assert.equal(active,true);assert.equal(continuous,false);f.events.push('private');return true;};
+ await f.manager.prepareNamespace(f.intent);assert.equal(f.marks.some(row=>row[1]==='error'),false);assert.equal(f.plugin.folders.records[0].id,id);
+});

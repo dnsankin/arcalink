@@ -12,12 +12,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
+Текущая версия: **[1.0.34](https://github.com/dnsankin/arcalink/releases/tag/1.0.34)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.34](https://github.com/dnsankin/arcalink/releases/tag/1.0.34) | 05.11.2026 | Включён новый механизм общих папок. Содержимое переносится в фоне с отображением прогресса, пока Obsidian открыт; после копирования отдельно обозначена проверка данных. При недоступности сервиса создание общей папки сообщает об ошибке подключения. Резервная копия перед записью имеет приоритет перед фоновыми снимками. Исправлена сверка длинных цепочек ревизий при подготовке локальной базы. |
 | [1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33) | 04.11.2026 | Резервирование сохраняет промежуточные версии при одновременной записи файлов. Очистка удаляет вытесненные блоки копий, а сравнение крупных файлов ограничивает чтение текста. |
 | [1.0.32](https://github.com/dnsankin/arcalink/releases/tag/1.0.32) | 03.11.2026 | Локальные резервные копии и история версий. Сохранённая и текущая версии текста показаны рядом и прокручиваются вместе. |
 | [1.0.31](https://github.com/dnsankin/arcalink/releases/tag/1.0.31) | 02.11.2026 | Исправлена проверка конфликтов крупных вложений: одинаковые версии больше не остаются недоступными из-за формата буфера. При отмене подключения Компаньона синхронизация плагина возобновляется без его перезагрузки. Уменьшен размер main.js ниже 5 МБ. |
@@ -74,7 +75,7 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### Общие папки нового режима
 
-Этот режим требует обновления и отдельного включения на стороне сервиса. До включения используется прежний режим. Перенос существующей папки запускается вручную в настройках общих папок.
+Новые общие папки создаются в этом режиме. Перенос существующей папки запускается вручную в настройках общих папок. Если сервис недоступен, создание папки показывает ошибку подключения.
 
 После запуска можно закрыть настройки и продолжить работу: файлы загружаются в фоне, пока Obsidian открыт. Приглашения по email принимаются или отклоняются в плагине. В карточке папки видны владелец, участники и права; владелец меняет роли и отзывает доступ, участник может выйти, сохранив локальные файлы.
 
@@ -161,12 +162,13 @@ The [Android companion](https://arcalink.ru/android) provides note and task-list
 
 ## Version history
 
-Current version: **[1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
+Current version: **[1.0.34](https://github.com/dnsankin/arcalink/releases/tag/1.0.34)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.34](https://github.com/dnsankin/arcalink/releases/tag/1.0.34) | 2026-11-05 | Enabled the new shared-folder service. Content transfers in the background with progress while Obsidian is open; the status also identifies verification after copying. Unavailable service admission reports a connection failure before creating a shared folder. Pre-write backups take priority over queued background snapshots. Fixed verification of long revision chains during local database preparation. |
 | [1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33) | 2026-11-04 | Backups preserve intermediate versions during concurrent writes. Cleanup reclaims evicted backup blocks, and large-file comparison bounds text reads. |
 | [1.0.32](https://github.com/dnsankin/arcalink/releases/tag/1.0.32) | 2026-11-03 | Added local backups and version history, with side-by-side text comparison and shared scrolling. |
 | [1.0.31](https://github.com/dnsankin/arcalink/releases/tag/1.0.31) | 2026-11-02 | Fixed conflict checks for large attachments returned as decoded buffers. Cancelling Companion setup resumes the existing plugin engine without reloading plugin code. Reduced main.js below 5 MB. |
@@ -223,7 +225,7 @@ Keep independent backups of important notes: the service is not a backup and doe
 
 ## New shared-folder mode
 
-This mode requires a service update and separate account enablement. Until then, the existing mode remains in use. Existing folders migrate only through an explicit action in shared-folder settings.
+New shared folders use this service mode. Existing folders migrate through an explicit action in shared-folder settings. If the service is unavailable, folder creation reports a connection failure.
 
 After starting a transfer, close settings and continue working: files transfer in the background while Obsidian stays open. Email invitations are accepted or declined inside the plugin. A folder card shows its owner, participants and permissions; owners can change roles and revoke access, and participants can leave while keeping local files.
 
