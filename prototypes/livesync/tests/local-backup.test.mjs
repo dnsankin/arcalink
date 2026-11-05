@@ -169,3 +169,15 @@ test('trash results, original arguments and receiver survive interception',{time
  const f=fixture();f.put('a.md','before');const calls=[];f.adapter.trashSystem=async function(...args){calls.push([this,...args]);return false;};f.adapter.trashLocal=async function(path){calls.push([this,path]);await f.raw.remove(path);};const dispose=hooks(f);
  assert.equal(await f.adapter.trashSystem('a.md'),false);await f.adapter.trashLocal('a.md');dispose();assert.deepEqual(calls,[[f.adapter,'a.md'],[f.adapter,'a.md']]);assert.equal(f.files.has('a.md'),false);
 });
+
+test('pre-write capture passes a background backlog only after the active backup commits',async()=>{
+ const f=fixture(),events=[];for(const [path,bytes] of [['active.md','active'],['queued.md','queued'],['note.md','before']])f.put(path,bytes);
+ let entered,releaseActive,releaseQueued;const started=new Promise(r=>entered=r),activeGate=new Promise(r=>releaseActive=r),queuedGate=new Promise(r=>releaseQueued=r);
+ const store=createLocalBackupStore({adapter:f.raw,root:f.root,readStream:async path=>(async function*(){events.push(path);if(path==='active.md'){entered();await activeGate;}if(path==='queued.md')await queuedGate;for await(const bytes of await f.readStream(path))yield bytes;})()});
+ await store.configure({enabled:true});const active=store.capture('active.md');await started;const queued=store.capture('queued.md');
+ const dispose=installLocalBackupHooks({adapter:f.adapter,enabled:()=>true,capture:(path,reason)=>store.capture(path,reason,{priority:true}),failed:e=>{throw e;}});
+ let replaced=false;const write=f.adapter.write('note.md','after').then(()=>replaced=true);await new Promise(r=>setImmediate(r));assert.equal(replaced,false);
+ releaseActive();try{await write;assert.equal(f.text('note.md'),'after');assert.deepEqual(events.slice(0,2),['active.md','note.md']);}
+ finally{releaseQueued();await Promise.all([active,queued]);dispose();}
+ const saved=(await store.state()).versions.find(v=>v.path==='note.md');assert.equal(saved.sha256,hex(enc('before')));
+});

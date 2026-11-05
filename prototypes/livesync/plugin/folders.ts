@@ -693,10 +693,29 @@ export class SharedFolders {
             }));
         modal.open();
     }
+    async openSharePicker(afterShare: () => Promise<void>) {
+        if (this.plugin.manifest?.id === 'arcalink-sync') {
+            await this.plugin.shared2.init();
+            if (this.plugin.shared2.enabled) this.plugin.shared2.createNamespace();
+            else new Notice('Сервер временно недоступен. Повторите попытку.');
+            return;
+        }
+        const populated = foldersContainingFiles(this.app.vault.getFiles());
+        chooseSharedFolder(this.app, {
+            title: 'Поделиться папкой',
+            description: 'Выберите папку для совместной работы. Сервер и приглашённые участники получат доступ к её содержимому.',
+            action: 'Поделиться папкой',
+            unavailable: path => {
+                try { this.validateMount(path); return populated.has(path) ? '' : 'Папка пуста'; }
+                catch (e: any) { return e.message; }
+            },
+            select: async path => { await this.create(path); await afterShare(); }
+        });
+    }
     render(el: HTMLElement, gate:(control:HTMLElement)=>void=()=>{}) {
         if (this.plugin.shared2?.render(el,gate)) return;
         new Setting(el).setName('Общие папки').setDesc('Приглашайте редакторов и читателей. Сервер видит содержимое только выбранной общей папки. Размер ограничен свободным местом в хранилище владельца.')
-            .addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => { const populated=foldersContainingFiles(this.app.vault.getFiles()); chooseSharedFolder(this.app,{title:'Поделиться папкой',description:'Выберите папку для совместной работы. Сервер и приглашённые участники получат доступ к её содержимому.',action:'Поделиться папкой',unavailable:path=>{try{this.validateMount(path);return populated.has(path)?'':'Папка пуста';}catch(e:any){return e.message;}},select:async path=>{await this.create(path);await load();}}); }); gate(b.buttonEl); })
+            .addButton(b => { b.setButtonText('Поделиться папкой').onClick(() => { void this.openSharePicker(load).catch((e:any) => new Notice(e.message)); }); gate(b.buttonEl); })
             .addButton(b => b.setButtonText('Присоединиться').onClick(() => this.plugin.collaboration.prompt('Общая папка', 'Код приглашения', async (code: string) => {
                 const r = await this.plugin.collaboration.api('join', { code });
                 if (r.kind !== 'folder') throw Error('Это приглашение в заметку');

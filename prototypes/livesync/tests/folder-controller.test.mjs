@@ -338,3 +338,20 @@ test('remote removal prunes empty directories inside mount but preserves root an
  await x.manager.pruneEmptyParents(x.e,'Team/ТИС/sub/a.md');assert.deepEqual(x.trash,['Team/ТИС/sub','Team/ТИС']);assert.ok(folders.has('Team'));
  folders.set(dir.path,new TestFolder(dir.path,[new TestFile(dir.path+'/local.md')]));await x.manager.pruneEmptyParents(x.e,'Team/ТИС/a.md');assert.equal(x.trash.length,2);
 });
+
+test('Community sharing retries shared2 admission before opening its background picker', async () => {
+ const manager=controller();let initialized=0,opened=0;
+ manager.plugin.manifest={id:'arcalink-sync'};
+ manager.plugin.shared2={enabled:false,init:async()=>{initialized++;manager.plugin.shared2.enabled=true;},createNamespace:()=>opened++};
+ manager.create=()=>assert.fail('must not seed a legacy copy');
+ await manager.openSharePicker(async()=>assert.fail('background admission does not wait for legacy seeding'));
+ assert.equal(initialized,1);assert.equal(opened,1);assert.equal(manager.notices.length,0);
+});
+test('Community sharing with unavailable shared2 reports failure before reading or duplicating files', async () => {
+ const manager=controller();
+ manager.plugin.manifest={id:'arcalink-sync'};
+ manager.plugin.shared2={enabled:false,init:async()=>{},createNamespace:()=>assert.fail('shared2 unavailable')};
+ manager.create=()=>assert.fail('must not fall back to legacy copying');
+ await manager.openSharePicker(async()=>assert.fail('must not complete legacy sharing'));
+ assert.equal(manager.notices.length,1);assert.match(manager.notices[0].message,/Сервер временно недоступен/);
+});

@@ -114,15 +114,26 @@ export class FolderPolicies {
       const current=this.plugin.core.services.setting.currentSettings();
       if(this.disposed||this.previewCancelled||this.requiresPolicy()||key!==this.workspace+'|'+this.logical||JSON.stringify(crypto)!==JSON.stringify({encrypt:!!current.encrypt,passphrase:current.passphrase,useDynamicIterationCount:current.useDynamicIterationCount}))throw fail();
     };
-    let cursor=null,verified=0;
+    let cursor=null,verified=0,admissionRetries=0;
     for(let pages=0;pages<100001;pages++){
-      check();const page=await this.api('encryption-proof',{cursor});check();
+      check();let page;
+      try{page=await this.api('encryption-proof',{cursor});}
+      catch(error:any){
+        // A cancelled long-poll/write may still hold a server-side lease just
+        // after the local drain. Retry admission only, never a partial proof.
+        if(cursor===null&&error.code==='workspace-encryption-changed'&&admissionRetries++<10){await new Promise(resolve=>window.setTimeout(resolve,600));continue;}
+        throw error;
+      }
+      check();
       verified+=await verifyModeProofPage(page,crypto);check();
       if(page.proof){
         if(crypto.encrypt&&!verified)throw fail();
         await this.api('initialize',{encrypted:crypto.encrypt,proof:page.proof});check();return;
       }
       cursor=page.cursor;
+      // The production policy API admits two requests per second. Keep room
+      // for status polling while checking every bounded page of a large vault.
+      await new Promise(resolve=>window.setTimeout(resolve,600));
     }
     throw fail();
   }

@@ -23,7 +23,7 @@ export class LocalBackups {
   this.store=createLocalBackupStore({adapter:this.raw,root:this.root,readStream:(path:string)=>this.readStream(path),accept:(path:string)=>this.accepts(path)});
   this.restorer=createBackupRestorer({adapter:this.raw,root:this.root,readStream:(path:string)=>this.readStream(path),accept:(path:string)=>this.accepts(path)});
   try{await this.restorer.recover();this.enabled=(await this.store.state()).settings.enabled;}catch(e){this.recoveryError=e;this.enabled=true;this.error=friendly(e);}
-  this.disposeHooks=installLocalBackupHooks({adapter:a,enabled:()=>this.enabled,accept:(path:string)=>this.accepts(path),capture:(path:string,reason:string)=>{if(this.recoveryError)throw this.recoveryError;return this.store.capture(path,reason);},failed:(e:any)=>{this.error=friendly(e);new Notice(this.error,15000);this.redraw();},changed:()=>{}});
+  this.disposeHooks=installLocalBackupHooks({adapter:a,enabled:()=>this.enabled,accept:(path:string)=>this.accepts(path),capture:(path:string,reason:string)=>{if(this.recoveryError)throw this.recoveryError;return this.store.capture(path,reason,{priority:true});},failed:(e:any)=>{this.error=friendly(e);new Notice(this.error,15000);this.redraw();},changed:()=>{}});
   p.register(()=>{this.disposed=true;this.stop=true;window.clearTimeout(this.refreshTimer);this.disposeHooks?.();this.store.dispose();this.panels.clear();});
   p.registerEvent(p.app.vault.on('create',(file:any)=>this.observe(file)));
   p.registerEvent(p.app.vault.on('modify',(file:any)=>this.observe(file)));
