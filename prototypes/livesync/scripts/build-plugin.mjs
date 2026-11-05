@@ -9,6 +9,7 @@ import { patchContentRetryProcessor, patchContentRetryLifecycle, patchContentRet
 import { patchCommunityOnboarding } from './patch-community-onboarding.mjs';
 import { patchConfigDoctor } from './patch-config-doctor.mjs';
 import { patchSettingsRegistration } from './patch-settings-registration.mjs';
+import { patchPouchNextTick } from './patch-replication.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const communityRelease = process.env.ARCALINK_RELEASE_CHANNEL === 'community';
@@ -211,6 +212,10 @@ for(const name of ['receivedChangeReadiness.unit.spec.ts','replicationFeature.un
 await copyFile(path.join(root,'tests/content-retry.integration.unit.spec.ts'),path.join(source,'src/content-retry.integration.unit.spec.ts'));
 execFileSync('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: source, env, stdio: 'inherit' });
 await patchMaintainedEngine(source,{foldersLab});
+for (const entry of ['index.js', 'index.es.js', 'index-browser.js', 'index-browser.es.js']) {
+  const pouchUtils = path.join(source, 'node_modules/pouchdb-utils/lib', entry);
+  await writeFile(pouchUtils, patchPouchNextTick(await readFile(pouchUtils, 'utf8')));
+}
 // Preserve attachment encodings at the Obsidian boundary. Explicit binary
 // metadata must also take precedence over the filename's text extension.
 const accessPath=path.join(source,'src/serviceModules/FileAccessObsidian.ts');
