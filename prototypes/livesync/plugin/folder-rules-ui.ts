@@ -2,6 +2,7 @@ import {Modal,Notice,Setting,TFolder,setIcon,type App} from 'obsidian';
 import {excludedFolders,folderContains,withExcludedFolders} from './folder-exclusions.mjs';
 import {folderTree,folderTreeMatches,folderRuleState,setFolderIncluded} from './folder-rules-tree.mjs';
 import {localizeMessage} from './localized-obsidian';
+import {shared2Message} from './shared2-messages.mjs';
 
 function confirmChange(app:App,plan:any,removed:boolean):Promise<boolean>{
   return new Promise(resolve=>{
@@ -37,10 +38,30 @@ export class FolderRulesModal extends Modal {
     this.modalEl.addClass('arcalink-folder-rules-modal');
     this.contentEl.addClass('arcalink-folder-rules');
     this.contentEl.createEl('p',{text:localizeMessage('Обе галочки включены — папка синхронизируется. Снимите зелёную, чтобы исключить папку на этом устройстве. Снимите красную, чтобы удалить облачную копию и исключить папку на всех устройствах. Локальные файлы сохраняются.')});
-    this.contentEl.createEl('p',{text:localizeMessage('Общие папки и совместные заметки управляются отдельно. Удаление облачной копии личной папки не удаляет исходные сообщения и файлы в Telegram.')});
+    this.contentEl.createEl('p',{text:localizeMessage('У общих папок своя база. Зелёная галочка управляет синхронизацией этой базы на данном устройстве. Красная галочка показывает, что у папки есть отдельная база.')});
+    this.contentEl.createEl('p',{text:localizeMessage('Удаление облачной копии личной папки не удаляет исходные сообщения и файлы в Telegram.')});
     if(!controller.available)this.contentEl.createEl('p',{text:localizeMessage('Общие исключения сейчас недоступны. Можно изменить локальные исключения.')});
     const available=this.app.vault.getAllLoadedFiles().filter((f:any)=>f instanceof TFolder&&f.path&&f.path!=='/').map((f:any)=>f.path);
+    const shared2=this.pilot.shared2,scope=shared2?.scope;
+    const records=(this.pilot.folders?.records||[]).filter((record:any)=>record.protocol===2
+      &&scope&&record.shared2Scope?.account===scope.account&&record.shared2Scope?.workspace===scope.workspace);
+    const sharedFolders=new Map<string,{mount:string;row:any;record:any}>();
+    for(const row of shared2?.catalog?.folders||[]){
+      if(!/^arcalink_s_[a-f0-9]{32}$/.test(row.database))continue;
+      const record=records.find((record:any)=>record.id===row.id);
+      if(record?.shared2Left||record?.shared2Revoked)continue;
+      const mount=record?.mount||(row.role==='owner'&&row.ownerWorkspace===scope?.workspace?row.documentRoot:null);
+      if(mount)sharedFolders.set(mount.toLowerCase(),{mount,row,record});
+    }
+    for(const record of records){
+      if(record.shared2Left||record.shared2Revoked||!record.shared2Database||sharedFolders.has(record.mount.toLowerCase()))continue;
+      sharedFolders.set(record.mount.toLowerCase(),{mount:record.mount,row:null,record});
+    }
+    const sharedLocal=new Map<any,boolean>();
     const paths=[...new Set<string>([...available,...local,...common])];
+    for(const {mount} of sharedFolders.values()){
+      if(!paths.some(path=>path.toLowerCase()===mount.toLowerCase()))paths.push(mount);
+    }
     const tree=folderTree(paths),expanded=new Set<string>();
     let query='';const rows:any[]=[];let search:any,save:any,cancel:any;
     const list=this.contentEl.createDiv({cls:'arcalink-folder-tree'});
@@ -52,11 +73,26 @@ export class FolderRulesModal extends Modal {
     const empty=list.createEl('p',{text:localizeMessage('Папки не найдены.')});
     const update=()=>{
       const matches=folderTreeMatches(tree.nodes,query);empty.hidden=!!matches.visible.size;
-      for(const {path,item,group,branch,localControl,cloudControl,description} of rows){
-        const state=folderRuleState(path,local,common,folderContains,caseSensitive,globalCase);
+      for(const {path,item,group,branch,localControl,cloudControl,description,shared} of rows){
         item.hidden=!matches.visible.has(path);
         const open=query.trim()?matches.opened.has(path):expanded.has(path);
         if(group){group.hidden=!open;branch.setAttribute('aria-expanded',String(open));branch.setAttribute('aria-label',localizeMessage(open?'Свернуть папку':'Развернуть папку')+': '+path);branch.disabled=this.busy||!!query.trim();}
+        if(shared){
+          const {record,row}=shared;
+          const isRoot=path.toLowerCase()===shared.mount.toLowerCase();
+          const enabled=sharedLocal.get(record)??!record?.shared2LocalPaused;
+          localControl.checked=!!record&&enabled&&!!row&&!shared2.retentionPaused(row);
+          cloudControl.checked=true;
+          localControl.disabled=this.busy||!isRoot||!shared2.canSetLocalSync(record);
+          cloudControl.disabled=true;
+          let hint='Синхронизация управляется общей папкой выше.';
+          if(isRoot)hint=!record&&row?'Папка в общем доступе. Подключите её в разделе «Совместная работа».'
+            :enabled?'Папка в общем доступе':'Папка в общем доступе. Синхронизация на этом устройстве приостановлена.';
+          description.setText(localizeMessage(hint));
+          description.hidden=false;
+          continue;
+        }
+        const state=folderRuleState(path,local,common,folderContains,caseSensitive,globalCase);
         localControl.checked=state.local;cloudControl.checked=state.cloud;
         localControl.disabled=this.busy||!!state.localParent||!state.cloud;
         cloudControl.disabled=this.busy||!!state.commonParent||!controller.available;
@@ -80,13 +116,24 @@ export class FolderRulesModal extends Modal {
           const cell=row.createEl('label',{cls:'arcalink-folder-check-cell'});
           return cell.createEl('input',{type:'checkbox',cls:'arcalink-folder-check arcalink-folder-check-'+scope,attr:{'aria-label':localizeMessage(label)+': '+path,title:localizeMessage(label),'data-arcalink-user-content':'','data-folder-path':path,'data-folder-scope':scope}});
         };
-        const localControl=checkbox('local','Синхронизировать на этом устройстве'),cloudControl=checkbox('cloud','Хранить в облаке');
-        localControl.addEventListener('change',()=>{setFolderIncluded(local,path,localControl.checked,folderContains,caseSensitive);update();});
-        cloudControl.addEventListener('change',()=>{setFolderIncluded(common,path,cloudControl.checked,folderContains,globalCase);update();});
+        const shared=[...sharedFolders.values()].find(folder=>folderContains(folder.mount,path));
+        const localControl=checkbox('local',shared?'Синхронизировать общую папку на этом устройстве':'Синхронизировать на этом устройстве');
+        const cloudControl=checkbox('cloud',shared?'Отдельная база общей папки':'Хранить в облаке');
+        if(shared)cloudControl.addClass('is-shared-cloud');
+        if(!shared){
+          localControl.addEventListener('change',()=>{setFolderIncluded(local,path,localControl.checked,folderContains,caseSensitive);update();});
+          cloudControl.addEventListener('change',()=>{setFolderIncluded(common,path,cloudControl.checked,folderContains,globalCase);update();});
+        }else if(shared.record&&path.toLowerCase()===shared.mount.toLowerCase()){
+          localControl.addEventListener('change',()=>{
+            if(localControl.checked===!shared.record.shared2LocalPaused)sharedLocal.delete(shared.record);
+            else sharedLocal.set(shared.record,localControl.checked);
+            update();
+          });
+        }
         const description=row.createDiv({cls:'arcalink-folder-tree-description'});
         const group=node.children.length?item.createEl('ul',{cls:'arcalink-folder-tree-list'}):null;
         if(group){branch.addEventListener('click',()=>{if(expanded.has(path))expanded.delete(path);else expanded.add(path);update();});render(node.children,group,depth+1);}
-        rows.push({path,item,group,branch,localControl,cloudControl,description});
+        rows.push({path,item,group,branch,localControl,cloudControl,description,shared});
       }
     };
     render(tree.roots,rootList,0);
@@ -112,6 +159,10 @@ export class FolderRulesModal extends Modal {
             if(stale())throw Error('Настройки исключений изменились. Закройте окно и откройте выбор папок заново.');
             this.confirmed=true;status.setText(localizeMessage('Применяем общие исключения. Локальные файлы сохраняются.'));
             await controller.confirm(revision);globalApplied=true;
+          }
+          for(const [record,enabled] of sharedLocal){
+            try{await shared2.setLocalSync(record,enabled);sharedLocal.delete(record);}
+            catch(error){throw Error(shared2Message(error));}
           }
           const next=withExcludedFolders(original,[...local],caseSensitive);
           if(next!==original){

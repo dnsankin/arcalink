@@ -146,6 +146,7 @@
 .arcalink-folder-rules input.arcalink-folder-check:checked { background: var(--arcalink-check-color); }
 .arcalink-folder-rules input.arcalink-folder-check:checked::after { content: ''; background: none; mask: none; -webkit-mask: none; box-sizing: content-box; position: absolute; inset: 2px auto auto 5px; width: 6px; height: 11px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .arcalink-folder-rules input.arcalink-folder-check:disabled { opacity: .4; filter: grayscale(1); cursor: default; }
+.arcalink-folder-rules input.arcalink-folder-check.is-shared-cloud:disabled { opacity: .65; filter: none; }
 .arcalink-folder-rules input.arcalink-folder-check:focus-visible,
 .arcalink-folder-tree-branch:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 3px; }
 .arcalink-folder-tree-description { grid-column: 1; padding-inline-start: calc(var(--arcalink-folder-depth) * 16px + 30px); color: var(--text-muted); font-size: var(--font-ui-smaller); overflow-wrap: anywhere; }

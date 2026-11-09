@@ -5,6 +5,40 @@ const output=await require('esbuild').build({stdin:{contents:`export {Shared2} f
 const id='a'.repeat(32),oldDatabase='arcalink_s_'+'b'.repeat(32),newDatabase='arcalink_s_'+'c'.repeat(32),oldCache='d'.repeat(32),newCache='e'.repeat(32),request='f'.repeat(32),scope={account:'owner',workspace:'work'};
 function setup(){const record={id,protocol:2,mount:'Team',role:'owner',shared2Scope:scope,shared2CacheEpoch:oldCache,shared2AuthorityEpoch:1,shared2MembershipEpoch:1,shared2Generation:1,shared2Database:oldDatabase,shared2KeyEpoch:0,shared2Rekeying:true,shared2DeviceRequest:request};let saves=0;const plugin={folders:{records:[record],save:async()=>saves++,refresh(){},entries:new Map()}},manager=new Shared2(plugin);manager.scope=scope;const row={id,documentRoot:'Team',owner:'owner',ownerWorkspace:'work',ownerLabel:'owner@example.invalid',database:newDatabase,generation:2,revision:1,role:'owner',encrypted:true,keyEpoch:1,authorityEpoch:2,membershipEpoch:1};return {record,manager,row,plugin,get saves(){return saves;}};}
 
+test('device pause persists and closes only this shared mount, then resumes with the same routing and cache',async()=>{
+ const f=setup(),events=[];
+ f.record.shared2Rekeying=false;
+ f.manager.catalog={folders:[f.row]};f.manager.session=async()=>({});
+ f.manager.context=f.manager.signature({});f.manager.poll=async()=>events.push('poll');
+ f.manager.entries.set('other',{});
+ f.manager.entryTasks.set(id,Promise.resolve().then(()=>{
+  f.manager.entries.set(id,{controller:{close:async()=>events.push('controller')},engine:{close:async()=>events.push('engine')}});
+ }));
+ await f.manager.setLocalSync(f.record,false);
+ assert.deepEqual(events,['controller','engine']);
+ assert.equal(f.saves,1);assert.equal(f.record.shared2LocalPaused,true);
+ assert.equal(f.manager.entries.has('other'),true);assert.equal(f.manager.entries.has(id),false);
+ assert.equal(f.manager.scopeRow(f.record),null);assert.equal(f.manager.canEdit(id),true);
+ await assert.rejects(f.manager.ensure(f.row,'Team'),/shared2-local-paused/);
+ await f.manager.setLocalSync(f.record,true);
+ assert.deepEqual(events,['controller','engine','poll']);
+ assert.equal(f.saves,2);assert.equal(f.record.shared2CacheEpoch,oldCache);
+ assert.equal(f.manager.scopeRow(f.record),f.row);
+});
+
+test('failed pause persistence leaves the connection active and stale accounts cannot change the preference',async()=>{
+ const f=setup();
+ f.record.shared2Rekeying=false;f.manager.catalog={folders:[f.row]};f.manager.session=async()=>({});
+ f.manager.context=f.manager.signature({});
+ f.plugin.folders.save=async()=>{throw Error('disk full');};
+ const entry={controller:{close:async()=>assert.fail('closing an unpaused entry')}};
+ f.manager.entries.set(id,entry);
+ await assert.rejects(f.manager.setLocalSync(f.record,false),/disk full/);
+ assert.equal(f.manager.scopeRow(f.record),f.row);assert.equal(f.manager.entries.get(id),entry);
+ f.manager.session=async()=>({workspace:'elsewhere'});
+ await assert.rejects(f.manager.setLocalSync(f.record,false),/shared2-account-changed/);
+});
+
 function recoveryBrowser(t,plugin){
  const names=['window','document','navigator'],saved=names.map(name=>Object.getOwnPropertyDescriptor(globalThis,name));
  const win=new EventTarget(),doc=new EventTarget(),network={onLine:true},timers=new Map(),listeners=[];

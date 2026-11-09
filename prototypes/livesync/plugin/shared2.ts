@@ -48,6 +48,7 @@ export class Shared2 {
  encryptedTransfers:any=null;encryptedState:any={requests:[],jobs:[]};
  namespaceJobs:any=null;namespaceState:any={requests:[],jobs:[]};namespacePreparing=new Map<string,Promise<any>>();
  jobs:any=null;jobState:any={jobs:[]};inbox:any[]=[];entries=new Map<string,any>();
+ localPauseChanges=new Set<string>();
  entryTasks=new Map<string,Promise<any>>();eventReverts=new Set<string>();projectionEvents=new Map<string,Map<string,number>>();
  access=new Map<string,any>();keyInbox:any[]=[];keyStorage:any=null;keys:any=null;warning='';timer:any;initializing:any;context='';lastError='';panels=new Set<HTMLElement>();panelGates=new Map<HTMLElement,(control:HTMLElement)=>void>();
  constructor(private plugin:any){}
@@ -117,7 +118,7 @@ export class Shared2 {
   catalog=checkedShared2ServerCatalog(catalog);
   if(catalog.account!==this.scope.account)throw Error('shared2-account-changed');
   this.catalog=catalog;
-  for(const [id,entry] of this.entries){const row=catalog.folders.find((row:any)=>row.id===id);if(!row||this.version(row)!==entry.version){await entry.controller.close();await entry.engine.close();this.entries.delete(id);}}
+  for(const [id,entry] of this.entries){const row=catalog.folders.find((row:any)=>row.id===id);if(!row||this.version(row)!==entry.version)await this.closeEntry(id);}
   let changed=false;
   for(const record of this.plugin.folders.records)if(record.protocol===2&&record.shared2Scope?.account===this.scope.account&&record.shared2Scope?.workspace===this.scope.workspace&&!catalog.folders.some((row:any)=>row.id===record.id)&&!record.shared2Revoked){record.shared2Revoked=true;changed=true;}
 
@@ -140,7 +141,38 @@ export class Shared2 {
  version(row:any){return JSON.stringify([row.database,row.generation,row.revision,row.role,row.keyEpoch,row.authorityEpoch,row.membershipEpoch]);}
  retentionFor(row:any){const status=this.retentionStatus.get(row?.id);return status&&status.database===row.database&&status.generation===row.generation?status:null;}
  retentionPaused(row:any){const status=this.retentionFor(row);return !!status&&(!['active','restored','retained'].includes(status.state)||status.state==='retained'&&Date.parse(status.retainedUntil)<=Date.now());}
- canEdit(id:string){const row=this.catalog?.folders.find((row:any)=>row.id===id);return !!row&&!this.retentionPaused(row)&&this.entries.has(id)&&row.role!=='viewer'&&!this.plugin.folders.records.find((r:any)=>r.id===id)?.shared2ReconcileAuthority&&!this.plugin.folders.records.find((r:any)=>r.id===id)?.shared2Unsharing&&!this.plugin.folders.records.find((r:any)=>r.id===id)?.shared2Rekeying&&!this.plugin.folders.records.find((r:any)=>r.id===id)?.shared2Reconciling;}
+ async closeEntry(id:string){
+  const entry=this.entries.get(id);if(!entry)return;
+  entry.closing??=(async()=>{await entry.controller.close();await entry.engine.close();})();
+  const closing=entry.closing;
+  try{await closing;}catch(error){if(entry.closing===closing)entry.closing=undefined;throw error;}
+  if(this.entries.get(id)===entry)this.entries.delete(id);
+ }
+ canSetLocalSync(record:any){return !this.disposed&&!!this.scope&&this.plugin.folders.records.includes(record)
+  &&!!this.scopeRow(record,true)&&!this.localPauseChanges.has(record.id);}
+ async setLocalSync(record:any,enabled:boolean){
+  if(!this.canSetLocalSync(record)||this.signature(await this.session())!==this.context||!this.canSetLocalSync(record))throw Error('shared2-account-changed');
+  if(enabled===!record.shared2LocalPaused)return;
+  const id=record.id,previous=record.shared2LocalPaused;
+  this.localPauseChanges.add(id);
+  try{
+   record.shared2LocalPaused=!enabled;
+   try{await this.plugin.folders.save();}
+   catch(error){record.shared2LocalPaused=previous;throw error;}
+   if(!enabled){
+    await this.entryTasks.get(id)?.catch(()=>{});
+    await this.closeEntry(id);
+   }
+  }finally{this.localPauseChanges.delete(id);this.plugin.folders.refresh();this.redraw();}
+  if(enabled)void this.poll().then(()=>this.plugin.folders.refresh());
+ }
+ canEdit(id:string){
+  const record=this.plugin.folders.records.find((item:any)=>item.id===id);
+  const row=this.catalog?.folders.find((item:any)=>item.id===id);
+  return !!row&&!this.retentionPaused(row)&&row.role!=='viewer'&&!record?.shared2ReconcileAuthority
+   &&!record?.shared2Unsharing&&!record?.shared2Rekeying&&!record?.shared2Reconciling
+   &&(this.entries.has(id)||!!record?.shared2LocalPaused&&!!this.scopeRow(record,true));
+ }
  async poll(){
   if(this.busy||this.disposed||!this.enabled)return;this.busy=true;
   try{
@@ -153,7 +185,7 @@ export class Shared2 {
     if(row.role==='owner'&&this.access.get(row.id)?.revision!==row.revision){const members=await this.request('/shared2/folders/'+row.id+'/members'),invitations=await this.request('/shared2/folders/'+row.id+'/invitations'),devices=await this.request('/shared2/folders/'+row.id+'/devices');this.access.set(row.id,{revision:row.revision,members:members.status===200?members.json.members:[],invitations:invitations.status===200?invitations.json.invitations:[],devices:devices.status===200?devices.json.devices:[]});}
     if(!/^arcalink_s_[a-f0-9]{32}$/.test(row.database))continue;
     const record=this.plugin.folders.records.find((record:any)=>record.id===row.id&&record.protocol===2&&!record.shared2Left&&!record.shared2Revoked&&!record.shared2Creating&&!record.shared2Unsharing&&!record.shared2Rekeying&&!record.shared2Reconciling&&record.shared2Scope?.account===this.scope.account&&record.shared2Scope?.workspace===this.scope.workspace);if(!record)continue;
-    if(this.retentionPaused(row)){const previous=this.entries.get(row.id);if(previous){await previous.controller.close();await previous.engine.close();this.entries.delete(row.id);}continue;}
+    if(record.shared2LocalPaused||this.retentionPaused(row)){await this.closeEntry(row.id);continue;}
     const entry=await this.ensure(row,record.mount);void entry.controller.wake().catch(()=>this.redraw());
    }
    for(const record of this.plugin.folders.records)if(record.shared2Preparing&&!record.shared2EncryptedRequest&&!record.shared2NamespaceRequest&&!record.shared2Job&&record.shared2Scope?.account===this.scope.account&&record.shared2Scope?.workspace===this.scope.workspace&&!this.preparations.get(record.id)?.promise)void this.migrate(record.id).catch((error:any)=>{this.warning=error.code||error.message;this.redraw();});
@@ -286,7 +318,8 @@ export class Shared2 {
  }
  ensure(row:any,mount:string){
   if(this.disposed)return Promise.reject(Error('shared2-manager-disposed'));
-  const previous=this.entries.get(row.id);if(previous)return Promise.resolve(previous);
+  if(this.plugin.folders.records.some((record:any)=>record.id===row.id&&record.shared2LocalPaused))return Promise.reject(Error('shared2-local-paused'));
+  const previous=this.entries.get(row.id);if(previous)return previous.closing?previous.closing.then(()=>this.ensure(row,mount)):Promise.resolve(previous);
   const pending=this.entryTasks.get(row.id);if(pending)return pending;
   const task=this.openScope(row,mount);this.entryTasks.set(row.id,task);task.then(()=>this.entryTasks.delete(row.id),()=>this.entryTasks.delete(row.id));return task;
  }
@@ -351,8 +384,8 @@ export class Shared2 {
  }
  get activity(){return this.transferCount+[...this.entries.values()].reduce((sum,entry)=>sum+(entry.controller?.activity||0),0);}
  get errorMessages(){return [...this.entries.values()].filter(entry=>entry.state?.state==='error').map(entry=>shared2Message({code:entry.state.code}));}
- scopeRow(record:any){
-  if(!record||record.protocol!==2||record.shared2Left||record.shared2Revoked||record.shared2Creating||record.shared2Unsharing||record.shared2Rekeying||record.shared2Reconciling||record.shared2Scope?.account!==this.scope?.account||record.shared2Scope?.workspace!==this.scope?.workspace)return null;
+ scopeRow(record:any,includeLocalPause=false){
+  if(!record||(!includeLocalPause&&record.shared2LocalPaused)||record.protocol!==2||record.shared2Left||record.shared2Revoked||record.shared2Creating||record.shared2Unsharing||record.shared2Rekeying||record.shared2Reconciling||record.shared2Scope?.account!==this.scope?.account||record.shared2Scope?.workspace!==this.scope?.workspace)return null;
   const row=this.catalog?.folders.find((row:any)=>row.id===record.id);return row&&!this.retentionPaused(row)?row:null;
  }
  fileStub(file:any,path:string){return {path,name:path.split('/').pop(),stat:{type:'file',ctime:file.stat?.ctime||0,mtime:file.stat?.mtime||0,size:file.stat?.size||0}};}
@@ -375,7 +408,8 @@ export class Shared2 {
   if(this.projectionEvents.get(old)?.has('rename')&&old.toLowerCase()===destination.toLowerCase())return;
   const pair=old+'\0'+destination;if(this.eventReverts.delete(pair))return;
   const from=this.plugin.folders.record(old),to=this.plugin.folders.record(file.path),source=this.scopeRow(from),target=this.scopeRow(to);
-  if(!source&&!target)return;
+  const pausedMount=from?.shared2LocalPaused&&old===from.mount&&this.scopeRow(from,true);
+  if(!source&&!target&&!pausedMount)return;
   if(from&&old===from.mount||to&&file.path===to.mount||from&&from.protocol!==2||to&&to.protocol!==2||source?.role==='viewer'||target?.role==='viewer'||from?.protocol===2&&!source||to?.protocol===2&&!target){
    const inverse=file.path+'\0'+old;this.eventReverts.add(inverse);try{await this.plugin.app.fileManager.renameFile(file,old);}catch(error){this.eventReverts.delete(inverse);throw error;}
    new Notice('Перемещение точки подключения или папки без права записи недоступно.');return;
@@ -508,7 +542,7 @@ export class Shared2 {
    if(record.shared2Left)continue;
    const cancelled=this.jobState.jobs?.find((job:any)=>job.id===record.shared2Job&&job.state==='cancelled');if(cancelled&&record.shared2Preparing)new Setting(container).setName('Перенос отменён: '+record.mount).addButton(button=>button.setButtonText('Возобновить прежнее подключение').onClick(()=>this.confirm('Возобновить прежнее подключение?','Сначала сохранится резервная копия текущих локальных файлов для сверки. Затем подключится прежняя общая папка.',()=>this.resumeCancelled(record))));
    const row=this.catalog.folders.find((row:any)=>row.id===record.id),card=container.createDiv({cls:'arcalink-shared2-card'});
-   const setting=new Setting(card).setName('Папка: '+record.mount).setDesc(row?(row.role==='owner'?'Владелец':row.role==='editor'?'Редактор':'Читатель')+' · '+shared2Phase(this.entries.get(row.id)?.state?.state):'Доступ приостановлен');
+   const setting=new Setting(card).setName('Папка: '+record.mount).setDesc(row?(row.role==='owner'?'Владелец':row.role==='editor'?'Редактор':'Читатель')+' · '+(record.shared2LocalPaused?'Синхронизация на этом устройстве приостановлена':shared2Phase(this.entries.get(row.id)?.state?.state)):'Доступ приостановлен');
    if(record.protocol!==2&&!record.shared2Job&&record.role==='owner')setting.addButton(button=>{button.setButtonText('Перенести папку').onClick(()=>{void this.migrate(record.id).catch((e:any)=>new Notice(shared2Message(e)));});tariffGate(button.buttonEl);} );
    if(row)card.createEl('p',{text:'Владелец папки: '+(row.ownerLabel||row.owner)});
    const retention=row&&this.retentionFor(row);if(retention&&retention.state!=='active')new Setting(card).setName(retention.state==='purged'?'Серверная копия удалена':'Хранение серверной копии').setDesc(retention.state==='purged'?'Локальные файлы сохранены. Для восстановления нужен полный локальный кэш с историей.':retention.retainedUntil?'Срок хранения: '+new Date(retention.retainedUntil).toLocaleString():shared2Phase(retention.state)).addButton(button=>button.setButtonText('Восстановить из локальной копии').setDisabled(!retention.canRestore||row.ownerWorkspace!==this.scope.workspace||!!record.shared2Rekeying||!!record.shared2Reconciling||!!record.shared2Unsharing).onClick(()=>this.confirm('Восстановить серверную копию?','Будет проверена полнота сохранённого кэша и его истории. При недостающих версиях восстановление остановится. Для зашифрованной папки будет создан новый ключ; участникам потребуется передать его заново.',async()=>{await this.deviceTransfers.plan(row.id,'restore');await this.poll();})));
@@ -541,7 +575,27 @@ export class Shared2 {
  async mutate(path:string,body:any,folder?:string){const response=await this.request(path,{method:'POST',body:JSON.stringify(body)});if(response.status!==200)throw Error(response.json?.error||'shared2-request-rejected');if(folder)this.access.delete(folder);await this.poll();return response.json;}
  async changeRole(row:any,account:string,role:string){try{await this.mutate('/shared2/folders/'+row.id+'/members',{workspace:row.ownerWorkspace,account,role,revision:row.revision},row.id);}catch(error:any){new Notice(shared2Message(error));}}
  invite(row:any){const manager=this;class Invitation extends Modal{override onOpen(){this.titleEl.setText('Пригласить в папку: '+row.documentRoot);let email='',role='editor';new Setting(this.contentEl).setName('Email участника').addText(input=>input.setPlaceholder('name@example.com').onChange(value=>email=value));new Setting(this.contentEl).setName('Права').addDropdown(input=>input.addOptions({editor:'Редактор',viewer:'Читатель'}).setValue(role).onChange(value=>role=value));new Setting(this.contentEl).addButton(button=>button.setButtonText('Пригласить').setCta().onClick(async()=>{button.setDisabled(true);try{await manager.mutate('/shared2/folders/'+row.id+'/invitations',{workspace:row.ownerWorkspace,email:email.trim(),role,revision:row.revision},row.id);this.close();}catch(error:any){new Notice(shared2Message(error));button.setDisabled(false);}}));}}new Invitation(this.plugin.app).open();}
- mount(row:any){chooseSharedFolder(this.plugin.app,{title:'Подключить общую папку',description:'Выберите пустую локальную папку. Она будет связана с общей папкой владельца.',action:'Подключить',unavailable:(path:string)=>{try{this.plugin.folders.validateMount(path);if(this.plugin.app.vault.getFiles().some((file:any)=>file.path.startsWith(path+'/')))return 'Папка должна быть пустой';return '';}catch(error:any){return error.message;}},select:async(mount:string)=>{this.plugin.folders.validateMount(mount);if(this.plugin.app.vault.getFiles().some((file:any)=>file.path.startsWith(mount+'/')))throw Error('Папка должна быть пустой');if(this.plugin.folders.records.some((r:any)=>r.id===row.id))throw Error('Эта общая папка уже подключена к хранилищу');this.plugin.folders.records.push({id:row.id,mount,role:row.role,protocol:2,shared2CacheEpoch:crypto.randomUUID().replace(/-/g,''),shared2Scope:{...this.scope}});await this.plugin.folders.save();await this.poll();}});}
+ mount(row:any){
+  const folders=this.plugin.folders,vault=this.plugin.app.vault;
+  const validate=(path:string)=>{
+   folders.validateMount(path);
+   if(vault.getFiles().some((file:any)=>file.path.startsWith(path+'/')))throw Error('Папка должна быть пустой');
+  };
+  chooseSharedFolder(this.plugin.app,{
+   title:'Подключить общую папку',description:'Выберите пустую локальную папку. Она будет связана с общей папкой владельца.',action:'Подключить',
+   unavailable:(path:string)=>{try{validate(path);return '';}catch(error:any){return error.message;}},
+   select:async(mount:string)=>{
+    validate(mount);
+    if(folders.records.some((record:any)=>record.id===row.id))throw Error('Эта общая папка уже подключена к хранилищу');
+    const record={id:row.id,mount,role:row.role,protocol:2,shared2CacheEpoch:crypto.randomUUID().replace(/-/g,''),shared2Scope:{...this.scope}};
+    folders.records.push(record);
+    try{await folders.save();}
+    catch(error){folders.records=folders.records.filter((item:any)=>item!==record);throw error;}
+    this.redraw();
+    void this.poll();
+   },
+  });
+ }
  async leave(row:any,record:any){await this.mutate('/shared2/folders/'+row.id+'/leave',{});const entry=this.entries.get(row.id);if(entry){await entry.controller.close();await entry.engine.close();this.entries.delete(row.id);}record.shared2Left=true;await this.plugin.folders.save();this.redraw();}
  deliverKey(row:any,recipient:any){this.confirm('Проверка устройства участника','Сверьте отпечаток с владельцем устройства другим способом: '+recipient.fingerprint,async()=>{await this.keys.pin(recipient);const own=await this.keys.publicIdentity(),context={ownerWorkspace:row.ownerWorkspace,owner:row.owner,senderAccount:this.scope.account,senderDevice:own.device,recipientAccount:recipient.account,recipientDevice:recipient.device,folder:row.id,database:row.database,generation:row.generation,keyEpoch:row.keyEpoch};const envelope=await this.keys.seal(this.profile(row),context,recipient);await this.mutate('/shared2/folders/'+row.id+'/envelopes',{revision:row.revision,envelope},row.id);});}
  receiveKey(row:any,delivery:any){this.confirm('Проверка устройства владельца','Сверьте отпечаток с владельцем другим способом: '+delivery.sender.fingerprint,async()=>{await this.keys.pin(delivery.sender);const own=await this.keys.publicIdentity(),context={ownerWorkspace:row.ownerWorkspace,owner:row.owner,senderAccount:row.owner,senderDevice:delivery.sender.device,recipientAccount:this.scope.account,recipientDevice:own.device,folder:row.id,database:row.database,generation:row.generation,keyEpoch:row.keyEpoch};await this.keys.receive(this.profile(row),context,delivery.envelope,delivery.sender);await this.poll();});}
