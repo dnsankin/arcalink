@@ -12,12 +12,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.37](https://github.com/dnsankin/arcalink/releases/tag/1.0.37)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
+Текущая версия: **[1.0.38](https://github.com/dnsankin/arcalink/releases/tag/1.0.38)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.38](https://github.com/dnsankin/arcalink/releases/tag/1.0.38) | 09.11.2026 | При подключении общей папки к пустой папке участника LiveSync начинает загрузку сразу и продолжает её после прерывания. Индикатор показывает обмен общей папки отдельно от ожидания второго устройства в Free. |
 | [1.0.37](https://github.com/dnsankin/arcalink/releases/tag/1.0.37) | 09.11.2026 | После принятия приглашения окно подключения общей папки закрывается сразу после сохранения. Файлы синхронизируются в фоне. В исключениях общие папки помечены отдельно. Зелёная галочка ставит синхронизацию на паузу на этом устройстве, красная показывает наличие отдельной базы. |
 | [1.0.36](https://github.com/dnsankin/arcalink/releases/tag/1.0.36) | 09.11.2026 | Общие папки используют штатную сверку LiveSync с отдельным состоянием для каждой базы. При повторном запуске проверенные файлы не перечитываются, а совпадающие входящие файлы не перезаписываются. Индикатор показывает остаток входящей и исходящей очередей. |
 | [1.0.35](https://github.com/dnsankin/arcalink/releases/tag/1.0.35) | 05.11.2026 | Исправлена ошибка PouchDB, из-за которой обработка скачанных изменений общей папки могла зависнуть. |
@@ -165,12 +166,13 @@ The [Android companion](https://arcalink.ru/android) provides note and task-list
 
 ## Version history
 
-Current version: **[1.0.37](https://github.com/dnsankin/arcalink/releases/tag/1.0.37)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
+Current version: **[1.0.38](https://github.com/dnsankin/arcalink/releases/tag/1.0.38)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.38](https://github.com/dnsankin/arcalink/releases/tag/1.0.38) | 2026-11-09 | LiveSync starts downloading immediately when a member connects an empty folder and resumes after interruptions. The indicator shows shared-folder activity separately from the Free plan’s wait for a second device. |
 | [1.0.37](https://github.com/dnsankin/arcalink/releases/tag/1.0.37) | 2026-11-09 | After accepting an invitation, the folder picker closes as soon as the connection is saved. Files sync in the background. Shared folders are marked in the exclusions list. The green checkbox pauses sync on the current device, and the red checkbox indicates a separate database. |
 | [1.0.36](https://github.com/dnsankin/arcalink/releases/tag/1.0.36) | 2026-11-09 | Shared folders use LiveSync’s standard offline scan with separate state for each database. Restarts skip verified files, identical incoming files stay in place, and the status indicator shows pending uploads and downloads. |
 | [1.0.35](https://github.com/dnsankin/arcalink/releases/tag/1.0.35) | 2026-11-05 | Fixed a PouchDB error that could stall processing of downloaded shared-folder changes. |

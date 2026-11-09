@@ -64,6 +64,7 @@ test('actual host scopes use continuous LiveSync on physical files, preserve rec
   await fs.mkdir(full(plugin.pilotDirectory),{recursive:true});await fs.mkdir(full(mount),{recursive:true});return result;
  }
  const a=await client('a','Local'),b=await client('b','Elsewhere');
+ b.record.shared2InitialPull=b.record.shared2CacheEpoch;
  await fs.writeFile(path.join(a.root,a.mount,'note.md'),'Original');await fs.writeFile(path.join(a.root,a.mount,'untouched.md'),'Untouched');
  await fs.writeFile(path.join(a.root,a.mount,'delete-offline.md'),'Delete while app is closed');
  const attachment=Buffer.alloc(3*1024*1024+1,0x8f);
@@ -71,11 +72,26 @@ test('actual host scopes use continuous LiveSync on physical files, preserve rec
  await fs.writeFile(path.join(a.root,a.mount,'attachment.bin'),attachment);
  const ae=await a.manager.ensure(a.row,a.mount);await ae.controller.wake();
  const be=await b.manager.ensure(b.row,b.mount);
+ be.controller.baselineProgress=()=>assert.fail('an empty recipient mount must not enter legacy reconciliation');
  const enqueue=be.controller.enqueue;be.controller.enqueue=item=>{b.submitted.push(item);return enqueue(item);};
  await be.controller.wake();
  const bNote=path.join(b.root,b.mount,'note.md');await waitFor(()=>syncFS.existsSync(bNote));
  await waitFor(()=>ae.controller.activity===0&&be.controller.activity===0);
  assert.deepEqual(await fs.readFile(path.join(b.root,b.mount,'attachment.bin')),attachment);
+ const interrupted=await client('interrupted','Retry');
+ interrupted.record.shared2InitialPull=interrupted.record.shared2CacheEpoch;
+ const firstPull=await interrupted.manager.ensure(interrupted.row,interrupted.mount);
+ firstPull.controller.baselineProgress=()=>assert.fail('initial pull must not use the legacy baseline');
+ const pull=firstPull.engine.synchronize.bind(firstPull.engine);
+ firstPull.engine.synchronize=async()=>{await pull();throw Error('interrupted before applying results');};
+ await assert.rejects(firstPull.controller.wake(),/interrupted before applying results/);
+ await firstPull.controller.close();await firstPull.engine.close();interrupted.manager.entries.delete(interrupted.row.id);
+ const retry=await interrupted.manager.ensure(interrupted.row,interrupted.mount);
+ retry.controller.baselineProgress=()=>assert.fail('a resumed pull must not use the legacy baseline');
+ await retry.controller.wake();
+ await waitFor(()=>retry.controller.activity===0);
+ assert.deepEqual(await fs.readFile(path.join(interrupted.root,interrupted.mount,'attachment.bin')),attachment);
+ await retry.controller.close();await retry.engine.close();interrupted.manager.entries.delete(interrupted.row.id);
  const beforeA=a.reads.length,beforeB=b.reads.length;
  for(let i=0;i<20;i++){await ae.controller.wake();await be.controller.wake();}
  assert.equal(a.reads.length,beforeA);assert.equal(b.reads.length,beforeB);

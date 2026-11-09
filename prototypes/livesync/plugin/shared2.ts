@@ -130,7 +130,7 @@ export class Shared2 {
     if(shared2AuthorityTransition(record,row)!=='unchanged'){
      const initial=record.protocol!==2;await this.drainLegacy(row.id);
      if(record.shared2CacheEpoch){record.shared2RetiredLedgers??=[];record.shared2RetiredLedgers.push('ledger-'+row.id+'-'+(record.shared2Generation||row.generation)+'-'+record.shared2CacheEpoch);}
-     record.protocol=2;record.shared2Preparing=false;record.shared2CacheEpoch=record.shared2DeviceTarget&&record.shared2DeviceTarget.database===row.database&&record.shared2DeviceTarget.generation===row.generation&&record.shared2DeviceTarget.keyEpoch===row.keyEpoch?record.shared2DeviceTarget.cacheEpoch:crypto.randomUUID().replace(/-/g,'');record.role=row.role;record.shared2ReconcileAuthority=!initial;
+     record.protocol=2;record.shared2Preparing=false;record.shared2CacheEpoch=record.shared2DeviceTarget&&record.shared2DeviceTarget.database===row.database&&record.shared2DeviceTarget.generation===row.generation&&record.shared2DeviceTarget.keyEpoch===row.keyEpoch?record.shared2DeviceTarget.cacheEpoch:crypto.randomUUID().replace(/-/g,'');record.role=row.role;record.shared2ReconcileAuthority=!initial;delete record.shared2InitialPull;
      record.shared2AuthorityEpoch=row.authorityEpoch;record.shared2MembershipEpoch=row.membershipEpoch;record.shared2Generation=row.generation;record.shared2Database=row.database;record.shared2KeyEpoch=row.keyEpoch;
      if(initial&&row.role!=='viewer')record.shared2LegacyImportApprovedEpoch=record.shared2CacheEpoch;record.shared2Scope={...this.scope};changed=true;
     }
@@ -377,6 +377,15 @@ export class Shared2 {
    baseline=createShared2VaultController({profile,engine,disk,store:this.store('ledger-'+row.id+'-'+row.generation+'-'+profile.cacheEpoch),checkLease:checked,hashStream:hashShared2Stream,canUpload:()=>!record?.shared2ReconcileAuthority,onState:(state:any)=>controller?.baselineProgress(state)});
    controller=createShared2LiveController({profile,engine,baseline,store:runtime,checkLease:checked,isVerified:checkpoint.isVerified,canUpload:()=>!record?.shared2ReconcileAuthority,
     scan,
+    prepareEmptyMount:async()=>{
+     if(row.role==='owner'||record.shared2InitialPull!==profile.cacheEpoch||record.shared2ReconcileAuthority)return false;
+     if(!(await disk.list()).length)return true;
+     // Files appeared after the picker validated the destination. Keep the
+     // existing reconciliation safeguards for a populated local folder.
+     record.shared2ReconcileAuthority=true;
+     await this.plugin.folders.save();
+     return false;
+    },
     onReady:async(result:any)=>{if(record.shared2ReconcileAuthority&&!result.conflicts.length){record.shared2ReconcileAuthority=false;await this.plugin.folders.save();this.plugin.folders.refresh();}},onState:()=>{}});
    if(!await checked())throw Error('shared2-vault-lease-rejected');
    const entry={version:this.version(row),controller,engine,get state(){return controller.state;}};this.entries.set(row.id,entry);return entry;
@@ -587,7 +596,12 @@ export class Shared2 {
    select:async(mount:string)=>{
     validate(mount);
     if(folders.records.some((record:any)=>record.id===row.id))throw Error('Эта общая папка уже подключена к хранилищу');
-    const record={id:row.id,mount,role:row.role,protocol:2,shared2CacheEpoch:crypto.randomUUID().replace(/-/g,''),shared2Scope:{...this.scope}};
+    const cacheEpoch=crypto.randomUUID().replace(/-/g,'');
+    const record={id:row.id,mount,role:row.role,protocol:2,shared2CacheEpoch:cacheEpoch,shared2Scope:{...this.scope},
+     shared2InitialPull:row.role==='owner'?undefined:cacheEpoch,
+     shared2ReconcileAuthority:row.role==='owner',
+     shared2AuthorityEpoch:row.authorityEpoch,shared2MembershipEpoch:row.membershipEpoch,
+     shared2Generation:row.generation,shared2Database:row.database,shared2KeyEpoch:row.keyEpoch};
     folders.records.push(record);
     try{await folders.save();}
     catch(error){folders.records=folders.records.filter((item:any)=>item!==record);throw error;}

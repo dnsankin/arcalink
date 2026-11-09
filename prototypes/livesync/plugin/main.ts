@@ -187,7 +187,8 @@ export default class ArcaLinkPilot extends LiveSync {
     const refreshLamp=async()=>{
       if(lampBusy)return;lampBusy=true;
       try {
-        const errors=[...(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean).map(String),...this.shared2.errorMessages];
+        const sharedErrors=this.shared2.errorMessages;
+        const errors=[...(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean).map(String),...sharedErrors];
         const state=services.replicator.replicationStatics.value;
         const status=String(state.syncStatus||'');
         const sharedEntries=[...this.shared2.entries.values()];
@@ -209,7 +210,16 @@ export default class ArcaLinkPilot extends LiveSync {
         const summary=editor?.querySelector('.livesync-status-statusline')?.textContent?.trim()||'';
         const offline=!navigator.onLine;
         const settings=services.setting.currentSettings();
-        if(isFreeRelay(settings)){const connected=this.arcalinkP2P?.transportLifecycle.isConnected,peers=this.arcalinkP2P?.peerDirectory.getPeers()||[];this.mobileSyncStatus?.update({free:true,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});lamp.dataset.state=offline?'offline':connected&&peers.length?(activity?'active':'ready'):'idle';setTooltip(lamp,offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':activity?'Синхронизация выполняется':'Free: второе устройство подключено; состояние передачи — в панели устройств',{placement:'top'});return;}
+        if(isFreeRelay(settings)){
+          const connected=this.arcalinkP2P?.transportLifecycle.isConnected,peers=this.arcalinkP2P?.peerDirectory.getPeers()||[];
+          const sharedActive=!!sharedProgress||!!sharedBacklog.incoming||!!sharedBacklog.outgoing;
+          const personal=localizeMessage(offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':activity?'Синхронизация выполняется':'Free: второе устройство подключено; состояние передачи — в панели устройств');
+          this.mobileSyncStatus?.update({free:true,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
+          lamp.dataset.state=offline?'offline':sharedErrors.length?'error':sharedActive?'active':connected&&peers.length?(activity?'active':'ready'):'idle';
+          const tooltip=[!offline&&sharedActive&&(sharedDetail||localizeMessage('Обмен общей папки')+sharedCount),...sharedErrors.map(message=>localizeMessage(message)),sharedActive||sharedErrors.length?localizeMessage('Личное хранилище')+' · '+personal:personal].filter(Boolean).join('\n');
+          if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
+          return;
+        }
         const paused=services.appLifecycle.isSuspended(),automaticOff=settings.isConfigured&&!settings.liveSync;
         const kind=syncLampState({errors,status,offline,paused,automaticOff,active:activity});
         lamp.dataset.state=kind;

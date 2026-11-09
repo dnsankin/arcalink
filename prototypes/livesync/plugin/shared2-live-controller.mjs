@@ -5,7 +5,7 @@ const fail=code=>Object.assign(Error(code),{code});
  * content decisions remain in the maintained LiveSync services.
  * The legacy controller is used ONCE to establish the cutover baseline.
  */
-export function createShared2LiveController({profile,engine,baseline,store,scan,checkLease,canUpload=()=>true,onReady=async(_result)=>{},onState=()=>{},isVerified=async(_meta)=>false}){
+export function createShared2LiveController({profile,engine,baseline,store,scan,checkLease,canUpload=()=>true,onReady=async(_result)=>{},onState=()=>{},isVerified=async(_meta)=>false,prepareEmptyMount=async()=>false}){
  let closed=false,ready=false,initialized=false,initializing,pumping,checking,live,localPrepared=false,problem='',localProblem='',progress=null,queued=0,displayLocalPending=0;
  const conflicts=new Set(),submissions=new Set();
  const valid=path=>safeRelative(path)&&path.startsWith(profile.documentRoot+'/');
@@ -52,6 +52,13 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
  }
  async function prepare(){
   if(!await store.prepared()){
+   if(await prepareEmptyMount()){
+    await healthy();
+    // Persist before downloading. A restart uses the normal scanner, result
+    // queue and replication checkpoint, even if the first pull was interrupted.
+    await store.markPrepared();localPrepared=true;
+    return connect();
+   }
    const inherit=canUpload()&&await baseline.hasBaseline?.()===true;
    const result=inherit?{conflicts:[]}:await baseline.synchronize();await healthy();
    const ledger=await baseline.ledger();let done=0;const entries=Object.entries(ledger.files||{});

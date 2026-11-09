@@ -23,6 +23,27 @@ test('one-time baseline transitions to continuous LiveSync; repeated metadata ti
  assert.equal(f.calls.list,0);assert.equal(f.calls.baseline,1);assert.equal(f.calls.events.length,1);
  await f.controller.close();
 });
+test('a fresh empty mount records preparation before pulling and resumes via LiveSync after interruption',async()=>{
+ const first=fixture();
+ first.engine.synchronize=async()=>{
+  first.calls.sync++;
+  assert.equal(await first.store.prepared(),true);
+  await first.store.kv.set('incoming',{queued:['not-yet-materialized']});
+  throw Error('connection interrupted');
+ };
+ const controller=createShared2LiveController({profile,engine:first.engine,store:first.store,
+  baseline:{close:async()=>{},synchronize:async()=>assert.fail('legacy baseline')},
+  prepareEmptyMount:async()=>true,scan:async()=>assert.fail('first pull should not need an offline scan'),checkLease:async()=>true});
+ await assert.rejects(controller.wake(),/connection interrupted/);
+ assert.equal(first.calls.sync,1);
+ await controller.close();
+ const next=fixture({saved:first.saved});
+ next.engine.results.restore=async()=>assert.deepEqual(await next.store.kv.get('incoming'),{queued:['not-yet-materialized']});
+ await next.controller.wake();
+ assert.equal(next.calls.baseline,0);assert.equal(next.calls.list,1);
+ assert.equal(next.calls.sync,1);assert.equal(next.controller.ready,true);
+ await next.controller.close();
+});
 test('restart delegates to the supplied offline scanner without rerunning the cutover',async()=>{
  const first=fixture();await first.controller.wake();await first.controller.close();
  const next=fixture({saved:first.saved});
