@@ -33,7 +33,7 @@ export class FolderRulesModal extends Modal {
     const original=initial.syncIgnoreRegEx||'',caseSensitive=!!initial.handleFilenameCaseSensitive;
     const local=new Set<string>(excludedFolders(original)),common=new Set<string>(controller.state?.policy?.folders||[]);
     const globalCase=controller.state?.revision?!!controller.state.policy.caseSensitive:caseSensitive,revision=controller.state?.revision||0;
-    const initialCommon=[...common];
+    const initialLocal=new Set(local),initialCommon=[...common];
     this.titleEl.setText(localizeMessage('Исключённые папки'));
     this.modalEl.addClass('arcalink-folder-rules-modal');
     this.contentEl.addClass('arcalink-folder-rules');
@@ -83,10 +83,11 @@ export class FolderRulesModal extends Modal {
           const enabled=sharedLocal.get(record)??!record?.shared2LocalPaused;
           localControl.checked=!!record&&enabled&&!!row&&!shared2.retentionPaused(row);
           cloudControl.checked=true;
-          localControl.disabled=this.busy||!isRoot||!shared2.canSetLocalSync(record);
+          const canConnect=!record&&shared2.scope===scope&&shared2.canMount(row);
+          localControl.disabled=this.busy||!isRoot||!(canConnect||shared2.canSetLocalSync(record));
           cloudControl.disabled=true;
           let hint='Синхронизация управляется общей папкой выше.';
-          if(isRoot)hint=!record&&row?'Папка в общем доступе. Подключите её в разделе «Совместная работа».'
+          if(isRoot)hint=canConnect?'Папка в общем доступе. Отметьте зелёную галочку, чтобы выбрать локальную папку.'
             :enabled?'Папка в общем доступе':'Папка в общем доступе. Синхронизация на этом устройстве приостановлена.';
           description.setText(localizeMessage(hint));
           description.hidden=false;
@@ -123,8 +124,24 @@ export class FolderRulesModal extends Modal {
         if(!shared){
           localControl.addEventListener('change',()=>{setFolderIncluded(local,path,localControl.checked,folderContains,caseSensitive);update();});
           cloudControl.addEventListener('change',()=>{setFolderIncluded(common,path,cloudControl.checked,folderContains,globalCase);update();});
-        }else if(shared.record&&path.toLowerCase()===shared.mount.toLowerCase()){
+        }else if(path.toLowerCase()===shared.mount.toLowerCase()){
           localControl.addEventListener('change',()=>{
+            if(!shared.record){
+              update();
+              if(localControl.disabled)return;
+              if(sharedLocal.size||local.size!==initialLocal.size||[...local].some(path=>!initialLocal.has(path))||
+                common.size!==initialCommon.length||initialCommon.some(path=>!common.has(path))){
+                new Notice('Сначала сохраните изменения исключений.');
+                return;
+              }
+              shared2.mount(shared.row,()=>{
+                if(this.closed)return;
+                this.saved();
+                this.contentEl.empty();
+                this.onOpen();
+              });
+              return;
+            }
             if(localControl.checked===!shared.record.shared2LocalPaused)sharedLocal.delete(shared.record);
             else sharedLocal.set(shared.record,localControl.checked);
             update();

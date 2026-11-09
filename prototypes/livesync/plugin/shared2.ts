@@ -584,8 +584,13 @@ export class Shared2 {
  async mutate(path:string,body:any,folder?:string){const response=await this.request(path,{method:'POST',body:JSON.stringify(body)});if(response.status!==200)throw Error(response.json?.error||'shared2-request-rejected');if(folder)this.access.delete(folder);await this.poll();return response.json;}
  async changeRole(row:any,account:string,role:string){try{await this.mutate('/shared2/folders/'+row.id+'/members',{workspace:row.ownerWorkspace,account,role,revision:row.revision},row.id);}catch(error:any){new Notice(shared2Message(error));}}
  invite(row:any){const manager=this;class Invitation extends Modal{override onOpen(){this.titleEl.setText('Пригласить в папку: '+row.documentRoot);let email='',role='editor';new Setting(this.contentEl).setName('Email участника').addText(input=>input.setPlaceholder('name@example.com').onChange(value=>email=value));new Setting(this.contentEl).setName('Права').addDropdown(input=>input.addOptions({editor:'Редактор',viewer:'Читатель'}).setValue(role).onChange(value=>role=value));new Setting(this.contentEl).addButton(button=>button.setButtonText('Пригласить').setCta().onClick(async()=>{button.setDisabled(true);try{await manager.mutate('/shared2/folders/'+row.id+'/invitations',{workspace:row.ownerWorkspace,email:email.trim(),role,revision:row.revision},row.id);this.close();}catch(error:any){new Notice(shared2Message(error));button.setDisabled(false);}}));}}new Invitation(this.plugin.app).open();}
- mount(row:any){
-  const folders=this.plugin.folders,vault=this.plugin.app.vault;
+ canMount(row:any){
+  const current=this.catalog?.folders.find((folder:any)=>folder.id===row?.id);
+  return !this.disposed&&!!this.scope&&!!current&&!this.retentionPaused(current)
+   &&!this.plugin.folders.records.some((record:any)=>record.id===current.id);
+ }
+ mount(row:any,onMounted?:()=>void){
+  const folders=this.plugin.folders,vault=this.plugin.app.vault,context=this.context;
   const validate=(path:string)=>{
    folders.validateMount(path);
    if(vault.getFiles().some((file:any)=>file.path.startsWith(path+'/')))throw Error('Папка должна быть пустой');
@@ -596,6 +601,9 @@ export class Shared2 {
    select:async(mount:string)=>{
     validate(mount);
     if(folders.records.some((record:any)=>record.id===row.id))throw Error('Эта общая папка уже подключена к хранилищу');
+    const current=this.catalog?.folders.find((folder:any)=>folder.id===row.id);
+    if(this.context!==context||!this.canMount(current))throw Error(shared2Message('shared2-access-denied'));
+    row=current;
     const cacheEpoch=crypto.randomUUID().replace(/-/g,'');
     const record={id:row.id,mount,role:row.role,protocol:2,shared2CacheEpoch:cacheEpoch,shared2Scope:{...this.scope},
      shared2InitialPull:row.role==='owner'?undefined:cacheEpoch,
@@ -607,6 +615,7 @@ export class Shared2 {
     catch(error){folders.records=folders.records.filter((item:any)=>item!==record);throw error;}
     this.redraw();
     void this.poll();
+    onMounted?.();
    },
   });
  }
