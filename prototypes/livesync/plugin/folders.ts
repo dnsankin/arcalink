@@ -517,6 +517,7 @@ export class SharedFolders {
     }
     async changed(event: string, file: any) {
         const r = this.record(file.path);
+        if(r?.protocol===2)return this.plugin.shared2?.changed(event,file);
         if (!r || r.protocol === 2 || r.shared2Preparing || (!(file instanceof TFile) && !(event === 'delete' && file instanceof TFolder)))
             return;
         // A directory delete must invalidate an in-flight projection immediately,
@@ -608,7 +609,7 @@ export class SharedFolders {
         e.disk.set(file.path, encoded); e.disk.set(id || [...e.files].find(([, f]: any) => r.mount + '/' + f.get('path') === file.path)?.[0], encoded);
         await this.project(e);
     }
-    async renamed(file: any, old: string) { const r = this.record(old); if (!r || r.protocol === 2 || r.shared2Preparing)
+    async renamed(file: any, old: string) { const r = this.record(old); if(r?.protocol===2||this.record(file.path)?.protocol===2)return this.plugin.shared2?.renamed(file,old); if (!r || r.protocol === 2 || r.shared2Preparing)
         return; const e = await this.ensure(r); if (e.denied)
         return; if (e.disk.has(old) && e.disk.get(old) === null) {
         e.disk.delete(old);

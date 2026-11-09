@@ -12,12 +12,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.35](https://github.com/dnsankin/arcalink/releases/tag/1.0.35)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
+Текущая версия: **[1.0.36](https://github.com/dnsankin/arcalink/releases/tag/1.0.36)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.36](https://github.com/dnsankin/arcalink/releases/tag/1.0.36) | 09.11.2026 | Общие папки используют штатную сверку LiveSync с отдельным состоянием для каждой базы. При повторном запуске проверенные файлы не перечитываются, а совпадающие входящие файлы не перезаписываются. Индикатор показывает остаток входящей и исходящей очередей. |
 | [1.0.35](https://github.com/dnsankin/arcalink/releases/tag/1.0.35) | 05.11.2026 | Исправлена ошибка PouchDB, из-за которой обработка скачанных изменений общей папки могла зависнуть. |
 | [1.0.34](https://github.com/dnsankin/arcalink/releases/tag/1.0.34) | 05.11.2026 | Включён новый механизм общих папок. Содержимое переносится в фоне с отображением прогресса, пока Obsidian открыт; после копирования отдельно обозначена проверка данных. При недоступности сервиса создание общей папки сообщает об ошибке подключения. Резервная копия перед записью имеет приоритет перед фоновыми снимками. Исправлена сверка длинных цепочек ревизий при подготовке локальной базы. |
 | [1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33) | 04.11.2026 | Резервирование сохраняет промежуточные версии при одновременной записи файлов. Очистка удаляет вытесненные блоки копий, а сравнение крупных файлов ограничивает чтение текста. |
@@ -163,12 +164,13 @@ The [Android companion](https://arcalink.ru/android) provides note and task-list
 
 ## Version history
 
-Current version: **[1.0.35](https://github.com/dnsankin/arcalink/releases/tag/1.0.35)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
+Current version: **[1.0.36](https://github.com/dnsankin/arcalink/releases/tag/1.0.36)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.36](https://github.com/dnsankin/arcalink/releases/tag/1.0.36) | 2026-11-09 | Shared folders use LiveSync’s standard offline scan with separate state for each database. Restarts skip verified files, identical incoming files stay in place, and the status indicator shows pending uploads and downloads. |
 | [1.0.35](https://github.com/dnsankin/arcalink/releases/tag/1.0.35) | 2026-11-05 | Fixed a PouchDB error that could stall processing of downloaded shared-folder changes. |
 | [1.0.34](https://github.com/dnsankin/arcalink/releases/tag/1.0.34) | 2026-11-05 | Enabled the new shared-folder service. Content transfers in the background with progress while Obsidian is open; the status also identifies verification after copying. Unavailable service admission reports a connection failure before creating a shared folder. Pre-write backups take priority over queued background snapshots. Fixed verification of long revision chains during local database preparation. |
 | [1.0.33](https://github.com/dnsankin/arcalink/releases/tag/1.0.33) | 2026-11-04 | Backups preserve intermediate versions during concurrent writes. Cleanup reclaims evicted backup blocks, and large-file comparison bounds text reads. |

@@ -10,6 +10,7 @@ import { patchCommunityOnboarding } from './patch-community-onboarding.mjs';
 import { patchConfigDoctor } from './patch-config-doctor.mjs';
 import { patchSettingsRegistration } from './patch-settings-registration.mjs';
 import { patchPouchNextTick } from './patch-replication.mjs';
+import { prepareUnitTests } from './prepare-plugin-unit-tests.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const communityRelease = process.env.ARCALINK_RELEASE_CHANNEL === 'community';
@@ -168,8 +169,14 @@ await writeFile(historyPath,historySource.replace(historyMarker,historyMarker+'\
 // Localise before Markdown rendering, and keep the catalogue's original parameter names.
 const translationPath=path.join(source,'src/common/translation.ts'),translationSource=await readFile(translationPath,'utf8');
 const catalogueReturn='    return msg ?? key;',commonlibReturn='if (!isLiveSyncMessageKey(key)) return englishMessageTranslator(key, params);';
-if(translationSource.split(catalogueReturn).length!==2||translationSource.split(commonlibReturn).length!==2)throw Error('Unexpected upstream translation boundary');
-await writeFile(translationPath,"import {localizeMessage} from '@/localized-obsidian';\n"+translationSource.replace(catalogueReturn,'    return localizeMessage(msg ?? key);').replace(commonlibReturn,'if (!isLiveSyncMessageKey(key)) return localizeMessage(englishMessageTranslator(key, params));').replace('return englishMessageTranslator(key);','return localizeMessage(englishMessageTranslator(key));'));
+const commonlibMessage='    if (msgs === undefined && isCommonlibMessageKey(key)) return englishMessageTranslator(key);';
+const languageResolution='    const resolvedLang = resolveLanguage(lang);';
+if(translationSource.split(catalogueReturn).length!==2||translationSource.split(commonlibReturn).length!==2
+ ||translationSource.split(commonlibMessage+'\n'+languageResolution).length!==2)throw Error('Unexpected upstream translation boundary');
+await writeFile(translationPath,"import {localizeMessageForLanguage} from '@/localized-obsidian';\n"+translationSource
+ .replace(commonlibMessage+'\n'+languageResolution,languageResolution+'\n    if (msgs === undefined && isCommonlibMessageKey(key)) return localizeMessageForLanguage(englishMessageTranslator(key), resolvedLang);')
+ .replace(catalogueReturn,'    return localizeMessageForLanguage(msg ?? key, resolvedLang);')
+ .replace(commonlibReturn,'if (!isLiveSyncMessageKey(key)) return localizeMessageForLanguage(englishMessageTranslator(key, params), currentLang);'));
 // Translate a complete popup before it becomes separate text/link DOM nodes.
 const popupPath=path.join(source,'src/modules/services/ObsidianConfirm.ts');
 const popupSource=await readFile(popupPath,'utf8'),popupMarker='dialogText.split("{HERE}", 2)';
@@ -210,6 +217,7 @@ for(const name of ['receivedChangeReadiness.unit.spec.ts','replicationFeature.un
  await writeFile(fixturePath,patchContentRetryFixture(await readFile(fixturePath,'utf8')));
 }
 await copyFile(path.join(root,'tests/content-retry.integration.unit.spec.ts'),path.join(source,'src/content-retry.integration.unit.spec.ts'));
+await prepareUnitTests(root, source);
 execFileSync('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: source, env, stdio: 'inherit' });
 await patchMaintainedEngine(source,{foldersLab});
 for (const entry of ['index.js', 'index.es.js', 'index-browser.js', 'index-browser.es.js']) {

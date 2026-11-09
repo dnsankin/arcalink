@@ -24,6 +24,15 @@ import {createShared2VaultController} from './shared2-vault-controller.mjs';
 import {createShared2VaultDisk} from './shared2-vault-disk.mjs';
 import {hashShared2Stream} from './shared2-stream-hash.mjs';
 import {createShared2KeyVault,createShared2IndexedKeyStore} from './shared2-key-vault.mjs';
+import {ReplicateResultProcessor} from '@arcalink/shared2-result-processor';
+import {createShared2LiveSyncLifecycle} from './shared2-livesync-lifecycle.mjs';
+import {createShared2LiveSyncStorage} from './shared2-livesync-storage.mjs';
+import {createShared2ScopedStorage} from './shared2-file-runtime.mjs';
+import {createShared2ResultRuntime} from './shared2-result-runtime.mjs';
+import {createShared2RuntimeStore} from './shared2-runtime-store.mjs';
+import {createShared2LiveController} from './shared2-live-controller.mjs';
+import {createShared2OfflineScan} from './shared2-offline-scan.mjs';
+import {createShared2StartupCheckpoint} from './shared2-startup-checkpoint.mjs';
 
 const recordCache=(records:any[],id:string)=>records.find(record=>record.id===id)?.shared2CacheEpoch;
 
@@ -31,7 +40,7 @@ const recordCache=(records:any[],id:string)=>records.find(record=>record.id===id
  * for a shared2 mount. Server unavailability retains the boundary and pauses it.
  */
 export class Shared2 {
- enabled=false;disposed=false;busy=false;transferCount=0;catalog:any=null;scope:any=null;
+ enabled=false;disposed=false;busy=false;initialized=false;transferCount=0;catalog:any=null;scope:any=null;
  preparations=new Map<string,any>();retentionStatus=new Map<string,any>();
  deviceTransfers:any=null;deviceState:any={requests:[],jobs:[]};
  aliasTransfers:any=null;aliasState:any={requests:[],jobs:[]};
@@ -39,6 +48,7 @@ export class Shared2 {
  encryptedTransfers:any=null;encryptedState:any={requests:[],jobs:[]};
  namespaceJobs:any=null;namespaceState:any={requests:[],jobs:[]};namespacePreparing=new Map<string,Promise<any>>();
  jobs:any=null;jobState:any={jobs:[]};inbox:any[]=[];entries=new Map<string,any>();
+ entryTasks=new Map<string,Promise<any>>();eventReverts=new Set<string>();projectionEvents=new Map<string,Map<string,number>>();
  access=new Map<string,any>();keyInbox:any[]=[];keyStorage:any=null;keys:any=null;warning='';timer:any;initializing:any;context='';lastError='';panels=new Set<HTMLElement>();panelGates=new Map<HTMLElement,(control:HTMLElement)=>void>();
  constructor(private plugin:any){}
  async session(){const saved=await this.plugin.unifiedVault.saved(),session=await this.plugin.freeRelay.session()||saved?.auth,workspace=(await this.plugin.workspaces.session())?.workspaceId||saved?.workspaceId;return {session,workspace};}
@@ -52,8 +62,25 @@ export class Shared2 {
   return {status:response.status,json:response.json,sessionToken:session.accessToken};
  }
  store(name:string){const adapter=this.plugin.app.vault.adapter,base=this.plugin.pilotDirectory+'/shared2-'+this.scope.account+'-'+this.scope.workspace+'-'+name,slots=createFolderPolicyStore(adapter,base);return {load:async()=>{const value=await slots.read();return Object.keys(value).length?value:null;},save:(value:any)=>slots.update(()=>value)};}
- init(){if(this.initializing)return this.initializing;this.initializing=this.start().catch((error:any)=>{this.warning=error.code||error.message;}).finally(()=>{this.initializing=null;});return this.initializing;}
+ init(){
+  if(this.disposed)return Promise.resolve();
+  if(!this.timer){
+   this.timer=window.setInterval(()=>{void this.recoverConnection();},10000);
+   const recover=()=>{void this.recoverConnection();};
+   this.plugin.registerDomEvent(window,'online',recover);
+   this.plugin.registerDomEvent(window,'focus',recover);
+   this.plugin.registerDomEvent(document,'visibilitychange',()=>{if(!document.hidden)recover();});
+  }
+  if(this.initializing)return this.initializing;
+  this.initializing=this.start().catch((error:any)=>{this.warning=error.code||error.message;}).finally(()=>{this.initializing=null;});
+  return this.initializing;
+ }
+ async recoverConnection(){
+  if(this.disposed||this.initializing||this.busy||!navigator.onLine)return;
+  if(!this.initialized)await this.init();else await this.poll();
+ }
  async start(){
+  this.initialized=false;
   if(this.disposed)return;const current=await this.session();if(!current.session?.accessToken||!current.workspace)return;if(!/^[a-f0-9]{32}$/.test(current.workspace))throw Error('shared2-invalid-workspace');
   const context=this.signature(current);if(this.context&&this.context!==context){await this.aliasTransfers?.close();this.aliasTransfers=null;this.aliasState={requests:[],jobs:[]};await this.reverseTransfers?.close();this.reverseTransfers=null;this.reverseState={requests:[],jobs:[]};await this.encryptedTransfers?.close();this.encryptedTransfers=null;this.encryptedState={requests:[],jobs:[]};await this.deviceTransfers?.close();this.deviceTransfers=null;this.deviceState={requests:[],jobs:[]};await this.retire();await this.jobs?.close();await this.namespaceJobs?.close();this.namespaceJobs=null;this.namespaceState={requests:[],jobs:[]};this.catalog=null;this.retentionStatus.clear();this.enabled=false;this.scope=null;this.keys=null;this.jobs=null;}
   this.context=context;
@@ -68,8 +95,9 @@ export class Shared2 {
   this.reverseTransfers??=createShared2ReverseTransfers({scope:{...this.scope,device:current.session.deviceId},store:this.store('reverse-transfers-'+current.session.deviceId),keys:this.keys,request:(path:string,options:any)=>{if(this.context!==context)throw Error('shared2-account-changed');return this.request(path,options);},prepare:(intent:any,check:any)=>this.prepareReverse(intent,check),openPrivateSource:async(job:any,profile:any,check:any)=>{const remote=await this.reverseRemote(job,'source',profile,false,check);return {...remote,view:createShared2MigrationView({localDatabase:remote.database},{readOnly:true})};},openShared:async(job:any,profile:any,check:any)=>{const remote=await this.reverseRemote(job,'shared',profile,false,check);return {...remote,view:createShared2MigrationView({localDatabase:remote.database},{readOnly:true})};},openRaw:(job:any,side:string,profile:any,check:any)=>this.reverseRemote(job,side,profile,true,check),openTarget:(job:any,profile:any,check:any)=>this.reverseRemote(job,'target',profile,false,check),createEngine:(profile:any)=>this.migrationEngine(profile),onChange:(state:any)=>{this.reverseState=state;this.redraw();}});
   if(catalog.capabilities?.aliasReconciliation===true)this.aliasTransfers??=createShared2AliasTransfers({scope:{...this.scope,device:current.session.deviceId},store:this.store('alias-transfers-'+current.session.deviceId),keys:this.keys,request:(path:string,options:any)=>{if(this.context!==context)throw Error('shared2-account-changed');return this.request(path,options);},prepare:(intent:any,check:any)=>this.prepareAliases(intent,check),openView:async(job:any,side:string,profile:any,check:any)=>{const remote=await this.aliasRemote(job,side,profile,false,check);return {...remote,view:createShared2MigrationView({localDatabase:remote.database},{readOnly:true})};},openRaw:(job:any,side:string,profile:any,check:any)=>this.aliasRemote(job,side,profile,true,check),openTarget:(job:any,profile:any,check:any)=>this.aliasRemote(job,'shared',profile,false,check),createEngine:(profile:any)=>this.migrationEngine(profile),onChange:(state:any)=>{this.aliasState=state;this.redraw();}});
   try{const publicKey=await this.keys.publicIdentity(),registered=await this.request('/shared2/device-key',{method:'POST',body:JSON.stringify(publicKey)});if(registered.status!==200)throw Error('shared2-device-key-registration-unavailable');}catch(error:any){this.warning=error.code||error.message;}
-  await this.reconcileDeviceTransfers();await this.encryptedTransfers.refresh();await this.reconcileEncryptedTransfers();await this.reverseTransfers.refresh();await this.reconcileReverseTransfers();if(this.aliasTransfers){await this.aliasTransfers.refresh();await this.reconcileAliasTransfers();}await this.applyCatalog(catalog);await this.poll();
-  if(!this.timer)this.timer=window.setInterval(()=>{void this.poll();},10000);
+  await this.reconcileDeviceTransfers();await this.encryptedTransfers.refresh();await this.reconcileEncryptedTransfers();await this.reverseTransfers.refresh();await this.reconcileReverseTransfers();if(this.aliasTransfers){await this.aliasTransfers.refresh();await this.reconcileAliasTransfers();}await this.applyCatalog(catalog);
+  if(this.disposed)return;
+  this.initialized=true;await this.poll();
  }
  async drainLegacy(id:string){
   const folders=this.plugin.folders,entry=folders.entries.get(id);if(!entry)return;
@@ -84,7 +112,7 @@ export class Shared2 {
   }
   await entry.persistence?.destroy();for(const undo of entry.undo.values())undo.destroy();entry.doc.destroy();folders.entries.delete(id);
  }
- async retire(){for(const entry of this.entries.values()){await entry.controller?.close();await entry.engine?.close();}this.entries.clear();}
+ async retire(){await Promise.allSettled([...this.entryTasks.values()]);for(const entry of this.entries.values()){await entry.controller?.close();await entry.engine?.close();}this.entries.clear();}
  async applyCatalog(catalog:any){
   catalog=checkedShared2ServerCatalog(catalog);
   if(catalog.account!==this.scope.account)throw Error('shared2-account-changed');
@@ -126,7 +154,7 @@ export class Shared2 {
     if(!/^arcalink_s_[a-f0-9]{32}$/.test(row.database))continue;
     const record=this.plugin.folders.records.find((record:any)=>record.id===row.id&&record.protocol===2&&!record.shared2Left&&!record.shared2Revoked&&!record.shared2Creating&&!record.shared2Unsharing&&!record.shared2Rekeying&&!record.shared2Reconciling&&record.shared2Scope?.account===this.scope.account&&record.shared2Scope?.workspace===this.scope.workspace);if(!record)continue;
     if(this.retentionPaused(row)){const previous=this.entries.get(row.id);if(previous){await previous.controller.close();await previous.engine.close();this.entries.delete(row.id);}continue;}
-    const entry=await this.ensure(row,record.mount);this.transferCount++;try{const result=await entry.controller.synchronize();if(record.shared2ReconcileAuthority&&!result.conflicts.length){record.shared2ReconcileAuthority=false;await this.plugin.folders.save();this.plugin.folders.refresh();}}catch(error){await entry.controller.close();await entry.engine.close();this.entries.delete(row.id);throw error;}finally{this.transferCount--;}
+    const entry=await this.ensure(row,record.mount);void entry.controller.wake().catch(()=>this.redraw());
    }
    for(const record of this.plugin.folders.records)if(record.shared2Preparing&&!record.shared2EncryptedRequest&&!record.shared2NamespaceRequest&&!record.shared2Job&&record.shared2Scope?.account===this.scope.account&&record.shared2Scope?.workspace===this.scope.workspace&&!this.preparations.get(record.id)?.promise)void this.migrate(record.id).catch((error:any)=>{this.warning=error.code||error.message;this.redraw();});
    for(const intent of this.namespaceState.requests||[])if(!intent.terminal&&!intent.job&&!intent.cancelRequested&&intent.phase!=='error'&&!this.namespacePreparing.has(intent.requestKey))void this.prepareNamespace(intent);
@@ -256,32 +284,122 @@ export class Shared2 {
   }
   if(changed){await this.plugin.folders.save();this.plugin.folders.refresh();}
  }
- async ensure(row:any,mount:string){
-  const previous=this.entries.get(row.id);if(previous)return previous;
+ ensure(row:any,mount:string){
+  if(this.disposed)return Promise.reject(Error('shared2-manager-disposed'));
+  const previous=this.entries.get(row.id);if(previous)return Promise.resolve(previous);
+  const pending=this.entryTasks.get(row.id);if(pending)return pending;
+  const task=this.openScope(row,mount);this.entryTasks.set(row.id,task);task.then(()=>this.entryTasks.delete(row.id),()=>this.entryTasks.delete(row.id));return task;
+ }
+ engineFactory(options:any){return createShared2LocalEngineFactory(options);}
+ async withProjectionEvents<T>(path:string,events:string[],operation:()=>T|Promise<T>):Promise<T>{
+  const active=this.projectionEvents.get(path)??new Map<string,number>();
+  this.projectionEvents.set(path,active);
+  for(const event of events)active.set(event,(active.get(event)??0)+1);
+  try{return await operation();}finally{
+   for(const event of events){const remaining=(active.get(event)??1)-1;if(remaining)active.set(event,remaining);else active.delete(event);}
+   if(!active.size)this.projectionEvents.delete(path);
+  }
+ }
+ async openScope(row:any,mount:string){
   if(!recordCache(this.plugin.folders.records,row.id))throw Error('shared2-cache-scope-unavailable');
   const profile={kind:'shared',...this.scope,cacheEpoch:recordCache(this.plugin.folders.records,row.id),authorityEpoch:row.authorityEpoch,membershipEpoch:row.membershipEpoch,folder:row.id,ownerWorkspace:row.ownerWorkspace,database:row.database,generation:row.generation,revision:row.revision,catalogRevision:this.catalog.revision,role:row.role,encrypted:row.encrypted,keyEpoch:row.keyEpoch,documentRoot:row.documentRoot};
-  const checked=async()=>{if(this.disposed||this.signature(await this.session())!==this.context)return false;const current=this.catalog?.folders.find((item:any)=>item.id===row.id);return !!current&&this.version(current)===this.version(row);};
-  const getSession=async()=>(await this.session()).session,client=createShared2CatalogClient({request:(...args:any[])=>this.request(args[0],args[1]),getSession});
-  const openRemote=createShared2RemoteFactory({origin:new URL(this.plugin.unifiedVault.base).origin,gatewayPath:new URL(this.plugin.unifiedVault.base).pathname.replace(/\/$/,'')+'/shared2/couch/',createPouchDB:(name:string,options:any)=>new PouchDB(name,options),resolveAccess:(p:any)=>client.resolveAccess(p),configureEncryption:(db:any,p:any)=>configureShared2Encryption(db,p,(p:any)=>this.keys.get(p))});
-  const factory=createShared2LocalEngineFactory({namespace:'shared2-vault',createPouchDB:(name:string,options:any)=>new PouchDB(name,options),settingsFor:async(p:any)=>({database:p.database,generation:p.generation,settings:{hashAlg:'sha1',chunkSplitterVersion:'v1',useEden:false,disableWorkerForGeneratingChunks:true,disableWorkerForDecrypting:true}}),keyProvider:(p:any)=>this.keys.get(p),openRemote,accessCheck:checked});
-  const engine=await factory(profile),adapter=this.plugin.app.vault.adapter;
+  let controller:any,baseline:any,engine:any,scan:any;
+  const checked=async()=>{if(this.disposed||controller?.closed||this.signature(await this.session())!==this.context)return false;const current=this.catalog?.folders.find((item:any)=>item.id===row.id);return !!current&&this.version(current)===this.version(row);};
+  const adapter=this.plugin.app.vault.adapter,record=this.plugin.folders.records.find((r:any)=>r.id===row.id);
+  const storage=this.plugin.core.serviceModules.storageAccess;
   const readStream=(path:string)=>this.readStream(path);
   const readBlob=async(path:string)=>{const response=await fetch(adapter.getResourcePath(path),{cache:'no-store'});if(!response.ok)throw Error('shared2-native-file-read-unavailable');return response.blob();};
+  const disk=createShared2VaultDisk({adapter,mount,privateRoot:'ArcaLink Shared/shared2/'+this.scope.account+'/'+this.scope.workspace+'/'+row.id,listFiles:async(root:string)=>this.plugin.app.vault.getFiles().filter((file:any)=>file.path.startsWith(root+'/')).map((file:any)=>file.path),readStream,readBlob,beforeCommit:async(path:string,operation:()=>Promise<any>)=>{if(!await checked())throw Error('shared2-vault-lease-rejected');return this.withProjectionEvents(mount+'/'+path,['create','delete'],operation);}});
+  await disk.recover();
+  const runtime=createShared2RuntimeStore({profile,mount,store:this.store('livesync-'+row.id+'-'+row.generation+'-'+profile.cacheEpoch)});
+  const native=createShared2LiveSyncStorage({storage,disk,mount,stat:(path:string)=>adapter.stat(path),hashStream:hashShared2Stream,
+   commit:async(path:string,operation:()=>Promise<any>)=>{if(!await checked())throw Error('shared2-vault-lease-rejected');return this.withProjectionEvents(path,['rename'],operation);},
+   // The public trigger is fire-and-forget. Keep the fence through the
+   // awaited dispatch so a delayed notification cannot become a local edit.
+   dispatch:(type:string,path:string)=>{void this.withProjectionEvents(path,[type],()=>storage._triggerFileEvent(type,path)).catch(error=>controller?.reportError(error));},
+   preserve:async(item:any)=>{if(!baseline)throw Error('shared2-recovery-not-ready');await baseline.recordRecovery({...item,path:item.path.slice(mount.length+1)});}});
+  const localPath=(path:string)=>mount+path.slice(row.documentRoot.length);
+  const checkpoint=createShared2StartupCheckpoint({documentRoot:row.documentRoot,provenance:runtime.provenance,
+   stat:async(path:string)=>{const local=localPath(path);return (await storage.getStub(local))?.path===local?adapter.stat(local):null;},
+   fingerprint:(path:string)=>disk.fingerprint(path.slice(row.documentRoot.length+1)),
+   metadata:(path:string)=>engine.metadata(path),revisionProof:(path:string,revision:string)=>hashShared2Stream(engine.stream(path,revision))});
+  const getSession=async()=>(await this.session()).session,client=createShared2CatalogClient({request:(...args:any[])=>this.request(args[0],args[1]),getSession});
+  const openRemote=createShared2RemoteFactory({origin:new URL(this.plugin.unifiedVault.base).origin,gatewayPath:new URL(this.plugin.unifiedVault.base).pathname.replace(/\/$/,'')+'/shared2/couch/',createPouchDB:(name:string,options:any)=>new PouchDB(name,options),resolveAccess:(p:any)=>client.resolveAccess(p),configureEncryption:(db:any,p:any)=>configureShared2Encryption(db,p,(p:any)=>this.keys.get(p))});
   try{
-   const disk=createShared2VaultDisk({adapter,mount,privateRoot:'ArcaLink Shared/shared2/'+this.scope.account+'/'+this.scope.workspace+'/'+row.id,listFiles:async(root:string)=>this.plugin.app.vault.getFiles().filter((file:any)=>file.path.startsWith(root+'/')).map((file:any)=>file.path),readStream,readBlob,beforeCommit:async(_path:string,operation:()=>Promise<any>)=>{if(!await checked())throw Error('shared2-vault-lease-rejected');return operation();}});
-   await disk.recover();
-   const record=this.plugin.folders.records.find((r:any)=>r.id===row.id);
+   engine=await this.engineFactory({namespace:'shared2-vault',createPouchDB:(name:string,options:any)=>new PouchDB(name,options),settingsFor:async(p:any)=>({database:p.database,generation:p.generation,settings:{hashAlg:'sha1',chunkSplitterVersion:'v1',useEden:false,disableWorkerForGeneratingChunks:true,disableWorkerForDecrypting:true}}),keyProvider:(p:any)=>this.keys.get(p),openRemote,accessCheck:checked,
+    lifecycle:'livesync',createLiveSyncLifecycle:(options:any)=>createShared2LiveSyncLifecycle({...options,canUpload:()=>!record?.shared2ReconcileAuthority}),
+    fileRuntimeFor:async(_profile:any,services:any)=>{
+     scan=createShared2OfflineScan({documentRoot:row.documentRoot,store:runtime,services,role:row.role,canUpload:()=>!record?.shared2ReconcileAuthority,assertCurrent:checked,rememberRevision:checkpoint.remember});
+     return {storageAccess:createShared2ScopedStorage({storage:native,mount,documentRoot:row.documentRoot}),fileReflectionProvenance:runtime.provenance,onReflected:checkpoint.remember,
+      conflict:{queueCheckFor:(path:string)=>controller?.conflict(path),queueCheckForIfOpen:(path:string)=>controller?.conflict(path)},vault:{isTargetFile:async()=>true,isFileSizeTooLarge:()=>false},assertCurrent:checked};
+    },
+    resultRuntimeFor:({services,files}:any)=>createShared2ResultRuntime({ResultProcessor:ReplicateResultProcessor,services,files,keyValueDB:runtime.kv,documentRoot:row.documentRoot,assertCurrent:checked,isReady:()=>controller?.ready===true,isOnline:()=>navigator.onLine,retire:()=>{controller?.reportError(Error('shared2-engine-version-unsupported'));void (async()=>{await controller?.close();await engine?.close();})().catch(()=>{});},onError:(error:any)=>controller?.reportError(error)})
+   })(profile);
    if(record?.shared2LegacyVersions?.length&&record.shared2LegacyImportApprovedEpoch===profile.cacheEpoch&&record.shared2LegacyImportedEpoch!==profile.cacheEpoch){
     await engine.synchronize();const versions:any[]=[];
     for(const saved of record.shared2LegacyVersions){const state=await this.store(saved.storeName).load();if(!state||state.scope?.account!==this.scope.account||state.scope?.workspace!==this.scope.workspace||state.folder!==row.id||state.root!==saved.root)throw Error('shared2-legacy-cache-scope-mismatch');versions.push(...state.versions);}
     const result=await importShared2LegacyTexts({versions,documentRoot:row.documentRoot,engine,role:row.role,hashStream:hashShared2Stream,readBackup:async(path:string)=>{if(!record.shared2LegacyVersions.some((saved:any)=>path.startsWith(saved.root+'/objects/')))throw Error('shared2-legacy-cache-scope-mismatch');return readBlob(path);},assertCurrent:async()=>{if(!await checked())throw Error('shared2-vault-lease-rejected');}});
     if(!result.pending){record.shared2LegacyImportedEpoch=profile.cacheEpoch;await this.plugin.folders.save();}
    }
-   const controller=createShared2VaultController({profile,engine,disk,store:this.store('ledger-'+row.id+'-'+row.generation+'-'+profile.cacheEpoch),checkLease:checked,hashStream:hashShared2Stream,canUpload:()=>!record?.shared2ReconcileAuthority,onState:(state:any)=>{const e=this.entries.get(row.id);if(e)e.state=state;}});
+   baseline=createShared2VaultController({profile,engine,disk,store:this.store('ledger-'+row.id+'-'+row.generation+'-'+profile.cacheEpoch),checkLease:checked,hashStream:hashShared2Stream,canUpload:()=>!record?.shared2ReconcileAuthority,onState:(state:any)=>controller?.baselineProgress(state)});
+   controller=createShared2LiveController({profile,engine,baseline,store:runtime,checkLease:checked,isVerified:checkpoint.isVerified,canUpload:()=>!record?.shared2ReconcileAuthority,
+    scan,
+    onReady:async(result:any)=>{if(record.shared2ReconcileAuthority&&!result.conflicts.length){record.shared2ReconcileAuthority=false;await this.plugin.folders.save();this.plugin.folders.refresh();}},onState:()=>{}});
    if(!await checked())throw Error('shared2-vault-lease-rejected');
-   const entry={version:this.version(row),controller,engine,state:{state:'idle'}};this.entries.set(row.id,entry);return entry;
-  }catch(error){await engine.close();throw error;}
+   const entry={version:this.version(row),controller,engine,get state(){return controller.state;}};this.entries.set(row.id,entry);return entry;
+  }catch(error){await engine?.close();throw error;}
  }
+ get activity(){return this.transferCount+[...this.entries.values()].reduce((sum,entry)=>sum+(entry.controller?.activity||0),0);}
+ get errorMessages(){return [...this.entries.values()].filter(entry=>entry.state?.state==='error').map(entry=>shared2Message({code:entry.state.code}));}
+ scopeRow(record:any){
+  if(!record||record.protocol!==2||record.shared2Left||record.shared2Revoked||record.shared2Creating||record.shared2Unsharing||record.shared2Rekeying||record.shared2Reconciling||record.shared2Scope?.account!==this.scope?.account||record.shared2Scope?.workspace!==this.scope?.workspace)return null;
+  const row=this.catalog?.folders.find((row:any)=>row.id===record.id);return row&&!this.retentionPaused(row)?row:null;
+ }
+ fileStub(file:any,path:string){return {path,name:path.split('/').pop(),stat:{type:'file',ctime:file.stat?.ctime||0,mtime:file.stat?.mtime||0,size:file.stat?.size||0}};}
+ async routeFileEvent(entry:any,item:any){if(entry.controller.closed)return;try{return await entry.controller.enqueue(item);}catch(error:any){if(entry.controller.closed&&error.code==='shared2-vault-lease-rejected')return;throw error;}}
+ async changed(event:string,file:any){
+  const originalPath=file.path;
+  if(this.projectionEvents.get(originalPath)?.has(event))return;
+  const snapshot=this.fileStub(file,originalPath),directory=Array.isArray(file.children)||file.isFolder;
+  const record=this.plugin.folders.record(originalPath),row=this.scopeRow(record);if(!row||this.disposed)return;
+  if(row.role==='viewer'){if(event!=='create')new Notice('Общая папка доступна только для чтения.');return;}
+  const entry=await this.ensure(row,record.mount),path=row.documentRoot+originalPath.slice(record.mount.length);
+  if(directory){
+   if(event!=='delete')return;
+   if(entry.controller.closed)return;
+   for(const meta of await entry.engine.metadataFiles())if(!meta.deleted&&!meta._deleted&&(meta.path===path||meta.path.startsWith(path+'/')))await this.routeFileEvent(entry,{type:'DELETE',args:{file:this.fileStub({stat:meta},meta.path)}});
+  }else await this.routeFileEvent(entry,{type:event==='delete'?'DELETE':event==='create'?'CREATE':'CHANGED',args:{file:{...snapshot,path}}});
+ }
+ async renamed(file:any,old:string){
+  const destination=file.path;
+  if(this.projectionEvents.get(old)?.has('rename')&&old.toLowerCase()===destination.toLowerCase())return;
+  const pair=old+'\0'+destination;if(this.eventReverts.delete(pair))return;
+  const from=this.plugin.folders.record(old),to=this.plugin.folders.record(file.path),source=this.scopeRow(from),target=this.scopeRow(to);
+  if(!source&&!target)return;
+  if(from&&old===from.mount||to&&file.path===to.mount||from&&from.protocol!==2||to&&to.protocol!==2||source?.role==='viewer'||target?.role==='viewer'||from?.protocol===2&&!source||to?.protocol===2&&!target){
+   const inverse=file.path+'\0'+old;this.eventReverts.add(inverse);try{await this.plugin.app.fileManager.renameFile(file,old);}catch(error){this.eventReverts.delete(inverse);throw error;}
+   new Notice('Перемещение точки подключения или папки без права записи недоступно.');return;
+  }
+  const directory=Array.isArray(file.children)||file.isFolder;
+  const files=directory?this.plugin.app.vault.getFiles().filter((item:any)=>item.path.startsWith(destination+'/')):[file];
+  const byTarget=new Map<string,any>(files.map((item:any)=>[item.path,this.fileStub(item,item.path)]));
+  const sourceEntry=source?await this.ensure(source,from.mount):null,targetEntry=target?await this.ensure(target,to.mount):null;
+  if(directory&&sourceEntry){const prefix=source.documentRoot+old.slice(from.mount.length);for(const meta of await sourceEntry.engine.metadataFiles())if(!meta.deleted&&!meta._deleted&&meta.path.startsWith(prefix+'/')){const path=destination+meta.path.slice(prefix.length);if(!byTarget.has(path))byTarget.set(path,{path,stat:meta,missing:true});}}
+  for(const [next,item] of byTarget){
+   const previous=old+next.slice(destination.length);
+   if(sourceEntry&&sourceEntry===targetEntry&&!item.missing){
+    await this.routeFileEvent(sourceEntry,{type:'RENAME',args:{file:this.fileStub(item,source.documentRoot+next.slice(from.mount.length)),oldPath:source.documentRoot+previous.slice(from.mount.length)}});
+   }else{
+    if(sourceEntry)await this.routeFileEvent(sourceEntry,{type:'DELETE',args:{file:this.fileStub(item,source.documentRoot+previous.slice(from.mount.length))}});
+    if(targetEntry&&!item.missing)await this.routeFileEvent(targetEntry,{type:'CREATE',args:{file:this.fileStub(item,target.documentRoot+next.slice(to.mount.length))}});
+   }
+   // Obsidian emits a directory rename once. Give the personal engine its
+   // corresponding child event through the existing watcher, which performs
+   // the ordinary inclusion/exclusion mapping itself.
+   if(directory&&(!sourceEntry||!targetEntry)&&!item.missing)this.plugin.core.serviceModules.storageAccess.vaultManager.watchVaultRename(item,previous);
+  }
+ }
+
  createNamespace(){chooseSharedFolder(this.plugin.app,{title:'Поделиться папкой',description:'Папка станет общей. Содержимое переносится в фоне, пока Obsidian открыт.',action:'Поделиться папкой',unavailable:(mount:string)=>{try{this.plugin.folders.validateMount(mount);return '';}catch(error:any){return error.message;}},select:async(mount:string)=>{this.plugin.folders.validateMount(mount);if(this.plugin.core.services.setting.currentSettings().encrypt){await this.encryptedTransfers.plan(mount);void this.encryptedTransfers.step();new Notice('Задание сохранено. Зашифрованный перенос продолжится в фоне.');return;}const intent=await this.namespaceJobs.plan('share',mount);void this.prepareNamespace(intent);new Notice('Задание сохранено. Подготовка и перенос продолжатся в фоне.');}});}
  async beginUnshare(row:any,record:any){if(record.shared2Reconciling)throw Error('shared2-operation-active');if(row.encrypted||this.plugin.core.services.setting.currentSettings().encrypt){await this.reverseTransfers.plan(row.id,record.mount);void this.poll();return;}const intent=await this.namespaceJobs.plan('unshare',row.id);void this.prepareNamespace(intent);}
  prepareNamespace(intent:any){
@@ -400,7 +518,7 @@ export class Shared2 {
     if(record.shared2LegacyVersions?.length&&record.shared2LegacyImportedEpoch!==record.shared2CacheEpoch)new Setting(card).setName('Сохранены локальные версии прежнего формата').setDesc('Они доступны в локальной резервной копии.').addButton(button=>button.setButtonText('Добавить версии к общей папке').setDisabled(row.role==='viewer').onClick(()=>this.confirm('Добавить сохранённые локальные версии?','Различающиеся варианты сохранятся как конфликтующие версии для сверки.',async()=>{record.shared2LegacyImportApprovedEpoch=record.shared2CacheEpoch;await this.plugin.folders.save();const entry=this.entries.get(row.id);if(entry){await entry.controller.close();await entry.engine.close();this.entries.delete(row.id);}await this.poll();})));
 
     if(row.role==='owner'){
-     if(this.aliasTransfers)new Setting(card).setName('Прежние личные копии').setDesc('Сверить версии этой папки в личной и общей базе. При совпадающих файлах потребуется отдельное подтверждение; обе доступные истории сохранятся.').addButton(button=>button.setButtonText('Сверить прежние копии').setDisabled(this.retentionPaused(row)||row.ownerWorkspace!==this.scope.workspace||!!record.shared2Reconciling||!!record.shared2Rekeying||!!record.shared2Reconciling||!!record.shared2Unsharing).onClick(()=>this.confirm('Сверить прежние копии папки?','Папка временно станет доступна только для чтения. Оставьте Obsidian открытым; операция сохранится и продолжится после повторного запуска.',async()=>{await this.aliasTransfers.plan(row.id,record.mount);await this.poll();})));
+     if(this.aliasTransfers)new Setting(card).setName('Проверка данных прежнего формата').setDesc('Ручной поиск данных от прежнего механизма общих папок. После проверки можно объединить доступные истории.').addButton(button=>button.setButtonText('Проверить').setDisabled(this.retentionPaused(row)||row.ownerWorkspace!==this.scope.workspace||!!record.shared2Reconciling||!!record.shared2Rekeying||!!record.shared2Reconciling||!!record.shared2Unsharing).onClick(()=>this.confirm('Сверить прежние копии папки?','Папка временно станет доступна только для чтения. Оставьте Obsidian открытым; операция сохранится и продолжится после повторного запуска.',async()=>{await this.aliasTransfers.plan(row.id,record.mount);await this.poll();})));
      new Setting(card).setName(row.encrypted?'Ключ шифрования':'Шифрование папки').setDesc(row.encrypted?'Новый ключ защитит будущие версии; ранее скачанные файлы остаются у участников.':'Содержимое будет зашифровано на этом устройстве и проверено перед переключением.').addButton(button=>button.setButtonText(row.encrypted?'Сменить ключ':'Включить шифрование').setDisabled(this.retentionPaused(row)||!!record.shared2Rekeying||!!record.shared2Reconciling||!!record.shared2Unsharing||row.ownerWorkspace!==this.scope.workspace).onClick(()=>this.confirm(row.encrypted?'Сменить ключ папки?':'Зашифровать папку?','Оставьте Obsidian открытым до завершения. Ключи устройств участников потребуется передать заново.',async()=>{await this.deviceTransfers.plan(row.id);void this.poll();})));
      new Setting(card).setName('Приглашения').addButton(button=>{button.setButtonText('Пригласить по email').onClick(()=>this.invite(row));tariffGate(button.buttonEl);});
      setting.addButton(button=>button.setButtonText('Прекратить общий доступ').setDisabled(this.retentionPaused(row)||!!record.shared2Unsharing||!!record.shared2Reconciling).onClick(()=>this.confirm('Прекратить общий доступ?','Доступ всех участников будет закрыт. Папка вернётся в обычную синхронизацию хранилища; локальные файлы сохранятся.',()=>this.beginUnshare(row,record))));

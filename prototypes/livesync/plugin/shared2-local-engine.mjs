@@ -14,22 +14,25 @@ import {InjectableAppLifecycleService} from '@vrtmrz/livesync-commonlib/compat/s
 import {InjectableReplicatorService} from '@vrtmrz/livesync-commonlib/compat/services/implements/injectable/InjectableReplicatorService';
 import {PathServiceCompat} from '@vrtmrz/livesync-commonlib/compat/services/implements/injectable/InjectablePathService';
 import {createShared2Replication} from './shared2-replication.mjs';
+import {createShared2FileRuntime} from './shared2-file-runtime.mjs';
 import {safeRelative} from './folder-model.mjs';
 
 const fail=code=>Object.assign(Error(code),{code});
 const OPTIONS=new Set(['hashAlg','chunkSplitterVersion','customChunkSize','minimumChunkSize','useEden','maxChunksInEden','maxTotalLengthInEden','handleFilenameCaseSensitive','enableCompression','disableWorkerForGeneratingChunks','disableWorkerForDecrypting']);
 
-/** Local storage adapter using the actual pinned LiveSync engine. No remote
- * replication is started here. Encrypted/rekey profiles are explicitly refused
- * until the separate crypto/remote adapters exist, never silently downgraded.
+/** Scoped cache using the actual pinned LiveSync engine. Replication starts
+ * only through explicit methods. The existing finite lifecycle stays the
+ * default until the host's baseline, storage and event-routing gates pass.
  */
-/** @param {{createPouchDB: Function, settingsFor: Function, namespace?: string, log?: Function, openRemote?: Function, accessCheck?: Function, keyProvider?: Function, migrationMode?: boolean, personalEncryptionFor?: Function}} options */
-export function createShared2LocalEngineFactory({createPouchDB,settingsFor,namespace='shared2-local',log=()=>{},openRemote=undefined,accessCheck=undefined,keyProvider=undefined,migrationMode=false,personalEncryptionFor=undefined}){
+/** @param {{createPouchDB: Function, settingsFor: Function, namespace?: string, log?: Function, openRemote?: Function, accessCheck?: Function, keyProvider?: Function, migrationMode?: boolean, personalEncryptionFor?: Function, lifecycle?: string, createLiveSyncLifecycle?: Function, fileRuntimeFor?: Function, resultRuntimeFor?: Function, onReplicatedDocuments?: Function}} options */
+export function createShared2LocalEngineFactory({createPouchDB,settingsFor,namespace='shared2-local',log=()=>{},openRemote=undefined,accessCheck=undefined,keyProvider=undefined,migrationMode=false,personalEncryptionFor=undefined,lifecycle='finite',createLiveSyncLifecycle=undefined,fileRuntimeFor=undefined,resultRuntimeFor=undefined,onReplicatedDocuments=undefined}){
  if(typeof createPouchDB!=='function'||typeof settingsFor!=='function'||!/^shared2-[A-Za-z0-9_-]{1,80}$/.test(namespace))throw fail('invalid-shared2-engine-factory');
  if(personalEncryptionFor!==undefined&&typeof personalEncryptionFor!=='function')throw fail('invalid-shared2-personal-settings-adapter');
  if(openRemote!==undefined&&(typeof openRemote!=='function'||typeof accessCheck!=='function'))throw fail('shared2-remote-access-check-required');
+ if(!['finite','livesync'].includes(lifecycle)||lifecycle==='livesync'&&(typeof createLiveSyncLifecycle!=='function'||fileRuntimeFor&&!resultRuntimeFor)||fileRuntimeFor!==undefined&&typeof fileRuntimeFor!=='function'||resultRuntimeFor!==undefined&&(typeof resultRuntimeFor!=='function'||lifecycle!=='livesync'||!fileRuntimeFor)||onReplicatedDocuments!==undefined&&typeof onReplicatedDocuments!=='function')throw fail('invalid-shared2-runtime-options');
  return async profile=>{
   profile=Object.freeze({...profile});
+  if((lifecycle==='livesync'||fileRuntimeFor)&&profile.kind!=='shared')throw fail('shared2-runtime-requires-shared-scope');
   const validIdentity=v=>typeof v==='string'&&/^[A-Za-z0-9-]{1,80}$/.test(v);
   if(!validIdentity(profile.account)||!validIdentity(profile.workspace)||!['personal','shared'].includes(profile.kind)||!Number.isSafeInteger(profile.generation)||profile.generation<1
     ||!new RegExp('^arcalink_'+(profile.kind==='shared'?'s':'p')+'_[a-f0-9]{32}$').test(profile.database)
@@ -47,6 +50,7 @@ export function createShared2LocalEngineFactory({createPouchDB,settingsFor,names
   const settings={...structuredClone(DEFAULT_SETTINGS),...structuredClone(resolved.settings),isConfigured:true,remoteType:'',encrypt:!!key,passphrase:key?.passphrase||'',usePathObfuscation:personal?(personal.encrypt&&personal.usePathObfuscation===true):!!key,E2EEAlgorithm:personal?(personal.E2EEAlgorithm??E2EEAlgorithms.V1):(key?'v2':DEFAULT_SETTINGS.E2EEAlgorithm),...(personal?{useDynamicIterationCount:personal.useDynamicIterationCount===true}:{}),
    couchDB_URI:'',couchDB_USER:'',couchDB_PASSWORD:'',activeConfigurationId:'',remoteConfigurations:{},P2P_Enabled:false,
    hashCacheMaxCount:profile.kind==='shared'?1:DEFAULT_SETTINGS.hashCacheMaxCount,syncInternalFiles:false,syncIgnoreRegEx:'',liveSync:false,periodicReplication:false,syncOnStart:false,syncOnSave:false,syncOnFileOpen:false};
+  if(lifecycle==='livesync'){settings.readChunksOnline=false;settings.useOnlyLocalChunk=true;}
   const context=new ServiceContext(),API=new InjectableAPIService(context);API.addLog.setHandler(log);
   const setting=new InjectableSettingService(context,{APIService:API});setting.settings=settings;
   setting.saveData.setHandler(async()=>{});setting.loadData.setHandler(async()=>structuredClone(settings));
@@ -62,11 +66,27 @@ export function createShared2LocalEngineFactory({createPouchDB,settingsFor,names
   try{if(!await local.initializeDatabase())throw fail('shared2-engine-initialisation-rejected');}
   catch(error){await local.close().catch(()=>{});throw error;}
   if(profile.kind==='shared')installShared2BoundedSplitter(local);
-  const transfer=openRemote&&profile.kind==='shared'?createShared2Replication({database:local.localDatabase,profile,openRemote,accessCheck}):null;
+  let files,results,transfer;
+  try{
+   services.database.localDatabase=local;
+   if(fileRuntimeFor)files=createShared2FileRuntime({...await fileRuntimeFor(profile,services),services,documentRoot:profile.documentRoot,role:profile.role});
+   if(lifecycle==='livesync'){
+    if(profile.kind!=='shared'||!openRemote||!onReplicatedDocuments&&!resultRuntimeFor)throw fail('shared2-livesync-result-handler-required');
+    if(resultRuntimeFor){results=await resultRuntimeFor({profile,services,files});if(typeof results?.receive!=='function'||typeof results?.close!=='function')throw fail('invalid-shared2-result-runtime');}
+    services.replication={parseSynchroniseResult:docs=>results?results.receive(docs):onReplicatedDocuments(profile,docs,files)};
+    transfer=createLiveSyncLifecycle({services,profile,openRemote,accessCheck,keyProvider});
+   }else transfer=openRemote&&profile.kind==='shared'?createShared2Replication({database:local.localDatabase,profile,openRemote,accessCheck}):null;
+  }catch(error){await results?.close?.();await files?.close();await local.close();throw error;}
   const checked=name=>{if(closed||retiring)throw fail('shared2-engine-closed');if(!safeRelative(name))throw fail('invalid-shared2-document-path');};
   return {
+   ...(files?{files}:{}),
+   ...(results?{results}:{}),
+   ...(lifecycle==='livesync'?{startLive:()=>transfer.start(),getReplicationState:()=>transfer.state}:{}),
+   ...(lifecycle==='livesync'?{stopLive:()=>transfer.stop()}:{}),
    ...(migrationMode?{migration:createShared2MigrationView(local,{readOnly:profile.role==='viewer',pathId:name=>path.path2id(name),chunkId:async piece=>'h:'+await local.managers.hashManager.computeHash(piece)})}:{}),
    synchronize(){if(closed||retiring)return Promise.reject(fail('shared2-engine-closed'));if(!transfer)return Promise.reject(fail('shared2-remote-not-configured'));return transfer.synchronize();},
+   async metadata(name,revision=undefined){checked(name);const doc=await local.getDBEntryMeta(name,{conflicts:true,...(revision?{rev:revision}:{})},true);return doc?structuredClone(doc):null;},
+   async metadataFiles(){checked('metadata');const files=[];for await(const doc of local.findAllNormalDocs({include_docs:true,conflicts:true})){if(['plain','newnote'].includes(doc.type))files.push(structuredClone(doc));}return files;},
    async inspect(){
     checked('shared2-inspection');const sequence=(await local.localDatabase.info()).update_seq,files=[],chunks=[],reserved=[];let start;
     for(;;){
@@ -82,9 +102,10 @@ export function createShared2LocalEngineFactory({createPouchDB,settingsFor,names
     checked('shared2-inspection');if((await local.localDatabase.info()).update_seq!==sequence)throw fail('shared2-inspection-changed');
     return {sequence,files,chunks,reserved};
    },
-   async *stream(name){
+   async *stream(name,expectedRevision=undefined){
     checked(name);const meta=await local.getDBEntryMeta(name);
     if(!meta||meta.deleted||meta._deleted||!Array.isArray(meta.children))throw fail('shared2-stream-file-missing');
+    if(expectedRevision!==undefined&&meta._rev!==expectedRevision)throw fail('shared2-stream-file-changed');
     const eden=Object.fromEntries(Object.entries(meta.eden||{}).map(([id,value])=>[id,{_id:id,data:value.data,type:'leaf'}]));let size=0,index=0,legacy=false,carry='',cachedChars=0;const cache=new Map();
     for(const id of meta.children){
      checked(name);let chunks=cache.has(id)?[cache.get(id)]:await local.managers.chunkManager.read([id],{skipCache:true,waitForDelivery:false,preventRemoteRequest:true},eden);
@@ -137,7 +158,7 @@ export function createShared2LocalEngineFactory({createPouchDB,settingsFor,names
    },
    async close(){
     if(closed)return;if(closing)return closing;retiring=true;
-    closing=(async()=>{if(transfer)await transfer.close();await local.close();})().then(()=>{closed=true;},error=>{closing=undefined;throw error;});
+    closing=(async()=>{if(transfer)await transfer.close();if(results)await results.close();if(files)await files.close();await local.close();})().then(()=>{closed=true;},error=>{closing=undefined;throw error;});
     return closing;
    },
   };

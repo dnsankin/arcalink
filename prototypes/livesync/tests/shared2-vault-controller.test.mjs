@@ -17,6 +17,21 @@ test('ledger keys cannot alter object prototypes',async()=>{const f=fixture('vie
 
 test('initial matching local migration copy adopts remote ancestry without making duplicate roots',async()=>{const f=fixture();f.files.set('a.md',bytes('same'));f.remote.set('Team/a.md',{bytes:bytes('same'),revision:'7-migrated',conflicts:[]});await f.controller.synchronize();assert.equal(f.writes.length,0);assert.equal((await f.controller.ledger()).files['a.md'].revision,'7-migrated');});
 
+test('shared verification reports file progress through unchanged and conflicting files',async()=>{
+ const f=fixture(),states=[];
+ f.files.set('a.md',bytes('same'));
+ f.remote.set('Team/a.md',{bytes:bytes('same'),revision:'7-migrated',conflicts:[]});
+ f.remote.set('Team/b.md',{bytes:bytes('server'),revision:'2-conflict',conflicts:['2-other']});
+ const controller=createShared2VaultController({...f.options,onState:state=>states.push(state)});
+ assert.deepEqual((await controller.synchronize()).conflicts,['b.md']);
+ assert.ok(states.some(s=>s.phase==='baseline'&&s.path==='a.md'&&s.done===0&&s.total===1));
+ assert.ok(states.some(s=>s.phase==='local'&&s.total===1));
+ assert.ok(states.some(s=>s.phase==='exchange'));
+ assert.deepEqual(states.filter(s=>s.phase==='remote').map(s=>[s.done,s.total,s.path]),[[0,2,'Team/a.md'],[1,2,'Team/b.md']]);
+ assert.equal(states.at(-1).state,'conflict');assert.equal(states.at(-1).phase,undefined);
+ assert.equal(f.writes.length,0);assert.equal(new TextDecoder().decode(f.files.get('a.md')),'same');
+});
+
 test('authority baseline never uploads pending local edits and durably indexes their backup',async()=>{const f=fixture();f.options.canUpload=()=>false;const controller=createShared2VaultController(f.options);f.files.set('a.md',bytes('unconfirmed'));f.remote.set('Team/a.md',{bytes:bytes('canonical'),revision:'4-server',conflicts:[]});await controller.synchronize();assert.equal(f.writes.length,0);const ledger=await controller.ledger();assert.equal(ledger.recovery[0].path,'a.md');assert.equal(ledger.recovery[0].hash,digest(bytes('unconfirmed')));assert.equal(new TextDecoder().decode(f.files.get('a.md')),'canonical');});
 
 test('authority baseline quarantines untracked local files before later uploads can resume',async()=>{const f=fixture();let allowed=false;f.options.canUpload=()=>allowed;const controller=createShared2VaultController(f.options);f.files.set('pending.md',bytes('old pending'));await controller.synchronize();assert.equal(f.files.has('pending.md'),false);assert.equal((await controller.ledger()).recovery[0].path,'pending.md');allowed=true;await controller.synchronize();assert.equal(f.writes.length,0);});

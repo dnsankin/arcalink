@@ -946,4 +946,10 @@ export default Object.fromEntries([
 ["Unpublish", "Снять с публикации"],
 ["Could not load publications", "Не удалось загрузить публикации"],
 ["Open page", "Открыть страницу"],
+["Checking source files", "Сверка исходных файлов"],
+["Checking local files", "Проверка локальных файлов"],
+["Syncing shared folder", "Обмен общей папки"],
+["Checking server versions", "Проверка серверных версий"],
+["Check legacy data", "Проверка данных прежнего формата"],
+["Manually search for data from the previous shared-folder mechanism. Available histories can be merged after review.", "Ручной поиск данных от прежнего механизма общих папок. После проверки можно объединить доступные истории."],
 ].map(([def,ru,...aliases])=>[def,{def,ru,...Object.fromEntries(aliases.map((value,i)=>['alias'+i,value]))}]));

@@ -16,6 +16,7 @@ export function messageLanguage(){
   try{return getLanguage();}catch{return localStorage.getItem('language')||'en';}
 }
 export function localizeMessage(message:string){return translate(message,messageLanguage());}
+export function localizeMessageForLanguage(message:string,language:string){return translate(message,language);}
 export function messageInEnglish(message:string){return translate(message,'en');}
 const formatNotice=createNoticeFormatter(translate);
 export class Plugin extends NativePlugin {

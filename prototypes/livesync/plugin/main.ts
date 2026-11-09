@@ -187,10 +187,21 @@ export default class ArcaLinkPilot extends LiveSync {
     const refreshLamp=async()=>{
       if(lampBusy)return;lampBusy=true;
       try {
-        const errors=(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean).map(String);
+        const errors=[...(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean).map(String),...this.shared2.errorMessages];
         const state=services.replicator.replicationStatics.value;
         const status=String(state.syncStatus||'');
-        const activity=syncActivity({sent:state.sent,arrived:state.arrived,counts:[services.replication.databaseQueueCount.value,services.replication.storageApplyingCount.value,services.replication.replicationResultCount.value,chunkFetchCounts.value.initial,this.folders.transferCount,this.shared2.transferCount]});
+        const sharedEntries=[...this.shared2.entries.values()];
+        const sharedProgress=sharedEntries.find(entry=>entry.state?.state==='syncing'&&entry.state.phase)?.state;
+        const sharedBacklog=sharedEntries.reduce((sum,entry)=>{
+          const queue=entry.controller.displayBacklog;
+          return {outgoing:sum.outgoing+queue.outgoing,incoming:sum.incoming+queue.incoming};
+        },{outgoing:0,incoming:0});
+        const sharedStage=sharedProgress?({baseline:'Сверка исходных файлов',local:'Проверка локальных файлов',exchange:'Обмен общей папки',remote:'Проверка серверных версий'} as Record<string,string>)[sharedProgress.phase]:'';
+        const sharedCount=sharedProgress?.total?' '+sharedProgress.done+' / '+sharedProgress.total:
+          sharedBacklog.outgoing||sharedBacklog.incoming?' ↑ '+sharedBacklog.outgoing+' ↓ '+sharedBacklog.incoming:'';
+        const sharedDetail=sharedStage?localizeMessage(sharedStage)+sharedCount+(sharedProgress.path?'\n'+sharedProgress.path:''):'';
+        lamp.setText('●'+sharedCount);
+        const activity=syncActivity({sent:state.sent,arrived:state.arrived,counts:[services.replication.databaseQueueCount.value,services.replication.storageApplyingCount.value,services.replication.replicationResultCount.value,chunkFetchCounts.value.initial,this.folders.transferCount,this.shared2.activity]});
         const editor=this.app.workspace.containerEl.querySelector('.livesync-status');
         const log=editor?.querySelector('.livesync-status-logmessage')?.textContent?.trim();
         if(log)lastMessage=log;
@@ -205,7 +216,7 @@ export default class ArcaLinkPilot extends LiveSync {
         this.mobileSyncStatus?.update({kind,status,offline,configured:settings.isConfigured,ready:services.appLifecycle.isReady(),paused,automaticOff,sent:state.sent,arrived:state.arrived,errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
         const label=kind==='idle'&&paused?'Синхронизация приостановлена':kind==='idle'&&automaticOff?'Автоматическая синхронизация выключена':{error:'Ошибка синхронизации',offline:'Нет подключения к интернету',ready:'Синхронизация подключена',active:'Синхронизация выполняется',idle:'Синхронизация ожидает'}[kind];
         // setTooltip owns aria-label; resetting it would erase the detailed hover text.
-        const tooltip=[label,summary,...syncUserMessages([...errors,lastMessage].filter(Boolean),this.folders.syncFeedback.messages)].filter(Boolean).map(localizeMessage).join('\n');if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
+        const tooltip=[label,summary,sharedDetail,...syncUserMessages([...errors,lastMessage].filter(Boolean),this.folders.syncFeedback.messages)].filter(Boolean).map(localizeMessage).join('\n');if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
       } catch {this.mobileSyncStatus?.update({ready:false,configured:true});lamp.dataset.state='idle';setTooltip(lamp,localizeMessage('Синхронизация запускается'),{placement:'top'});}
       finally {lampBusy=false;}
     };
