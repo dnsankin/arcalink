@@ -117,6 +117,18 @@ test('shared mounts cannot intersect a common exclusion, even with different cas
  assert.doesNotThrow(()=>f.c.assertSharedMount('Разрешено'));f.c.holding=true;assert.throws(()=>f.c.assertSharedMount('Разрешено'));
 });
 
+test('only the protected original path is allowed for an owner reconnecting the same workspace',async t=>{
+ const f=await fixture(t);await f.c.prepare(f.settings);
+ assert.throws(()=>f.c.assertSharedMount('Фото',workspace),/вне общих исключений/);
+ f.c.protectedPaths=['Фото'];
+ assert.doesNotThrow(()=>f.c.assertSharedMount('Фото',workspace));
+ for(const path of ['фото','Фото/Вложения','Личные'])assert.throws(()=>f.c.assertSharedMount(path,workspace),/вне общих исключений/);
+ assert.throws(()=>f.c.assertSharedMount('Фото','another'),/вне общих исключений/);
+ assert.throws(()=>f.c.assertSharedMount('Фото'),/вне общих исключений/);
+ f.c.holding=true;
+ assert.throws(()=>f.c.assertSharedMount('Фото',workspace),/вне общих исключений/);
+});
+
 function lifecycle(f,{suspended=false}={}){
  const events=[],s=f.plugin.core.services;let paused=suspended;
  s.appLifecycle={isSuspended:()=>paused,setSuspended:v=>{paused=v;events.push('pause:'+v);},onSuspending:async()=>{events.push('suspending');}};

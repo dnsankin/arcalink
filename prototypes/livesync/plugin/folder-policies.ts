@@ -29,9 +29,13 @@ export class FolderPolicies {
   legacyUnavailable(error:any){return !this.requiresPolicy()&&(error.unavailable===true||[404,408,429,500,502,503,504].includes(error.status));}
   excludes(path:string){return !!this.state?.policy&&folderPolicyExcludes(this.state.policy,path);}
   importReady(){return !this.active||!this.holding&&!this.loading&&!this.reloading&&!this.error&&(!this.state?.revision||this.state.phase==='ready'&&this.entry?.binding?.revision===this.state.revision);}
-  assertSharedMount(path:string){
+  assertSharedMount(path:string,ownerWorkspace?:string){
     if(!this.active)return;
-    if(!this.importReady()||(this.state?.policy?.folders||[]).some((root:string)=>folderContains(root,path,false)||folderContains(path,root,false)))throw Error('Выберите общую папку вне общих исключений. Дождитесь применения текущих правил синхронизации.');
+    const policy=this.state?.policy;
+    const protectedOwnerPath=!!ownerWorkspace&&this.workspace===ownerWorkspace&&policy?.workspace===ownerWorkspace
+      &&this.protectedPaths.includes(path)&&policy.folders.includes(path);
+    if(!this.importReady()||ownerWorkspace&&!protectedOwnerPath||
+      (policy?.folders||[]).some((root:string)=>!(protectedOwnerPath&&root===path)&&(folderContains(root,path,false)||folderContains(path,root,false))))throw Error('Выберите общую папку вне общих исключений. Дождитесь применения текущих правил синхронизации.');
   }
   async assertLabVault(){if(pluginEnvironment(this.plugin.manifest).lab&&!await this.plugin.app.vault.adapter.exists('.arcalink-folder-lab.json'))throw Error('Испытательная сборка работает только в тестовом хранилище со стенда. Рабочие заметки не затронуты.');}
   logicalName(settings:any){if(pluginEnvironment(this.plugin.manifest).lab&&!settings.additionalSuffixOfDatabaseName)settings.additionalSuffixOfDatabaseName='arcalink-folders-lab';return this.plugin.core.services.vault.vaultName()+(settings.additionalSuffixOfDatabaseName?'-'+settings.additionalSuffixOfDatabaseName:'')+'-livesync-v2';}

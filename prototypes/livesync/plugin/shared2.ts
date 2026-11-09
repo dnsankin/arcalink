@@ -590,33 +590,62 @@ export class Shared2 {
    &&!this.plugin.folders.records.some((record:any)=>record.id===current.id);
  }
  mount(row:any,onMounted?:()=>void){
-  const folders=this.plugin.folders,vault=this.plugin.app.vault,context=this.context;
-  const validate=(path:string)=>{
-   folders.validateMount(path);
-   if(vault.getFiles().some((file:any)=>file.path.startsWith(path+'/')))throw Error('Папка должна быть пустой');
+  const folders=this.plugin.folders,vault=this.plugin.app.vault,context=this.context,scope=this.scope;
+  const validate=(path:string,ownerWorkspace?:string)=>{
+   folders.validateMount(path,ownerWorkspace);
+   if(vault.getFiles().some((file:any)=>file.path.toLowerCase().startsWith(path.toLowerCase()+'/')))throw Error(ownerWorkspace
+    ?'Исходная папка на этом устройстве уже содержит файлы. Подключение приостановлено, чтобы сохранить локальные версии.'
+    :'Папка должна быть пустой');
   };
+  const select=async(mount:string)=>{
+   const current=()=>{
+    if(folders.records.some((record:any)=>record.id===row.id))throw Error('Эта общая папка уже подключена к хранилищу');
+    const latest=this.catalog?.folders.find((folder:any)=>folder.id===row.id);
+    if(this.context!==context||this.scope!==scope||!this.canMount(latest)||latest.role!==row.role)throw Error(shared2Message('shared2-access-denied'));
+    if(latest.role==='owner'&&(latest.owner!==scope.account||latest.ownerWorkspace!==scope.workspace||latest.documentRoot!==mount))
+     throw Error('Откройте хранилище, которому принадлежит общая папка.');
+    return latest;
+   };
+   let latest=current();
+   const ownerWorkspace=latest.role==='owner'?latest.ownerWorkspace:undefined;
+   validate(mount,ownerWorkspace);
+   if(ownerWorkspace){
+    const parts=mount.split('/');let path='';
+    for(const part of parts){
+     path=path?path+'/'+part:part;
+     const existing=vault.getAllLoadedFiles().find((file:any)=>file.path.toLowerCase()===path.toLowerCase());
+     if(existing&&existing.path!==path)throw Error('Регистр имени локальной папки отличается от исходного пути.');
+     const stat=await vault.adapter.stat(path);
+     if(stat&&stat.type!=='folder')throw Error('Исходный путь общей папки занят файлом.');
+    }
+    latest=current();
+    validate(mount,ownerWorkspace);
+    await this.mkdirs(mount);
+    if((await vault.adapter.stat(mount))?.type!=='folder')throw Error('Исходный путь общей папки занят файлом.');
+    latest=current();
+    validate(mount,ownerWorkspace);
+   }
+   const cacheEpoch=crypto.randomUUID().replace(/-/g,'');
+   const record={id:latest.id,mount,role:latest.role,protocol:2,shared2CacheEpoch:cacheEpoch,shared2Scope:{...scope},
+    shared2InitialPull:latest.role==='owner'?undefined:cacheEpoch,
+    shared2ReconcileAuthority:latest.role==='owner',
+    shared2AuthorityEpoch:latest.authorityEpoch,shared2MembershipEpoch:latest.membershipEpoch,
+    shared2Generation:latest.generation,shared2Database:latest.database,shared2KeyEpoch:latest.keyEpoch};
+   folders.records.push(record);
+   try{await folders.save();}
+   catch(error){folders.records=folders.records.filter((item:any)=>item!==record);throw error;}
+   this.redraw();
+   void this.poll();
+   onMounted?.();
+  };
+  if(row.role==='owner'){
+   void select(row.documentRoot).catch(error=>new Notice(shared2Message(error)));
+   return;
+  }
   chooseSharedFolder(this.plugin.app,{
    title:'Подключить общую папку',description:'Выберите пустую локальную папку. Она будет связана с общей папкой владельца.',action:'Подключить',
    unavailable:(path:string)=>{try{validate(path);return '';}catch(error:any){return error.message;}},
-   select:async(mount:string)=>{
-    validate(mount);
-    if(folders.records.some((record:any)=>record.id===row.id))throw Error('Эта общая папка уже подключена к хранилищу');
-    const current=this.catalog?.folders.find((folder:any)=>folder.id===row.id);
-    if(this.context!==context||!this.canMount(current))throw Error(shared2Message('shared2-access-denied'));
-    row=current;
-    const cacheEpoch=crypto.randomUUID().replace(/-/g,'');
-    const record={id:row.id,mount,role:row.role,protocol:2,shared2CacheEpoch:cacheEpoch,shared2Scope:{...this.scope},
-     shared2InitialPull:row.role==='owner'?undefined:cacheEpoch,
-     shared2ReconcileAuthority:row.role==='owner',
-     shared2AuthorityEpoch:row.authorityEpoch,shared2MembershipEpoch:row.membershipEpoch,
-     shared2Generation:row.generation,shared2Database:row.database,shared2KeyEpoch:row.keyEpoch};
-    folders.records.push(record);
-    try{await folders.save();}
-    catch(error){folders.records=folders.records.filter((item:any)=>item!==record);throw error;}
-    this.redraw();
-    void this.poll();
-    onMounted?.();
-   },
+   select,
   });
  }
  async leave(row:any,record:any){await this.mutate('/shared2/folders/'+row.id+'/leave',{});const entry=this.entries.get(row.id);if(entry){await entry.controller.close();await entry.engine.close();this.entries.delete(row.id);}record.shared2Left=true;await this.plugin.folders.save();this.redraw();}

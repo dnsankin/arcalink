@@ -87,7 +87,9 @@ export class FolderRulesModal extends Modal {
           localControl.disabled=this.busy||!isRoot||!(canConnect||shared2.canSetLocalSync(record));
           cloudControl.disabled=true;
           let hint='Синхронизация управляется общей папкой выше.';
-          if(isRoot)hint=canConnect?'Папка в общем доступе. Отметьте зелёную галочку, чтобы выбрать локальную папку.'
+          if(isRoot)hint=canConnect?(row.role==='owner'
+            ?'Папка в общем доступе. Зелёная галочка подключит её по исходному пути.'
+            :'Папка в общем доступе. Отметьте зелёную галочку, чтобы выбрать локальную папку.')
             :enabled?'Папка в общем доступе':'Папка в общем доступе. Синхронизация на этом устройстве приостановлена.';
           description.setText(localizeMessage(hint));
           description.hidden=false;
