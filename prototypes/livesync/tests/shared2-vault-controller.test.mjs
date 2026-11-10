@@ -36,3 +36,33 @@ test('authority baseline never uploads pending local edits and durably indexes t
 
 test('authority baseline quarantines untracked local files before later uploads can resume',async()=>{const f=fixture();let allowed=false;f.options.canUpload=()=>allowed;const controller=createShared2VaultController(f.options);f.files.set('pending.md',bytes('old pending'));await controller.synchronize();assert.equal(f.files.has('pending.md'),false);assert.equal((await controller.ledger()).recovery[0].path,'pending.md');allowed=true;await controller.synchronize();assert.equal(f.writes.length,0);});
 test('failed durable backup index prevents replacement',async()=>{const f=fixture('viewer');f.files.set('a.md',bytes('keep'));f.remote.set('Team/a.md',{bytes:bytes('remote'),revision:'2-server',conflicts:[]});f.options.store.save=async()=>{throw Error('disk full');};const controller=createShared2VaultController(f.options);await assert.rejects(controller.synchronize(),/disk full/);await assert.rejects(controller.synchronize(),/disk full/);assert.equal(new TextDecoder().decode(f.files.get('a.md')),'keep');});
+
+test('an interrupted owner baseline reuses confirmed versions and still checks changed or unfinished files',async()=>{
+ const f=fixture('owner'),reads=[];
+ f.options.canUpload=()=>false;
+ for(const name of ['unchanged','local-edit','new-revision','unfinished']){
+  f.remote.set('Team/'+name,{bytes:bytes(name),revision:'1-server',conflicts:[]});
+ }
+ const stream=f.options.engine.stream.bind(f.options.engine);
+ let interrupted=true;
+ f.options.engine.stream=async function*(path){
+  reads.push(path);
+  if(interrupted&&path==='Team/unfinished')throw Error('interrupted');
+  yield* stream(path);
+ };
+ const first=createShared2VaultController(f.options);
+ await assert.rejects(first.synchronize(),/interrupted/);
+ await first.close();
+ f.files.set('local-edit',bytes('offline edit'));
+ f.remote.set('Team/new-revision',{bytes:bytes('updated on server'),revision:'2-server',conflicts:[]});
+ interrupted=false;
+ reads.length=0;
+ const resumed=createShared2VaultController(f.options);
+ await resumed.synchronize();
+ assert.deepEqual([...new Set(reads)],['Team/local-edit','Team/new-revision','Team/unfinished']);
+ assert.deepEqual(f.backups,[['local-edit',bytes('offline edit')]]);
+ assert.deepEqual(f.files.get('new-revision'),Buffer.from('updated on server'));
+ assert.equal(f.files.size,4);
+ assert.equal(f.writes.length,0);
+ await resumed.close();
+});

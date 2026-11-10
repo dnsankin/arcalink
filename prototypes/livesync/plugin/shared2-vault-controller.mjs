@@ -7,17 +7,22 @@ const fail=code=>Object.assign(Error(code),{code});
 export function createShared2VaultController({profile,engine,disk,store,checkLease,hashStream,canUpload=()=>true,onState=(_state)=>{}}){
  if(!profile?.folder||!engine||!disk||!store||typeof checkLease!=='function'||typeof hashStream!=='function')throw fail('shared2-vault-adapters-required');
  for(const method of ['list','fingerprint','blob','replace','remove','backup'])if(typeof disk[method]!=='function')throw fail('shared2-conditional-filesystem-required');
- let state,flight,closed=false,existingBaseline=false;
+ let state,savedFiles,flight,closed=false,existingBaseline=false;
  const scope=JSON.stringify([profile.account,profile.workspace,profile.folder,profile.generation,profile.cacheEpoch||null,profile.role]);
  async function healthy(){if(closed||await checkLease(profile)!==true)throw fail('shared2-vault-lease-rejected');}
- async function save(){await store.save(structuredClone(state));}
- async function load(){if(state)return;const saved=await store.load();if(saved&&(saved.scope!==scope||saved.protocol!==2||!saved.files||typeof saved.files!=='object'))throw fail('shared2-vault-ledger-scope-mismatch');existingBaseline=!!saved;state=saved||{protocol:2,scope,files:{}};}
+ async function save(){
+  const snapshot=structuredClone(state);
+  await store.save(snapshot);
+  savedFiles=snapshot.files;
+ }
+ async function load(){if(state)return;const saved=await store.load();if(saved&&(saved.scope!==scope||saved.protocol!==2||!saved.files||typeof saved.files!=='object'))throw fail('shared2-vault-ledger-scope-mismatch');existingBaseline=!!saved;savedFiles=saved?.files;state=saved?structuredClone(saved):{protocol:2,scope,files:{}};}
  async function preserve(path,hash){const backup=await disk.backup(path,hash);if(typeof backup!=='string'||!backup)throw fail('shared2-backup-location-required');state.recovery??=[];if(!state.recovery.some(item=>item.path===path&&item.hash===hash&&item.backup===backup)){state.recovery.push({path,hash,backup});}await save();}
  const oldFile=path=>Object.hasOwn(state.files,path)?state.files[path]:undefined;
  const remember=(path,value)=>Object.defineProperty(state.files,path,{value,writable:true,enumerable:true,configurable:true});
  const name=path=>{if(!safeRelative(path))throw fail('shared2-unsafe-vault-path');return profile.documentRoot+'/'+path;};
  async function run(){
   await healthy();await load();onState({state:'syncing'});
+  const previousChecks=profile.role==='owner'&&!canUpload()?savedFiles:undefined;
   const progress=(phase,done=0,total=0,path='')=>onState({state:'syncing',phase,done,total,path});
   // Capture local edits BEFORE pulling. Known ancestry produces a branch from
   // that revision; unknown ancestry produces an independent root, never a write
@@ -61,6 +66,10 @@ export function createShared2VaultController({profile,engine,disk,store,checkLea
    const path=file.path.slice(profile.documentRoot.length+1);name(path);
    if(file.conflicts.length){conflicts.push(path);continue;}
    const current=await disk.fingerprint(path),old=oldFile(path);
+   const verified=previousChecks&&Object.hasOwn(previousChecks,path)?previousChecks[path]:undefined;
+   // Reuse only a durably recorded revision whose local bytes still match.
+   if(verified?.revision&&verified.revision===file.revision&&verified.hash===current&&
+    (file.deleted?current===null:!!current))continue;
    if(file.deleted){
     if(current){await preserve(path,current);await healthy();await disk.remove(path,{expectedHash:current});}
     remember(path,{hash:null,revision:file.revision});await save();continue;

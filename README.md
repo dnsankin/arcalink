@@ -12,12 +12,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.40](https://github.com/dnsankin/arcalink/releases/tag/1.0.40)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
+Текущая версия: **[1.0.41](https://github.com/dnsankin/arcalink/releases/tag/1.0.41)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
 | Версия | Дата | Изменения |
 | --- | --- | --- |
+| [1.0.41](https://github.com/dnsankin/arcalink/releases/tag/1.0.41) | 10.11.2026 | После прерывания сверка общей папки на устройстве владельца пропускает повторное чтение версий, если файл на диске совпадает с подтверждённой версией. |
 | [1.0.40](https://github.com/dnsankin/arcalink/releases/tag/1.0.40) | 09.11.2026 | На другом устройстве владельца общая папка подключается по исходному пути. Если по этому пути уже есть файлы, подключение останавливается и сохраняет локальные версии. |
 | [1.0.39](https://github.com/dnsankin/arcalink/releases/tag/1.0.39) | 09.11.2026 | На новом устройстве зелёная галочка общей папки открывает выбор пустой локальной папки прямо из «Исключённых папок». После подключения галочка управляет синхронизацией на этом устройстве. |
 | [1.0.38](https://github.com/dnsankin/arcalink/releases/tag/1.0.38) | 09.11.2026 | При подключении общей папки к пустой папке участника LiveSync начинает загрузку сразу и продолжает её после прерывания. Индикатор показывает обмен общей папки отдельно от ожидания второго устройства в Free. |
@@ -168,12 +169,13 @@ The [Android companion](https://arcalink.ru/android) provides note and task-list
 
 ## Version history
 
-Current version: **[1.0.40](https://github.com/dnsankin/arcalink/releases/tag/1.0.40)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
+Current version: **[1.0.41](https://github.com/dnsankin/arcalink/releases/tag/1.0.41)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| [1.0.41](https://github.com/dnsankin/arcalink/releases/tag/1.0.41) | 2026-11-10 | After an interruption, the owner’s device skips rereading shared-folder revisions whose verified contents still match the file on disk. |
 | [1.0.40](https://github.com/dnsankin/arcalink/releases/tag/1.0.40) | 2026-11-09 | Shared folders connect at their original path on another device owned by the same account. If that path already contains files, connection stops and preserves the local versions. |
 | [1.0.39](https://github.com/dnsankin/arcalink/releases/tag/1.0.39) | 2026-11-09 | On a new device, the green checkbox in Folder exclusions opens the picker for an empty local folder. Once connected, the checkbox controls sync on that device. |
 | [1.0.38](https://github.com/dnsankin/arcalink/releases/tag/1.0.38) | 2026-11-09 | LiveSync starts downloading immediately when a member connects an empty folder and resumes after interruptions. The indicator shows shared-folder activity separately from the Free plan’s wait for a second device. |
