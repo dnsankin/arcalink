@@ -264,3 +264,54 @@ test('metadata polling wakes a live owner without awaiting startup or starting a
  f.manager.request=async path=>({status:200,json:path==='/shared2/catalog'?{protocol:2,account:'owner',revision:0,folders:[f.row]}:path==='/shared2/retention'?{folders:[]}:path==='/shared2/key-inbox'?{envelopes:[]}:{invitations:[]}});
  await f.manager.poll();await f.manager.poll();assert.equal(wakes,2);assert.equal(f.manager.busy,false);
 });
+test('binding snapshots retain detached local boundaries and never reactivate a missing intent',async()=>{
+ const f=setup(),row={...f.row,generation:1,database:oldDatabase,encrypted:false,keyEpoch:0,authorityEpoch:1},record=f.record;record.shared2Rekeying=false;
+ f.manager.catalog={capabilities:{workspaceBindings:1},folders:[row]};const b={account:scope.account,workspace:scope.workspace,folder:id,mount:'Team',state:'connected',revision:1,generation:1,authority_epoch:1,membership_epoch:1,accessible:1};let rows=[b];
+ f.manager.request=async()=>({status:200,json:{protocol:1,...scope,revision:1,complete:true,legacyUpgradeRequiredOnActivation:true,bindings:rows}});
+ await f.manager.refreshBindings();assert.equal(record.shared2BindingRevision,1);assert.equal(record.shared2BindingInactive,false);
+ rows=[{...b,state:'disconnected',revision:2}];await f.manager.refreshBindings();assert.equal(record.shared2BindingInactive,true);assert.equal(record.mount,'Team');assert.equal(f.plugin.folders.records.length,1);
+ rows=[];await f.manager.refreshBindings();assert.equal(record.shared2BindingInactive,true);
+});
+test('binding adoption persists an exclusion before inspecting storage and refuses occupied paths',async()=>{
+ const f=setup(),row={...f.row,generation:1,database:oldDatabase,encrypted:false,keyEpoch:0,authorityEpoch:1};f.plugin.folders.records=[];f.plugin.folders.validateMount=()=>{};
+ const b={account:scope.account,workspace:scope.workspace,folder:id,mount:'Team',state:'connected',revision:1,generation:1,authority_epoch:1,membership_epoch:1,accessible:1};
+ f.manager.catalog={capabilities:{workspaceBindings:1},folders:[row]};f.manager.request=async()=>({status:200,json:{protocol:1,...scope,revision:1,complete:true,legacyUpgradeRequiredOnActivation:true,bindings:[b]}});
+ f.plugin.app={vault:{adapter:{stat:async()=>({type:'folder'}),list:async(path)=>{assert.equal(f.plugin.folders.records[0].shared2BindingWaiting,true);return path===''?{files:[],folders:['Team']}:{files:['Team/file'],folders:[]};}}}};
+ await f.manager.refreshBindings();assert.equal(f.plugin.folders.records[0].shared2BindingInactive,true);assert.equal(f.plugin.folders.records[0].shared2BindingWaiting,true);assert.ok(f.manager.bindingConflicts.has(id));
+});
+test('connected intent creates an empty local mount using a fresh device epoch',async()=>{
+ const f=setup(),row={...f.row,generation:1,database:oldDatabase,encrypted:false,keyEpoch:0,authorityEpoch:1};f.plugin.folders.records=[];f.plugin.folders.validateMount=()=>{};
+ const b={account:scope.account,workspace:scope.workspace,folder:id,mount:'Team',state:'connected',revision:1,generation:1,authority_epoch:1,membership_epoch:1,accessible:1};f.manager.catalog={capabilities:{workspaceBindings:1},folders:[row]};f.manager.request=async()=>({status:200,json:{protocol:1,...scope,revision:1,complete:true,legacyUpgradeRequiredOnActivation:true,bindings:[b]}});
+ let exists=false;f.plugin.app={vault:{adapter:{exists:async()=>exists,mkdir:async()=>{exists=true;},stat:async()=>exists?{type:'folder'}:null,list:async path=>path===''?{files:[],folders:exists?['Team']:[]}:{files:[],folders:[]}}}};
+ await f.manager.refreshBindings();const record=f.plugin.folders.records[0];assert.equal(record.shared2BindingInactive,false);assert.equal(record.shared2BindingWaiting,false);assert.equal(record.shared2InitialPull,record.shared2CacheEpoch);assert.match(record.shared2CacheEpoch,/^[a-f0-9]{32}$/);
+});
+test('repeated polls cannot activate a path protected by another record',async()=>{
+ const f=setup(),row={...f.row,generation:1,database:oldDatabase,encrypted:false,keyEpoch:0,authorityEpoch:1},other={id:'f'.repeat(32),mount:'Other',shared2ProtectedMounts:['Team']};f.plugin.folders.records=[other];f.plugin.folders.validateMount=()=>{throw Error('protected');};
+ const b={account:scope.account,workspace:scope.workspace,folder:id,mount:'Team',state:'connected',revision:1,generation:1,authority_epoch:1,membership_epoch:1,accessible:1};f.manager.catalog={capabilities:{workspaceBindings:1},folders:[row]};f.manager.request=async()=>({status:200,json:{protocol:1,...scope,revision:1,complete:true,legacyUpgradeRequiredOnActivation:true,bindings:[b]}});f.plugin.app={vault:{adapter:{list:async()=>({files:[],folders:[]}),stat:async()=>null}}};
+ await f.manager.refreshBindings();await f.manager.refreshBindings();const waiting=f.plugin.folders.records.find(r=>r.id===id);assert.equal(waiting.shared2BindingWaiting,true);assert.equal(waiting.shared2BindingInactive,true);
+});
+test('a folder already bound in another scope is deferred without duplicate records',async()=>{
+ const f=setup(),row={...f.row,generation:1,database:oldDatabase,encrypted:false,keyEpoch:0,authorityEpoch:1};f.record.shared2Scope={account:'owner',workspace:'other'};const b={account:scope.account,workspace:scope.workspace,folder:id,mount:'New',state:'connected',revision:1,generation:1,authority_epoch:1,membership_epoch:1,accessible:1};f.manager.catalog={capabilities:{workspaceBindings:1},folders:[row]};f.manager.request=async()=>({status:200,json:{protocol:1,...scope,revision:1,complete:true,legacyUpgradeRequiredOnActivation:true,bindings:[b]}});
+ await f.manager.refreshBindings();assert.equal(f.plugin.folders.records.length,1);assert.deepEqual(f.record.shared2ProtectedMounts,['New']);assert.equal(f.manager.bindingConflicts.get(id),'shared2-other-workspace-active');
+});
+test('binding update rejects a record from a different workspace before sending',async()=>{
+ const f=setup();f.manager.catalog={folders:[f.row]};f.manager.bindings={...scope,bindings:[]};f.record.shared2Scope={account:'owner',workspace:'other'};let calls=0;f.manager.request=async()=>{calls++;throw Error('unexpected request');};
+ await assert.rejects(f.manager.updateBinding(f.row,f.record,'connected'),/account-changed/);assert.equal(calls,0);
+});
+test('stale folder dialog callbacks cannot modify an old workspace after switching',async()=>{
+ const f=setup();f.record.shared2Rekeying=false;const previousContext='old-context',previousScope=scope;f.manager.context='new-context';f.manager.scope={account:'owner',workspace:'new'};let writes=0,reads=0;f.plugin.folders.save=async()=>{writes++;};f.plugin.folders.validateMount=()=>{reads++;};
+ const before=JSON.stringify(f.record);
+ await assert.rejects(f.manager.acceptBindingPath(f.record,previousContext,previousScope),/account-changed/);
+ await assert.rejects(f.manager.chooseWaitingPath(f.record,'New',previousContext,previousScope),/account-changed/);
+ await assert.rejects(f.manager.relocateInitial(f.record,f.row,'New',previousContext,previousScope),/account-changed/);
+ assert.equal(JSON.stringify(f.record),before);assert.equal(writes,0);assert.equal(reads,0);
+});
+test('companion scope lease blocks every automatic adoption retry until explicitly allowed',async()=>{
+ const f=setup(),row={...f.row,generation:1,database:oldDatabase,encrypted:false,keyEpoch:0,authorityEpoch:1};f.plugin.folders.records=[];let blocked=true,leases=0,exists=false;
+ f.plugin.companionOwnership={assertSharedScopeChange(){if(blocked)throw Error('companion-blocked');},async sharedScopeMutation(action){this.assertSharedScopeChange();leases++;return action();}};
+ f.plugin.folders.validateMount=()=>f.plugin.companionOwnership.assertSharedScopeChange();
+ const b={account:scope.account,workspace:scope.workspace,folder:id,mount:'Team',state:'connected',revision:1,generation:1,authority_epoch:1,membership_epoch:1,accessible:1};f.manager.catalog={capabilities:{workspaceBindings:1},folders:[row]};f.manager.request=async()=>({status:200,json:{protocol:1,...scope,revision:1,complete:true,legacyUpgradeRequiredOnActivation:true,bindings:[b]}});
+ f.plugin.app={vault:{adapter:{exists:async()=>exists,mkdir:async()=>{exists=true;},stat:async()=>exists?{type:'folder'}:null,list:async path=>path===''?{files:[],folders:exists?['Team']:[]}:{files:[],folders:[]}}}};
+ await f.manager.refreshBindings();await f.manager.refreshBindings();assert.equal(f.plugin.folders.records[0].shared2BindingWaiting,true);assert.equal(exists,false);
+ blocked=false;await f.manager.refreshBindings();assert.equal(f.plugin.folders.records[0].shared2BindingWaiting,false);assert.equal(leases,1);
+});

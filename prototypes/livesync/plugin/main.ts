@@ -6,6 +6,7 @@ import {NotePublications} from './publication';
 import {CompanionBridge} from './companion-bridge';
 import {CompanionSync} from './companion-sync';
 import {CompanionOwnership} from './companion-ownership';
+import {CompanionActions} from './companion-actions';
 import {MobileAssistant} from './mobile-assistant';
 import {settingsState,settingsStateLabel,capabilityHint} from './settings-state.mjs';
 import {UnifiedVault} from './unified-vault';
@@ -15,7 +16,7 @@ import {isFreeRelayConnection as isFreeRelay} from './free-relay-settings.mjs';
 import LiveSync from './upstream-main';
 import {openObsidianSettings} from './common/obsidianSettings';
 import {VIEW_TYPE_LOG} from './modules/features/Log/LogPaneView';
-import { Notice, requestUrl, PluginSettingTab, Setting, Platform, setTooltip, setIcon } from 'obsidian';
+import { Modal, Notice, requestUrl, PluginSettingTab, Setting, Platform, setTooltip, setIcon } from 'obsidian';
 import {diagnosticMessage,parameterFailure} from './diagnostic.mjs';
 import {createSyncFeedback,syncLampState,syncUserMessages,createSyncActivityTracker} from './sync-feedback.mjs';
 import {requestPilot,responseData,responseError,connectionFailure} from './pilot-http.mjs';
@@ -34,6 +35,7 @@ import {FolderPolicies} from './folder-policies';
 import {renderFolderExclusions} from './folder-exclusions';
 import {localizeMessage,messageLanguage,messageInEnglish,setMessageLanguageSource,observeLocalizedUI,setStartupNoticeGate} from './localized-obsidian';
 import {createMobileSyncStatus} from './mobile-sync-status';
+import {mobileSyncState} from './mobile-sync-state.mjs';
 import {createStartupNoticeGate} from './startup-notices.mjs';
 import {renderLanguageSetting} from './language-settings';
 import {getStoragePathFromUXFileInfo} from '@vrtmrz/livesync-commonlib/compat/common/typeUtils';
@@ -98,7 +100,8 @@ export default class ArcaLinkPilot extends LiveSync {
   mobileSyncStatus: any;
   mobileAssistant=new MobileAssistant(this);
   companionOwnership=new CompanionOwnership(this);
-  openMobileSyncSettings(){this.pilotSettingsTab='sync';openObsidianSettings(this.app,this.manifest.id);}
+  companionActions=new CompanionActions(this);
+  openMobileSyncSettings(tab='sync'){this.pilotSettingsTab=tab;openObsidianSettings(this.app,this.manifest.id);}
   pilotSyncFeedback: any;
   startupSyncNotices: any;
   async startupSyncNoticeState(){
@@ -119,7 +122,8 @@ export default class ArcaLinkPilot extends LiveSync {
   // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Upstream still declares this supported Obsidian lifecycle hook as void.
   override async onload() {
     await this.localBackups.init();
-    await this.companionOwnership.load();
+    await this.companionOwnership.load({publish:false});
+    try{await this.companionOwnership.publishStartupCapabilities();}catch{/* Best-effort publication. */}
     this.companionOwnership.attachBeforeStart();
     this.startupSyncNotices=createStartupNoticeGate({enabled:Platform.isMobileApp,
       readState:()=>this.startupSyncNoticeState(),translate:messageInEnglish,
@@ -139,7 +143,6 @@ export default class ArcaLinkPilot extends LiveSync {
     this.register(()=>window.removeEventListener('arcalink-open-vault-controls',openVaultControls));
     this.app.workspace.onLayoutReady(()=>{for(const type of ['p2p-server-status','p2p-replicator'])for(const leaf of this.app.workspace.getLeavesOfType(type))leaf.detach();});
     const services = this.core.services;
-    this.app.workspace.onLayoutReady(()=>{void this.companionOwnership.tick();this.registerInterval(window.setInterval(()=>void this.companionOwnership.tick(),5000));});
     this.folderPolicies.attach();
     this.pilotSyncFeedback=createSyncFeedback({diagnose:()=>this.syncDiagnostic(),notify:(message:string)=>{Logger(message,LOG_LEVEL_INFO);return new Notice(message,10000);}});
     services.appLifecycle.getUnresolvedMessages.addHandler(async()=>[...this.pilotSyncFeedback.messages,...this.folders.syncFeedback.messages,...(this.shared2.enabled&&this.shared2.warning?[shared2Message(this.shared2.warning)]:[])]);
@@ -163,6 +166,8 @@ export default class ArcaLinkPilot extends LiveSync {
     this.app.workspace.onLayoutReady(()=>{void this.pilotStorageWarning.tick();this.registerInterval(window.setInterval(()=>void this.pilotStorageWarning.tick(),5*60*1000));});
     const companionBridge=new CompanionBridge(this);
     this.register(()=>companionBridge.dispose());
+    this.register(()=>this.companionActions.dispose());
+    this.app.workspace.onLayoutReady(()=>{void this.companionActions.tick();this.registerInterval(window.setInterval(()=>void this.companionActions.tick(),5000));});
     if(Platform.isAndroidApp){
       const companionSync=new CompanionSync(this);
       this.register(()=>companionSync.dispose());
@@ -187,6 +192,20 @@ export default class ArcaLinkPilot extends LiveSync {
     const refreshLamp=async()=>{
       if(lampBusy)return;lampBusy=true;
       try {
+        const maintenance=this.folderPolicies.maintenance;
+        const maintenanceFailed=!services.appLifecycle.isReady()&&!!this.folderPolicies.error;
+        if(maintenance||maintenanceFailed){
+          const reason=this.folderPolicies.maintenanceError;
+          const snapshot={maintenance,maintenanceFailed,errors:maintenanceFailed?
+            [this.folderPolicies.error+(reason?' ('+reason+')':'')]:[]};
+          const view=mobileSyncState(snapshot);
+          lamp.dataset.state=view.kind;
+          lamp.setText('●'+(maintenance?.done!=null?' '+maintenance.done.toLocaleString():''));
+          this.mobileSyncStatus?.update(snapshot);
+          const tooltip=[localizeMessage(view.label),...snapshot.errors].join('\n');
+          if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
+          return;
+        }
         const sharedErrors=this.shared2.errorMessages;
         const errors=[...(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean).map(String),...sharedErrors];
         const state=services.replicator.replicationStatics.value;
@@ -197,10 +216,11 @@ export default class ArcaLinkPilot extends LiveSync {
           const queue=entry.controller.displayBacklog;
           return {outgoing:sum.outgoing+queue.outgoing,incoming:sum.incoming+queue.incoming};
         },{outgoing:0,incoming:0});
-        const sharedStage=sharedProgress?({baseline:'Сверка исходных файлов',local:'Проверка локальных файлов',exchange:'Обмен общей папки',remote:'Проверка серверных версий'} as Record<string,string>)[sharedProgress.phase]:'';
+        const sharedStage=sharedProgress?({baseline:'Сверка исходных файлов',local:'Проверка локальных файлов',connection:'Подключение',exchange:'Загрузка в локальную базу',application:'Применение файлов',verification:'Проверка и догрузка изменений',remote:'Проверка серверных версий'} as Record<string,string>)[sharedProgress.phase]:'';
         const sharedCount=sharedProgress?.total?' '+sharedProgress.done+' / '+sharedProgress.total:
-          sharedBacklog.outgoing||sharedBacklog.incoming?' ↑ '+sharedBacklog.outgoing+' ↓ '+sharedBacklog.incoming:'';
+          sharedBacklog.outgoing||sharedBacklog.incoming?' '+localizeMessage('Ожидают отправки: события')+': '+sharedBacklog.outgoing+'; '+localizeMessage('Ожидают применения: записи базы')+': '+sharedBacklog.incoming:'';
         const sharedDetail=sharedStage?localizeMessage(sharedStage)+sharedCount+(sharedProgress.path?'\n'+sharedProgress.path:''):'';
+        const sharedMetrics=sharedEntries.filter(entry=>entry.metrics).map(entry=>{const m=entry.metrics;return [entry.mount,localizeMessage('Обработано тел ответов за сеанс: декодированные байты')+': '+m.bytes,localizeMessage('Средняя скорость обработки за сеанс: байт/с')+': '+(m.bytesPerSecond===null?localizeMessage('Ожидание'):Math.round(m.bytesPerSecond)),localizeMessage('Подтверждено применений файлов за сеанс')+': '+m.applied,localizeMessage('Последнее продвижение за сеанс')+': '+(m.lastProgress===null?localizeMessage('Ожидание'):new Date(m.lastProgress).toLocaleTimeString())].join(' · ');});
         lamp.setText('●'+sharedCount);
         const activity=syncActivity({sent:state.sent,arrived:state.arrived,counts:[services.replication.databaseQueueCount.value,services.replication.storageApplyingCount.value,services.replication.replicationResultCount.value,chunkFetchCounts.value.initial,this.folders.transferCount,this.shared2.activity]});
         const editor=this.app.workspace.containerEl.querySelector('.livesync-status');
@@ -216,7 +236,7 @@ export default class ArcaLinkPilot extends LiveSync {
           const personal=localizeMessage(offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':activity?'Синхронизация выполняется':'Free: второе устройство подключено; состояние передачи — в панели устройств');
           this.mobileSyncStatus?.update({free:true,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
           lamp.dataset.state=offline?'offline':sharedErrors.length?'error':sharedActive?'active':connected&&peers.length?(activity?'active':'ready'):'idle';
-          const tooltip=[!offline&&sharedActive&&(sharedDetail||localizeMessage('Обмен общей папки')+sharedCount),...sharedErrors.map(message=>localizeMessage(message)),sharedActive||sharedErrors.length?localizeMessage('Личное хранилище')+' · '+personal:personal].filter(Boolean).join('\n');
+          const tooltip=[!offline&&sharedActive&&(sharedDetail||localizeMessage('Обмен общей папки')+sharedCount),...sharedErrors.map(message=>localizeMessage(message)),...sharedMetrics,sharedActive||sharedErrors.length?localizeMessage('Личное хранилище')+' · '+personal:personal].filter(Boolean).join('\n');
           if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
           return;
         }
@@ -226,7 +246,7 @@ export default class ArcaLinkPilot extends LiveSync {
         this.mobileSyncStatus?.update({kind,status,offline,configured:settings.isConfigured,ready:services.appLifecycle.isReady(),paused,automaticOff,sent:state.sent,arrived:state.arrived,errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
         const label=kind==='idle'&&paused?'Синхронизация приостановлена':kind==='idle'&&automaticOff?'Автоматическая синхронизация выключена':{error:'Ошибка синхронизации',offline:'Нет подключения к интернету',ready:'Синхронизация подключена',active:'Синхронизация выполняется',idle:'Синхронизация ожидает'}[kind];
         // setTooltip owns aria-label; resetting it would erase the detailed hover text.
-        const tooltip=[label,summary,sharedDetail,...syncUserMessages([...errors,lastMessage].filter(Boolean),this.folders.syncFeedback.messages)].filter(Boolean).map(localizeMessage).join('\n');if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
+        const tooltip=[label,localizeMessage('Передано за сеанс: записи базы')+': ↑ '+state.sent+' ↓ '+state.arrived,summary,sharedDetail,...sharedMetrics,...syncUserMessages([...errors,lastMessage].filter(Boolean),this.folders.syncFeedback.messages)].filter(Boolean).map(localizeMessage).join('\n');if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
       } catch {this.mobileSyncStatus?.update({ready:false,configured:true});lamp.dataset.state='idle';setTooltip(lamp,localizeMessage('Синхронизация запускается'),{placement:'top'});}
       finally {lampBusy=false;}
     };
@@ -236,7 +256,7 @@ export default class ArcaLinkPilot extends LiveSync {
     (services.API as any).pilotReportParameterFailure=(message:string,prominent:boolean)=>this.pilotSyncFeedback.report(message,prominent);
     // Report before the engine's unattended recovery handler stops the chain.
     services.replication.onReplicationFailed.addHandler(async()=>{await this.pilotSyncFeedback.failed();return true;},-10);
-    services.vault.isTargetFile.addHandler(async file=>!reserved(getStoragePathFromUXFileInfo(file))&&!this.folders.contains(getStoragePathFromUXFileInfo(file)),0);
+    services.vault.isTargetFile.addHandler(async file=>{await this.folders.loadRegistry();return !reserved(getStoragePathFromUXFileInfo(file))&&!this.folders.contains(getStoragePathFromUXFileInfo(file));},0);
     this.collaboration=new CollaborativeNotes(this);
     services.replication.onBeforeReplicate.addHandler(async()=>pluginEnvironment(this.manifest).lab||isFreeRelay(services.setting.currentSettings())?true:this.folders.refreshBeforeSync(),0);
     services.appLifecycle.onLoaded.addHandler(async()=>{await this.initializeCloudFeatures();return true;},500);
@@ -464,7 +484,26 @@ class PilotTab extends PluginSettingTab {
       try{if(value&&(this.pilot.workspaces.busy||await this.pilot.workspaces.pendingMerge())){new Notice('Сначала завершите слияние хранилищ');this.renderInto(el);return;}await this.pilot.core.services.setting.applyPartial({liveSync:value,syncOnSave:value,syncOnStart:value} as any,true);await this.pilot.core.services.control.applySettings();}
       catch{new Notice('Не удалось изменить режим синхронизации. Проверьте подключение и повторите попытку.');this.renderInto(el);}
     }));
-    new Setting(panels.sync).setName('Фоновый режим на Android').setDesc('При выключении экрана или сворачивании Obsidian синхронизация может приостановиться. Разрешение работы в фоне не гарантирует непрерывную передачу. При первой синхронизации и отправке крупных файлов держите Obsidian открытым и экран включённым до завершения передачи.');
+    if(Platform.isAndroidApp){
+      const local=this.pilot.core.services.setting;
+      const key='arcalink-android-background-sync';
+      const allowed=local.getSmallConfig(key)==='allowed';
+      new Setting(panels.sync).setName('Фоновый режим на Android')
+        .setDesc(allowed?'Плагину разрешено продолжать обмен после сворачивания Obsidian. Android может остановить приложение.':
+          'Разрешите плагину продолжать обмен после сворачивания Obsidian. Разрешение действует только в этом хранилище на этом устройстве.')
+        .addButton(button=>button.setButtonText(allowed?'Отключить':'Разрешить работу в фоне').onClick(()=>{
+          if(allowed){local.deleteSmallConfig(key);this.renderInto(el);return;}
+          const consent=new Modal(this.pilot.app);
+          consent.titleEl.setText(localizeMessage('Разрешить работу в фоне'));
+          consent.contentEl.createEl('p',{text:localizeMessage('Плагин сможет продолжать автоматическую синхронизацию, пока Obsidian работает в фоне. Это может расходовать заряд и мобильный трафик.')});
+          consent.contentEl.createEl('p',{text:localizeMessage('В настройках Android откройте «Приложения → Obsidian → Батарея» и разрешите работу в фоне. Если Android остановит Obsidian, обмен продолжится после открытия приложения.')});
+          new Setting(consent.contentEl).addButton(confirm=>confirm.setCta().setButtonText(localizeMessage('Разрешить')).onClick(()=>{
+            local.setSmallConfig(key,'allowed');
+            consent.close();this.renderInto(el);
+          }));
+          consent.open();
+        }));
+    }
     const fileSizeLimit=settings.syncMaxSizeInMB;
     new Setting(panels.sync).setName('Размер синхронизируемого файла').setDesc(
       Number.isFinite(fileSizeLimit)&&fileSizeLimit>0

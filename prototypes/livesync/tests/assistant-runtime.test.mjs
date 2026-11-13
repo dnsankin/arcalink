@@ -113,6 +113,16 @@ test('shared exchange status is not replaced by a targeted server journal poll',
  const e=environment();await e.assistant.start(null,release,workspace);await e.assistant.poll();
  assert.equal(e.assistant.state,'exchange-ready');assert.equal(e.calls.length,0);e.assistant.dispose();
 });
+test('preparation drains an admitted delivery poll and postpones new polls until preparation ends',async()=>{
+ const e=environment(),pending=defer(),started=defer();let calls=0;
+ e.plugin.companionOwnership={defersAssistantPoll:false};
+ e.plugin.folderPolicies.bindingId=async()=>{calls++;started.resolve();await pending.promise;return workspace;};
+ const first=e.assistant.poll();await started.promise;assert.equal(e.assistant.isBusy(),true);
+ e.plugin.companionOwnership.defersAssistantPoll=true;
+ pending.resolve();await first;assert.equal(e.assistant.isBusy(),false);
+ await e.assistant.poll();assert.equal(calls,1);
+ e.plugin.companionOwnership.defersAssistantPoll=false;await e.assistant.poll();assert.equal(calls,2);e.assistant.dispose();
+});
 test('invalid metadata never opens exchange confirmation or downloads an APK',async()=>{
  const e=environment();globalThis.fetch=async()=>new Response(JSON.stringify({...release,url:'https://evil.invalid/app.apk'}));
  await e.assistant.prepare();assert.equal(globalThis.__assistantDialogs.length,0);assert.match(e.assistant.message,/не прошли проверку/);assert.equal(e.writes,0);e.assistant.dispose();

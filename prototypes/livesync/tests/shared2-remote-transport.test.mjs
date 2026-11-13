@@ -67,3 +67,44 @@ test('alias shared transport permits only its two shared sides and binds every f
  for(const side of ['sharedSource','shared']){const x=fixture({gatewayPath:'/shared2/alias-namespaces/'+'d'.repeat(32)+'/'+side+'/couch/'});await x.transport.fetch(x.transport.url);assert.equal(x.checks(),1);await x.transport.close();}
  for(const side of ['source','private','target'])assert.throws(()=>fixture({gatewayPath:'/shared2/alias-namespaces/'+'d'.repeat(32)+'/'+side+'/couch/'}));
 });
+test('managed ordinary gateway binds workspace and revision on every request',async()=>{
+ const x=fixture({profile:{...profile,bindingRevision:4}});
+ await x.transport.fetch(x.transport.url,{headers:{'X-ArcaLink-Workspace':'foreign','X-ArcaLink-Binding-Revision':'999'}});
+ assert.equal(x.calls[0].options.headers.get('X-ArcaLink-Workspace'),'work');assert.equal(x.calls[0].options.headers.get('X-ArcaLink-Binding-Revision'),'4');await x.transport.close();
+});
+test('per-open response observer receives status without changing transport semantics',async()=>{
+ let statuses=[];const x=fixture({onResponse:(status,path)=>{statuses.push([status,path]);throw Error('observer');},fetch:async()=>new Response('{}',{status:413})});
+ const response=await x.transport.fetch(x.transport.url);assert.equal(response.status,413);assert.deepEqual(statuses,[[413,new URL(x.transport.url).pathname]]);await x.transport.close();
+});
+test('request failures notify the observer without altering their original error',async()=>{
+ const original=Error('synthetic fetch failure'),observed=[];const x=fixture({fetch:async()=>{throw original;},onError:error=>{observed.push(error);throw Error('ignored observer failure');}});
+ await assert.rejects(x.transport.fetch(x.transport.url),error=>error===original);assert.deepEqual(observed,[original]);await x.transport.close();
+});
+test('only the exact same-origin parent GET is identified as the Pouch identity probe',async()=>{
+ const seen=[],x=fixture({onError:(_error,detail)=>seen.push(detail)});
+ for(const [url,options] of [['https://stand.invalid/shared2/couch/',{}],['https://stand.invalid/shared2/couch/?x=1',{}],['https://stand.invalid/shared2/couch/',{method:'POST'}],['https://other.invalid/shared2/couch/',{}]])await assert.rejects(x.transport.fetch(url,options));
+ assert.deepEqual(seen.map(item=>item.identityProbe),[true,false,false,false]);await x.transport.close();
+});
+test('response bodies are owned until EOF; close aborts an in-flight streamed body',async()=>{
+ const http=await import('node:http'),server=http.createServer((req,res)=>{res.writeHead(200,{'Content-Type':'application/json','X-Test':'ok'});res.flushHeaders();res.write('{"value":');globalThis.__releaseSharedBody=()=>res.end('"done"}');});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));let bytes=0;
+ const x=fixture({origin:'http://127.0.0.1:'+server.address().port,allowLocalTest:true,onBytes:n=>bytes+=n,fetch:globalThis.fetch});
+ try{
+  const response=await x.transport.fetch(x.transport.url+'/file');assert.equal(response.status,200);assert.equal(response.headers.get('x-test'),'ok');assert.equal(response.url,x.transport.url+'/file');
+  const result=response.json();await new Promise(resolve=>setTimeout(resolve,30));assert.ok(bytes>0);const before=bytes;
+  const rejected=assert.rejects(result);await x.transport.close();await rejected;globalThis.__releaseSharedBody();await new Promise(resolve=>setTimeout(resolve,30));assert.equal(bytes,before);
+ }finally{await x.transport.close();await new Promise(resolve=>server.close(resolve));delete globalThis.__releaseSharedBody;}
+});
+test('response chunk counters only include consumed bytes and external abort remains active after headers',async()=>{
+ let produced=0,bytes=0,errors=[];const source=new ReadableStream({pull(controller){produced++;controller.enqueue(new Uint8Array([1,2,3]));}},{highWaterMark:0});
+ const x=fixture({onBytes:n=>bytes+=n,onError:(_error,detail)=>errors.push(detail),fetch:async()=>new Response(source)}),abort=new AbortController();const response=await x.transport.fetch(x.transport.url,{signal:abort.signal});
+ assert.equal(produced,0);assert.equal(bytes,0);const reader=response.body.getReader();assert.deepEqual((await reader.read()).value,new Uint8Array([1,2,3]));assert.equal(bytes,3);abort.abort();await assert.rejects(reader.read());assert.equal(errors.length,1);assert.equal(errors[0].externalAborted,true);assert.equal(errors[0].closed,false);await x.transport.close();
+});
+test('cancel failure is retained and close rejects even after external abort',async()=>{
+ const failure=Error('cancel failed'),abort=new AbortController(),source=new ReadableStream({cancel(){throw failure;}},{highWaterMark:0});
+ const x=fixture({fetch:async()=>new Response(source)}),response=await x.transport.fetch(x.transport.url,{signal:abort.signal});const reader=response.body.getReader(),pending=reader.read();abort.abort();await assert.rejects(pending);await assert.rejects(x.transport.close(),error=>error===failure);
+});
+test('hanging cancellation remains owned after read settles and close fails within bound',async()=>{
+ const abort=new AbortController(),source=new ReadableStream({cancel(){return new Promise(()=>{});}},{highWaterMark:0});
+ const x=fixture({fetch:async()=>new Response(source)}),response=await x.transport.fetch(x.transport.url,{signal:abort.signal});const reader=response.body.getReader(),pending=reader.read();abort.abort();await assert.rejects(pending);await assert.rejects(x.transport.close(),/close-timeout/);
+});

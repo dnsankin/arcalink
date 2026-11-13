@@ -5,6 +5,10 @@ const error=code=>Object.assign(Error(code),{code});
 const sequence=value=>JSON.stringify(value);
 const isChunk=id=>id.startsWith('h:');
 const isSelected=(path,folders,caseSensitive)=>!path.startsWith('i:')&&folders.some(folder=>folderContains(folder,path,caseSensitive));
+/** @typedef {{phase:string, done?:number}} CleanupProgress */
+/** @typedef {{identity:string, phase:string, since:number|string, done:number, count:number}} CleanupCheckpoint */
+/** @param {CleanupProgress} _progress */
+const ignoreProgress=_progress=>{};
 
 /** Same canonical UTF-16 ordering / ASCII JSON as the server manifest. */
 export async function cleanupManifestDigest(ids) {
@@ -38,10 +42,11 @@ export function cleanupEntry(doc) {
  * leaves. The caller supplies a paused database; a concurrent write invalidates
  * this snapshot. No filesystem operations or database mutations occur here.
  */
-export async function inspectCleanupDatabase(db,{decode=async doc=>doc,pageSize=128}={}) {
+export async function inspectCleanupDatabase(db,{decode=async doc=>doc,pageSize=128,onProgress=ignoreProgress,isCurrent=async()=>true}={}) {
   if(!Number.isInteger(pageSize)||pageSize<1||pageSize>1000)throw error('invalid-page-size');
   const before=await db.info(),entries=[];
-  let since=0;
+  let since=0,done=0;
+  onProgress({phase:'inventory',done});
   while(true){
     const page=await db.changes({since,limit:pageSize,style:'all_docs',return_docs:true});
     for(const change of page.results){
@@ -65,6 +70,9 @@ export async function inspectCleanupDatabase(db,{decode=async doc=>doc,pageSize=
     if(!page.results.length)break;
     if(sequence(page.last_seq)===sequence(since))throw error('non-advancing-snapshot');
     since=page.last_seq;
+    done+=page.results.length;
+    if(!await isCurrent())throw error('database-changed');
+    onProgress({phase:'inventory',done});
   }
   const after=await db.info();
   if(sequence(before.update_seq)!==sequence(after.update_seq))throw error('database-changed');
@@ -107,13 +115,30 @@ const stable=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='objec
   ?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 
 /** Verify every retained leaf body/conflict/tombstone, including chunk bytes. */
-export async function verifyCleanupSnapshot(source,target,plan,{isCurrent=async()=>true,pageSize=128}={}) {
+export async function verifyCleanupSnapshot(source,target,plan,{isCurrent=async()=>true,pageSize=128,onProgress=ignoreProgress,
+  checkpoint=/** @type {CleanupCheckpoint|null} */(null),saveCheckpoint=/** @type {((value:CleanupCheckpoint)=>Promise<void>)|null} */(null)}={}) {
   if(!Number.isInteger(pageSize)||pageSize<1||pageSize>1000)throw error('invalid-page-size');
-  if(source===target||await source.id()===await target.id())throw error('target-is-source');
+  const sourceId=await source.id(),targetId=await target.id();
+  if(source===target||sourceId===targetId)throw error('target-is-source');
   const removed=new Set([...plan.removeFiles,...plan.removeChunks]);
-  const targetBefore=await target.info();let count=0;
-  for(const [database,checkBody] of [[source,true],[target,false]]){
-    let since=0;
+  const targetBefore=await target.info();
+  const assertCurrent=async()=>{
+    if(!await isCurrent()||sequence((await source.info()).update_seq)!==sequence(plan.sequence)
+      ||sequence((await target.info()).update_seq)!==sequence(targetBefore.update_seq))throw error('database-changed');
+  };
+  const identity=saveCheckpoint&&JSON.stringify([sourceId,targetId,plan.sequence,targetBefore.update_seq,
+    await cleanupManifestDigest([...removed])]);
+  const resume=identity&&checkpoint?.identity===identity&&['source','target'].includes(checkpoint.phase)
+    &&(typeof checkpoint.since==='string'&&checkpoint.since.length>0||Number.isSafeInteger(checkpoint.since)&&checkpoint.since>=0)
+    &&Number.isSafeInteger(checkpoint.done)&&checkpoint.done>=0&&Number.isSafeInteger(checkpoint.count)&&checkpoint.count>=0;
+  let count=resume?checkpoint.count:0;
+  await assertCurrent();
+  for(const [database,phase] of [[source,'source'],[target,'target']]){
+    const checkBody=phase==='source';
+    if(resume&&checkpoint.phase==='target'&&checkBody)continue;
+    const start=resume&&checkpoint.phase===phase?checkpoint:null;
+    let since=start?.since??0,done=start?.done??0,saved=done;
+    onProgress({phase,done});
     while(true){
       const page=await database.changes({since,limit:pageSize,style:'all_docs',return_docs:true});
       for(const row of page.results){
@@ -134,10 +159,21 @@ export async function verifyCleanupSnapshot(source,target,plan,{isCurrent=async(
       if(!page.results.length)break;
       if(sequence(page.last_seq)===sequence(since))throw error('non-advancing-snapshot');
       since=page.last_seq;
+      done+=page.results.length;
+      if(!await isCurrent())throw error('database-changed');
+      onProgress({phase,done});
+      if(saveCheckpoint&&done-saved>=1024){
+        await assertCurrent();
+        await saveCheckpoint({identity,phase,since,done,count});
+        saved=done;
+      }
+    }
+    if(saveCheckpoint&&checkBody){
+      await assertCurrent();
+      await saveCheckpoint({identity,phase:'target',since:0,done:0,count});
     }
   }
-  if(!await isCurrent()||sequence((await source.info()).update_seq)!==sequence(plan.sequence)
-    ||sequence((await target.info()).update_seq)!==sequence(targetBefore.update_seq))throw error('database-changed');
+  await assertCurrent();
   return {verified_revisions:count,target_sequence:targetBefore.update_seq};
 }
 
@@ -146,7 +182,7 @@ export async function verifyCleanupSnapshot(source,target,plan,{isCurrent=async(
  * or emit tombstones. Publication/switching belongs to the authoritative server
  * transaction; this function deliberately cannot make a staging DB live.
  */
-export async function copyCleanupSnapshot(source,target,plan,{isCurrent=async()=>true}={}) {
+export async function copyCleanupSnapshot(source,target,plan,{isCurrent=async()=>true,onProgress=ignoreProgress}={}) {
   if(source===target||await source.id()===await target.id())throw error('target-is-source');
   const assertCurrent=async()=>{
     if(!await isCurrent()||sequence((await source.info()).update_seq)!==sequence(plan.sequence))throw error('database-changed');
@@ -154,10 +190,14 @@ export async function copyCleanupSnapshot(source,target,plan,{isCurrent=async()=
   await assertCurrent();
   if((await target.info()).doc_count!==0||(await target.changes({since:0,limit:1})).results.length)throw error('target-not-empty');
   const removed=new Set([...plan.removeFiles,...plan.removeChunks]);
-  const result=await source.replicate.to(target,{filter:doc=>!removed.has(doc._id),live:false,retry:false});
+  onProgress({phase:'copy',done:0});
+  const copying=source.replicate.to(target,{filter:doc=>!removed.has(doc._id),live:false,retry:false});
+  // PouchDB reports cumulative successfully written revisions for this copy.
+  copying.on?.('change',change=>onProgress({phase:'copy',done:change.docs_written??0}));
+  const result=await copying;
   if(result.errors?.length||result.doc_write_failures||result.status!=='complete')throw error('copy-failed');
   await assertCurrent();
   const copied=await target.allDocs({keys:[...removed]});
   if(copied.rows.some(row=>!row.error))throw error('excluded-data-in-target');
-  return {...result,...await verifyCleanupSnapshot(source,target,plan,{isCurrent})};
+  return {...result,...await verifyCleanupSnapshot(source,target,plan,{isCurrent,onProgress})};
 }

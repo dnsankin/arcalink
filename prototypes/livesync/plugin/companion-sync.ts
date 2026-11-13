@@ -12,7 +12,7 @@ export class CompanionSync {
  }
  private eligible(){
   const p=this.plugin,s=p.core.services.setting.currentSettings(),lifecycle=p.core.services.appLifecycle;
-  return !this.disposed&&s.isConfigured&&navigator.onLine&&lifecycle.isReady()&&!lifecycle.isSuspended()&&!p.workspaces?.busy;
+  return !this.disposed&&!!s?.isConfigured&&navigator.onLine&&lifecycle.isReady()&&!lifecycle.isSuspended()&&!p.workspaces?.busy;
  }
  private async read(name:string){
   const adapter=this.plugin.app.vault.adapter,path=this.plugin.pilotDirectory+'/companion/'+name;

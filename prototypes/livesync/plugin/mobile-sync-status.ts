@@ -30,7 +30,7 @@ export function createMobileSyncStatus(pilot:any){
   if(disposed)return;
   const state=model();button.dataset.state=state.kind;
   const text=localizeMessage(state.label);if(label.textContent!==text)label.setText(text);
-  counters.setText(state.counters?'↑ '+state.counters.sent+'  ↓ '+state.counters.arrived:'');
+  counters.setText(state.maintenance?.done!=null?state.maintenance.done.toLocaleString():state.counters?'↑ '+state.counters.sent+'  ↓ '+state.counters.arrived:'');
   button.setAttribute('aria-label','ArcaLink: '+text+'. '+localizeMessage('Открыть статус синхронизации'));
   button.title=localizeMessage('Открыть статус синхронизации');
   mount();dialog?.render();
@@ -41,14 +41,17 @@ export function createMobileSyncStatus(pilot:any){
    this.titleEl.setText(localizeMessage('Статус синхронизации'));
    this.status=this.contentEl.createEl('h3',{attr:{'aria-live':'polite'}});
    this.description=this.contentEl.createEl('p');this.counts=this.contentEl.createEl('p');this.hint=this.contentEl.createEl('p');this.reason=this.contentEl.createEl('p');
-   new Setting(this.contentEl).addButton(b=>b.setButtonText('Настройки синхронизации').onClick(()=>{this.close();pilot.pilotSettingsTab='sync';pilot.openMobileSyncSettings();}));
+   new Setting(this.contentEl).addButton(b=>b.setButtonText('Настройки синхронизации').onClick(()=>{this.close();pilot.openMobileSyncSettings(snapshot.companion?'assistant':'sync');}));
    this.render();
   }
   render(){
    const state=model(),status=localizeMessage(state.label);if(this.status.textContent!==status)this.status.setText(status);this.description.setText(localizeMessage(state.detail));
-   this.counts.hidden=!state.counters;this.hint.hidden=!state.counters;
-   this.counts.setText(state.counters?localizeMessage('Передача за сеанс')+': ↑ '+state.counters.sent+'  ↓ '+state.counters.arrived:'');
-   this.hint.setText(localizeMessage('Это счётчики обмена данными, а не количество полностью синхронизированных файлов.'));
+   const progress=state.maintenance;
+   this.counts.hidden=!state.counters&&progress?.done==null;this.hint.hidden=!state.counters&&!progress;
+   this.counts.setText(progress?.done!=null?localizeMessage('Обработано записей на этом этапе')+': '+progress.done.toLocaleString():
+    state.counters?localizeMessage('Передано за сеанс: записи базы')+': ↑ '+state.counters.sent+'  ↓ '+state.counters.arrived:'');
+   this.hint.setText(progress?localizeMessage('Последнее продвижение за сеанс')+': '+new Date(progress.lastProgress).toLocaleTimeString():
+    localizeMessage('Это счётчики обмена данными, а не количество полностью синхронизированных файлов.'));
    this.reason.setText(state.kind==='error'?[...new Set<string>((snapshot.errors||[]).map((value:any)=>readable(String(value))))].slice(0,2).join('\n'):'');
    this.reason.hidden=!this.reason.textContent;
   }

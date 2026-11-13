@@ -2,6 +2,8 @@ import {inspectCleanupDatabase,planFolderCleanup,copyCleanupSnapshot,verifyClean
 import {checkedFolderPolicy} from './folder-policy.mjs';
 const failure=code=>Object.assign(Error(code),{code});
 const same=(left,right)=>JSON.stringify(left)===JSON.stringify(right);
+/** @param {import('./folder-cleanup.mjs').CleanupProgress} _progress */
+const ignoreProgress=_progress=>{};
 async function closeDatabases(databases,failed) {
   const results=await Promise.allSettled(databases.filter(Boolean).map(database=>database.close()));
   if(!failed){const rejected=results.find(result=>result.status==='rejected');if(rejected)throw rejected.reason;}
@@ -55,7 +57,7 @@ export function installFolderDatabaseResolver(database,readBinding) {
  * generation, persist a resumable preparation journal, never activate or delete
  * the source here. open() is the ORIGINAL factory (not the resolver).
  */
-export async function prepareFolderDatabase({state,logical,source:sourceName,journal,open,persistJournal,quiesce,isCurrent,isMapped,decode=async doc=>doc}) {
+export async function prepareFolderDatabase({state,logical,source:sourceName,journal,open,persistJournal,quiesce,isCurrent,isMapped,decode=async doc=>doc,onProgress=ignoreProgress}) {
   const key=stateKey(state,logical);
   if(!localName(sourceName,logical)||typeof open!=='function'||typeof persistJournal!=='function'
     ||typeof quiesce!=='function'||typeof isCurrent!=='function'||typeof isMapped!=='function')throw failure('invalid-local-preparation');
@@ -63,7 +65,7 @@ export async function prepareFolderDatabase({state,logical,source:sourceName,jou
   if(journal)checkedJournal(journal,key,logical,sourceName);
   const source=open(sourceName,{auto_compaction:false});let target,failed=false;
   try{
-    const snapshot=await inspectCleanupDatabase(source,{decode});
+    const snapshot=await inspectCleanupDatabase(source,{decode,isCurrent,onProgress});
     const plan=planFolderCleanup(snapshot,state.policy.folders,{caseSensitive:state.policy.caseSensitive,
       allowEmpty:true,allowMissingKeptChunks:true});
     const manifest=await cleanupManifestDigest([...plan.removeFiles,...plan.removeChunks]);
@@ -85,13 +87,13 @@ export async function prepareFolderDatabase({state,logical,source:sourceName,jou
         if(await isMapped(journal.target)||!await isCurrent())throw failure('preparation-target-is-active');
         await target.destroy();target=open(journal.target,stagingOptions());
       }
-      const result=await copyCleanupSnapshot(source,target,plan,{isCurrent});
+      const result=await copyCleanupSnapshot(source,target,plan,{isCurrent,onProgress});
       journal={...journal,phase:'prepared',targetSequence:result.target_sequence,verifiedRevisions:result.verified_revisions};
       if(!await isCurrent())throw failure('policy-changed');
       await persistJournal(journal);
     }else{
       if(!same((await target.info()).update_seq,journal.targetSequence))throw failure('prepared-target-changed');
-      await verifyCleanupSnapshot(source,target,plan,{isCurrent});
+      await verifyCleanupSnapshot(source,target,plan,{isCurrent,onProgress});
     }
     return journal;
   }catch(error){failed=true;throw error;}finally{await closeDatabases([target,source],failed);}
@@ -116,7 +118,9 @@ export async function activatePreparedFolderDatabase({state,journal,open,persist
 }
 
 /** Never retire an old cache before a matching successful server acknowledgement. */
-export async function retirePreparedFolderDatabase({journal,binding,acknowledgement,retirement,open,persistRetirement,isCurrent,isMapped,isQuiescent,decode=async doc=>doc}) {
+export async function retirePreparedFolderDatabase({journal,binding,acknowledgement,retirement,open,persistRetirement,isCurrent,isMapped,isQuiescent,decode=async doc=>doc,
+  onProgress=ignoreProgress,checkpoint=/** @type {import('./folder-cleanup.mjs').CleanupCheckpoint|null} */(null),
+  saveCheckpoint=/** @type {((value:import('./folder-cleanup.mjs').CleanupCheckpoint)=>Promise<void>)|null} */(null)}) {
   if(!journal||!binding||binding.protocol!==1||journal.phase!=='prepared'||binding.database!==journal.database||binding.key!==journal.key||binding.target!==journal.target
     ||binding.logical!==journal.logical||binding.revision!==journal.revision||binding.workspace!==journal.workspace
     ||!acknowledgement||acknowledgement.revision!==journal.revision||acknowledgement.workspace!==journal.workspace
@@ -141,13 +145,14 @@ export async function retirePreparedFolderDatabase({journal,binding,acknowledgem
     const alreadyRemoved=retirement?.phase==='retiring'&&info.update_seq===0&&info.doc_count===0;
     if(!alreadyRemoved){
       if(!same(info.update_seq,journal.sequence))throw failure('local-source-changed');
-      const snapshot=await inspectCleanupDatabase(source,{decode});
+      const snapshot=await inspectCleanupDatabase(source,{decode,isCurrent,onProgress});
       const plan=planFolderCleanup(snapshot,state.policy.folders,{caseSensitive:state.policy.caseSensitive,allowEmpty:true,allowMissingKeptChunks:true});
       if(await cleanupManifestDigest([...plan.removeFiles,...plan.removeChunks])!==journal.manifest)throw failure('local-source-changed');
-      await verifyCleanupSnapshot(source,target,plan,{isCurrent});
+      await verifyCleanupSnapshot(source,target,plan,{isCurrent,onProgress,checkpoint,saveCheckpoint});
     }
     // This durable proof distinguishes a previously destroyed database from a
     // source unexpectedly emptied before retirement was ever authorised.
+    onProgress({phase:'finish'});
     await persistRetirement({...record,phase:'retiring'});
     await assertQuiescent();
     await source.destroy();destroyed=true;

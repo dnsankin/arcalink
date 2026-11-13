@@ -11,6 +11,8 @@ import { patchConfigDoctor } from './patch-config-doctor.mjs';
 import { patchSettingsRegistration } from './patch-settings-registration.mjs';
 import { patchPouchNextTick } from './patch-replication.mjs';
 import { prepareUnitTests } from './prepare-plugin-unit-tests.mjs';
+import {packMessageCatalog} from './packed-message-catalog.mjs';
+import {createRequire} from 'node:module';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const communityRelease = process.env.ARCALINK_RELEASE_CHANNEL === 'community';
@@ -32,6 +34,22 @@ if (hash !== upstream.archiveSha256) throw new Error('Upstream archive SHA-256 m
 await rm(source, { recursive: true, force: true });
 await mkdir(source, { recursive: true });
 execFileSync('tar', ['-xzf', archive, '-C', source, '--strip-components=1']);
+const visibilityPath=path.join(source,'src/modules/essentialObsidian/ModuleObsidianEvents.ts');
+const visibilitySource=await readFile(visibilityPath,'utf8');
+const visibilityImport='import type { TFile } from "@/deps.ts";';
+const backgroundGuard=`            this.settings.keepReplicationActiveInBackground &&
+            (this.settings.liveSync || this.settings.periodicReplication) &&
+            !this.services.API.isMobile()`;
+for(const marker of [visibilityImport,backgroundGuard]){
+  if(visibilitySource.split(marker).length!==2)throw Error('Unexpected background replication boundary');
+}
+await writeFile(visibilityPath,visibilitySource.replace(visibilityImport,'import { Platform, type TFile } from "@/deps.ts";')
+  .replace(backgroundGuard,`            (this.settings.liveSync || this.settings.periodicReplication) &&
+            (this.services.API.isMobile()
+                ? Platform.isAndroidApp === true && !this.settings.suspendFileWatching &&
+                  !this.services.appLifecycle.isSuspended() &&
+                  this.services.setting.getSmallConfig("arcalink-android-background-sync") === "allowed"
+                : this.settings.keepReplicationActiveInBackground)`));
 const manifest = JSON.parse(await readFile(path.join(source, 'manifest.json'), 'utf8'));
 if (manifest.version !== upstream.version) throw new Error('Unexpected upstream version');
 manifest.id = foldersLab ? 'arcalink-folders-lab' : freeRelayLab ? 'arcalink-free-lab' : communityRelease ? 'arcalink-sync' : 'arcalink-livesync-prototype';
@@ -115,7 +133,8 @@ if(configSyncSource.split(configSyncRibbon).length!==2)throw Error('Unexpected u
 await writeFile(configSyncPath,configSyncSource.replace(configSyncRibbon,''));
 
 const shared2Sources=(await readdir(path.join(root,'plugin'))).filter(name=>/^shared2.*\.(?:ts|mjs)$/.test(name)).sort();
-for (const name of [...shared2Sources,'shared-folder-provider.ts','shared-folder-blobs.mjs','large-content-gate.mjs','local-backups.ts','local-backup-store.mjs','local-backup-hooks.mjs','local-backup-restore.mjs','main.ts','companion-sync.ts','companion-ownership.ts','companion-resume.mjs','companion-ownership-model.mjs','companion-key-transfer.mjs','companion-peer-proof.mjs','companion-bridge.ts','companion-proof.mjs','mobile-assistant.ts','assistant-download.mjs','publication.ts','publication-model.mjs','content-retry.mjs','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','folder-exclusions.mjs','folder-exclusions.ts','folder-rules-ui.ts','folder-rules-tree.mjs','folder-policy.mjs','folder-policy-store.mjs','folder-policies.ts','folder-local-database.mjs','folder-cleanup.mjs','folder-crypto.mjs','folder-mode-proof.mjs','environment.mjs','sync-parameters.mjs','sync-feedback.mjs','mobile-sync-state.mjs','mobile-sync-status.ts','startup-notices.mjs','folders.ts','shared-folder-picker.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
+const actionSources=(await readdir(path.join(root,'plugin'))).filter(name=>/^companion-(?:actions?[^/]*|peer-action-[^/]*)\.(?:ts|mjs)$/.test(name));
+for (const name of [...shared2Sources,...actionSources,'shared-folder-provider.ts','shared-folder-blobs.mjs','large-content-gate.mjs','local-backups.ts','local-backup-store.mjs','local-backup-hooks.mjs','local-backup-restore.mjs','main.ts','companion-sync.ts','companion-ownership.ts','companion-ownership-model.mjs','companion-local-snapshot.mjs','companion-key-transfer.mjs','companion-automatic.mjs','companion-peer-proof.mjs','companion-bridge.ts','companion-proof.mjs','mobile-assistant.ts','assistant-download.mjs','publication.ts','publication-model.mjs','content-retry.mjs','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','folder-exclusions.mjs','folder-exclusions.ts','folder-rules-ui.ts','folder-rules-tree.mjs','folder-policy.mjs','folder-policy-store.mjs','folder-policies.ts','folder-local-database.mjs','folder-cleanup.mjs','folder-crypto.mjs','folder-mode-proof.mjs','environment.mjs','sync-parameters.mjs','sync-feedback.mjs','mobile-sync-state.mjs','mobile-sync-status.ts','startup-notices.mjs','folders.ts','shared-folder-picker.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
   const input = path.join(root, 'plugin', name), output = path.join(source, 'src', name);
   if (communityRelease && ['free-relay.ts', 'workspaces.ts'].includes(name)) {
     await writeFile(output, patchCommunityOnboarding(await readFile(input, 'utf8'), name));
@@ -130,8 +149,8 @@ const brandMark=await readFile(path.resolve(root,'../../control-plane-java/src/m
 await writeFile(path.join(source,'src/brand-logo.ts'),'export const brandLogo='+JSON.stringify('data:image/svg+xml;base64,'+Buffer.from(brandMark).toString('base64'))+';\n');
 // Standard identifier minification; preserve public property names and function/class names.
 const terserPath=path.join(source,'terser.config.mjs'),terserSource=await readFile(terserPath,'utf8');
-if(terserSource.split('    mangle: false,').length!==2)throw Error('Unexpected upstream minifier configuration');
-await writeFile(terserPath,terserSource.replace('    mangle: false,','    mangle: true,'));
+if(terserSource.split('    mangle: false,').length!==2||terserSource.split('        passes: 1,').length!==2)throw Error('Unexpected upstream minifier configuration');
+await writeFile(terserPath,terserSource.replace('    mangle: false,','    mangle: true,').replace('        passes: 1,','        passes: 2,'));
 const buildConfigPath=path.join(source,'esbuild.config.mjs'),buildConfig=await readFile(buildConfigPath,'utf8');
 const uiAliasMarker='        moduleAliasPlugin,';
 if(buildConfig.split(uiAliasMarker).length!==2)throw Error('Unexpected upstream build plugin list');
@@ -220,6 +239,22 @@ await copyFile(path.join(root,'tests/content-retry.integration.unit.spec.ts'),pa
 await prepareUnitTests(root, source);
 execFileSync('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: source, env, stdio: 'inherit' });
 await patchMaintainedEngine(source,{foldersLab});
+// Keep every translation while avoiding large source literals in the bundle.
+// A fresh source tree makes this a one-time, deterministic build transformation.
+const buildRequire=createRequire(path.join(source,'package.json'));
+for(const [relative,kind] of [['src/common/messages/combinedMessages.prod.ts','engine'],['src/message-catalog.mjs','supplemental']]){
+  const file=path.join(source,relative),original=await readFile(file,'utf8');
+  const packed=packMessageCatalog(original,{typescript:buildRequire('typescript'),kind});
+  await writeFile(file+'.packing-upstream',original);
+  await writeFile(file,packed.source);
+  console.log('Packed '+kind+' catalogue: '+packed.stats.rawBytes+' -> '+packed.stats.packedBytes+' bytes; '+packed.stats.keys+' keys');
+}
+// The independent-action codec uses the pinned headless manipulator in Obsidian.
+// Its API service only needs WebCrypto; use the browser implementation there.
+const headlessApiPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/services/implements/headless/HeadlessAPIService.js');
+const headlessApi=await readFile(headlessApiPath,'utf8');
+if(headlessApi.split('import module from "node:crypto";').length!==2)throw Error('Unexpected headless crypto import');
+await writeFile(headlessApiPath,headlessApi.replace('import module from "node:crypto";','const module = { webcrypto: globalThis.crypto };'));
 for (const entry of ['index.js', 'index.es.js', 'index-browser.js', 'index-browser.es.js']) {
   const pouchUtils = path.join(source, 'node_modules/pouchdb-utils/lib', entry);
   await writeFile(pouchUtils, patchPouchNextTick(await readFile(pouchUtils, 'utf8')));
@@ -240,6 +275,8 @@ execFileSync('npm', ['ci','--include=dev','--ignore-scripts','--no-audit','--no-
 // Resolve the separate pinned collaboration tree without modifying upstream lock.
 for(const name of ['yjs','y-codemirror.next','y-indexeddb','@hocuspocus/provider','lib0']){const target=path.join(source,'node_modules',name);await mkdir(path.dirname(target),{recursive:true});await rm(target,{recursive:true,force:true});const {symlink}=await import('node:fs/promises');await symlink(path.join(root,'collaboration/node_modules',name),target,'dir');}
 execFileSync('npm', ['run', 'build'], { cwd: source, env, stdio: 'inherit' });
+const mainBytes=(await readFile(path.join(source,'main.js'))).length;
+if(communityRelease&&mainBytes>=5000000)throw Error('Community main.js exceeds the existing 5,000,000-byte limit: '+mainBytes);
 const audit = await auditBundle(source);
 const dist = path.join(root, 'dist', manifest.id);
 await rm(dist, { recursive: true, force: true });
@@ -265,4 +302,4 @@ await rm(zip, { force: true });
 // Community installs individual release assets; its clean build must not
 // require an OS archive utility. Internal release ZIPs retain their workflow.
 if (!communityRelease) execFileSync('zip', ['-qr', zip, manifest.id], { cwd: path.join(root, 'dist') });
-console.log(`Built ${communityRelease ? dist : zip}; license audit: ${audit.inventory.length} bundled packages.`);
+console.log(`Built ${communityRelease ? dist : zip}; main.js: ${mainBytes} bytes; license audit: ${audit.inventory.length} bundled packages.`);

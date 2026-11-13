@@ -22,6 +22,7 @@ export class SharedFolders {
     disposed = false;
     transferCount = 0;
     queue = Promise.resolve();
+    registryLoad: Promise<void> | undefined;
     lastRefresh = 0;
     refreshAttempt = 0;
     refreshedScope: unknown[] | undefined;
@@ -31,14 +32,23 @@ export class SharedFolders {
     } });
     constructor(plugin: any) { this.plugin = plugin; this.app = plugin.app; }
     get registry() { return this.plugin.pilotDirectory + '/shared-folders.json'; }
-    contains(path: string) { return this.records.some(r => path.toLowerCase() === r.mount.toLowerCase() || path.toLowerCase().startsWith(r.mount.toLowerCase() + '/')); }
+    contains(path: string) { return this.records.some(r => [r.mount,...(Array.isArray(r.shared2ProtectedMounts)?r.shared2ProtectedMounts:[])].some((mount:string)=>typeof mount==='string'&&(path.toLowerCase()===mount.toLowerCase()||path.toLowerCase().startsWith(mount.toLowerCase()+'/')))); }
     record(path: string) { return this.records.find(r => path === r.mount || path.startsWith(r.mount + '/')); }
     async save() { this.queue = this.queue.catch(() => { }).then(() => this.app.vault.adapter.write(this.registry, JSON.stringify(this.records))); await this.queue; }
-    validateMount(mount: string, ownerWorkspace?: string) { this.plugin.companionOwnership?.assertSharedScopeChange();this.plugin.folderPolicies?.assertSharedMount(mount,ownerWorkspace);if (!safeRelative(mount) || mount.toLowerCase() === 'arcalink shared' || mount.toLowerCase().startsWith('arcalink shared/') || this.records.some(r => mount.toLowerCase().startsWith(r.mount.toLowerCase() + '/') || r.mount.toLowerCase().startsWith(mount.toLowerCase() + '/') || r.mount.toLowerCase() === mount.toLowerCase()))
+    validateMount(mount: string, ownerWorkspace?: string) { this.plugin.companionOwnership?.assertSharedScopeChange();this.plugin.folderPolicies?.assertSharedMount(mount,ownerWorkspace);if (!safeRelative(mount) || this.records.some(r => (r.shared2ProtectedMounts||[]).some((path:string)=>mount.toLowerCase()===path.toLowerCase()||mount.toLowerCase().startsWith(path.toLowerCase()+'/')||path.toLowerCase().startsWith(mount.toLowerCase()+'/'))) || mount.toLowerCase() === 'arcalink shared' || mount.toLowerCase().startsWith('arcalink shared/') || this.records.some(r => mount.toLowerCase().startsWith(r.mount.toLowerCase() + '/') || r.mount.toLowerCase().startsWith(mount.toLowerCase() + '/') || r.mount.toLowerCase() === mount.toLowerCase()))
         throw Error('Выберите обычную папку вне других общих папок'); }
+    async loadRegistry() {
+        this.registryLoad ??= (async () => {
+            if (await this.app.vault.adapter.exists(this.registry)) {
+                const records = JSON.parse(await this.app.vault.adapter.read(this.registry));
+                if (!Array.isArray(records) || records.some(r => !r || typeof r.mount !== 'string' || !safeRelative(r.mount) || r.shared2ProtectedMounts!==undefined&&(!Array.isArray(r.shared2ProtectedMounts)||r.shared2ProtectedMounts.some((path:any)=>typeof path!=='string'||!safeRelative(path))))) throw Error('shared-folder-registry-invalid');
+                this.records = records;
+            }
+        })().catch(error => { this.registryLoad = undefined; throw error; });
+        return this.registryLoad;
+    }
     async init() {
-        if (await this.app.vault.adapter.exists(this.registry))
-            this.records = JSON.parse(await this.app.vault.adapter.read(this.registry));
+        await this.loadRegistry();
         const views = this.views, attach = (view: any) => this.attach(view), filePath = (view: any) => this.filePath(view);
         try {
             await this.discover();

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {excludedFolders,withExcludedFolders} from '../plugin/folder-exclusions.mjs';
 import {OWNERSHIP_FORMAT_FIELDS,canonicalOwnership,ownershipDigest,ownershipBodyHash,ownershipDocumentBody,proveOwnershipPage,assertOwnershipManifest,ownershipReadyMatches} from '../plugin/companion-ownership-model.mjs';
@@ -122,4 +123,76 @@ test('missing remote bytes or a source change fails proof instead of accepting a
  const get=remote.get.bind(remote);let changed=false;
  const movingRemote={get:async(...args)=>{const result=await get(...args);if(!changed){changed=true;await source.put({_id:'new',type:'plain',path:'Owned/new.md',children:[],size:0});}return result;}};
  await assert.rejects(proveOwnershipPage({source,remote:movingRemote,sequence:current}),error=>error.code==='ownership-source-changed');
+});
+
+test('full preparation pull completes an on-demand cache before the unchanged content proof',async t=>{
+ // The pinned engine deliberately excludes leaf documents on an on-demand pull.
+ // Reproduce its real selector, without copying any production notes or changing proof.
+ const replicator=await readFile(new URL('replication/couchdb/LiveSyncReplicator.js',engine),'utf8');
+ assert.match(replicator,/const selectorOnDemandPull = \{ selector: \{ type: \{ \$ne: "leaf" \} \} \};/);
+ for(const deleted of [false,true])await t.test(deleted?'soft-deleted note':'live note',async t=>{
+  const {source,remote}=await databases(t);
+  await remote.put({_id:'h:remote-only',type:'leaf',data:'synthetic preserved bytes'});
+  await remote.bulkDocs([{_id:'note',_rev:'2-current',_revisions:{start:2,ids:['current','previous']},
+   type:'plain',path:'Synthetic/note.md',children:['h:remote-only'],eden:{},size:25,...(deleted?{deleted:true}:{})}],{new_edits:false});
+  await source.replicate.from(remote,{selector:{type:{$ne:'leaf'}}});
+  const sequence=(await source.info()).update_seq,remoteSequence=(await remote.info()).update_seq;
+  const local=await source.get('note',{revs:true}),server=await remote.get('note',{rev:local._rev,revs:true});
+  assert.equal(await ownershipBodyHash(local),await ownershipBodyHash(server));
+  assert.deepEqual(local._revisions,server._revisions);
+  assert.equal((await remote.get('h:remote-only')).data,'synthetic preserved bytes');
+  await assert.rejects(source.get('h:remote-only'),error=>error.status===404);
+  const reads=[],get=remote.get.bind(remote);
+  const observed={get:async(id,options)=>{reads.push(id);return get(id,options);}};
+  // Never substitute a remote-only chunk or a replication counter for local/remote equality.
+  await assert.rejects(proveOwnershipPage({source,remote:observed,sequence}),error=>error.status===404&&error.code==='ownership-local-chunk-missing');
+  assert.deepEqual(reads,['note']);
+  assert.equal((await source.info()).update_seq,sequence);
+  // The new preparation performs a finite pull without the on-demand selector before snapshotting.
+  await source.replicate.from(remote);
+  const fullSequence=(await source.info()).update_seq;
+  assert.equal(await ownershipBodyHash(await source.get('note')),await ownershipBodyHash(local));
+  const page=await proveOwnershipPage({source,remote,sequence:fullSequence});
+  assert.equal(page.records.length,1);assert.equal(page.records[0].leaves[0].deleted,deleted);
+  assert.equal(page.records[0].leaves[0].chunks[0].bodyHash,await ownershipBodyHash(await source.get('h:remote-only')));
+  assert.equal((await source.info()).update_seq,fullSequence);
+  assert.equal((await remote.info()).update_seq,remoteSequence);
+ });
+});
+
+test('full pull retains every live, soft-deleted and deleted conflict leaf and proves their chunks',async t=>{
+ const {source,remote}=await databases(t);
+ await remote.put({_id:'h:history',type:'leaf',data:'synthetic historical bytes'});
+ await remote.bulkDocs([
+  {_id:'note',_rev:'2-live',_revisions:{start:2,ids:['live','base']},type:'plain',path:'Synthetic/note.md',children:['h:history'],size:26},
+  {_id:'note',_rev:'2-deleted',_revisions:{start:2,ids:['deleted','base']},type:'plain',path:'Synthetic/note.md',children:['h:history'],size:26,deleted:true},
+  {_id:'note',_rev:'2-tombstone',_revisions:{start:2,ids:['tombstone','base']},_deleted:true},
+ ],{new_edits:false});
+ await source.replicate.from(remote,{selector:{type:{$ne:'leaf'}}});await source.replicate.from(remote);
+ const page=await proveOwnershipPage({source,remote,sequence:(await source.info()).update_seq});
+ const leaves=page.records.find(record=>record.id==='note').leaves;
+ assert.deepEqual(leaves.map(leaf=>leaf.rev),['2-deleted','2-live','2-tombstone']);
+ assert.equal(leaves.filter(leaf=>leaf.chunks.length===1).length,2);
+ assert.equal(leaves.find(leaf=>leaf.pouchDeleted).rev,'2-tombstone');
+});
+
+test('proof keeps rejecting missing remote data, modified bodies/history and database failures with distinct safe codes',async t=>{
+ const {source,remote}=await databases(t);
+ await source.put({_id:'h:chunk',type:'leaf',data:'synthetic bytes'});
+ await source.put({_id:'note',type:'plain',path:'Synthetic/note.md',children:['h:chunk'],size:15});
+ await source.put({...await source.get('note'),mtime:2});
+ await source.replicate.to(remote);const sequence=(await source.info()).update_seq;
+ const get=remote.get.bind(remote);
+ const cases=[
+  ['ownership-remote-document-missing',async(id,opt)=>{if(id==='note')throw {status:404,message:'private path'};return get(id,opt);}],
+  ['ownership-remote-chunk-missing',async(id,opt)=>{if(id==='h:chunk')throw {status:404,message:'private path'};return get(id,opt);}],
+  ['ownership-remote-read-failed',async()=>{throw {status:503,message:'private token'};}],
+  ['ownership-remote-body-mismatch',async(id,opt)=>({...await get(id,opt),...(id==='note'?{size:999}:{})})],
+  ['ownership-remote-chunk-mismatch',async(id,opt)=>({...await get(id,opt),...(id==='h:chunk'?{data:'tampered'}:{})})],
+  ['ownership-remote-history-mismatch',async(id,opt)=>{const doc=await get(id,opt);if(id==='note')doc._revisions.ids[1]='different';return doc;}],
+  ['missing-revision-ancestry',async(id,opt)=>({...await get(id,opt),...(id==='note'?{_revisions:undefined}:{})})],
+ ];
+ for(const [code,read]of cases)await assert.rejects(proveOwnershipPage({source,remote:{get:read},sequence}),error=>error.code===code&&!error.message.includes('private'));
+ const failingSource={info:source.info.bind(source),changes:source.changes.bind(source),get:async()=>{throw {status:500,message:'private database'};}};
+ await assert.rejects(proveOwnershipPage({source:failingSource,remote,sequence}),error=>error.code==='ownership-local-read-failed');
 });

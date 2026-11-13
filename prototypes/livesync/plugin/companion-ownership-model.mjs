@@ -56,7 +56,7 @@ function assertLeaf(leaf) {
  for(const chunk of leaf.chunks)if(!chunk||!documentId(chunk.id)||!chunk.id.startsWith('h:')||!revision(chunk.rev)||!digest(chunk.bodyHash))throw failure('invalid-ownership-chunk');
 }
 export function assertOwnershipManifest(value) {
- if(!validOwnershipIdentity(value)||!onlyKeys(value,['schema','nonce','generation','accountId','workspaceId','companionDeviceId','phase','mode','peerId','peerName','publicKeyFingerprint','source','scope','engineFormat','records','bases','createdAt'])
+ if(!validOwnershipIdentity(value)||!onlyKeys(value,['schema','nonce','generation','accountId','workspaceId','companionDeviceId','phase','mode','peerId','peerName','publicKeyFingerprint','source','scope','engineFormat','records','bases','createdAt','localSnapshot'])
   ||value.phase!=='held'||!onlyKeys(value.source,['sequence'])||!Object.hasOwn(value.source,'sequence')
   ||!onlyKeys(value.scope,['ordinary','excludedPrefixes','localIgnoreRegEx','localOnlyRegEx','caseSensitive','policyRevision','protectedRevision','ignoreFileBases'])
   ||value.scope.ordinary!==true||!Array.isArray(value.scope.excludedPrefixes)||value.scope.excludedPrefixes.some(path=>!safeCompanionPath(path))
@@ -74,14 +74,20 @@ export function assertOwnershipManifest(value) {
  if(value.engineFormat!==undefined&&(!onlyKeys(value.engineFormat,OWNERSHIP_FORMAT_FIELDS)||value.engineFormat.readChunksOnline!==false
   ||value.engineFormat.idDerivationVersion===1&&!digest(value.engineFormat.idDerivationKeyFingerprint)
   ||Object.values(value.engineFormat).some(item=>!['boolean','string','number'].includes(typeof item))))throw failure('invalid-ownership-engine-format');
+ if(value.localSnapshot!==undefined){
+  const snapshot=value.localSnapshot;
+  if(!onlyKeys(snapshot,['version','pages'])||snapshot.version!==1||!Array.isArray(snapshot.pages)||snapshot.pages.length>100000
+   ||snapshot.pages.some((page,index)=>!onlyKeys(page,['index','sha256','size'])||page.index!==index||!digest(page.sha256)||!Number.isSafeInteger(page.size)||page.size<1||page.size>8*1024*1024))throw failure('invalid-local-snapshot');
+ }
  const ids=new Set(),paths=new Set();
  for(const record of value.records){
   if(!onlyKeys(record,['id','path','leaves'])||!documentId(record.id)||ids.has(record.id)||record.path!==null&&!safeCompanionPath(record.path)
    ||!Array.isArray(record.leaves)||!record.leaves.length||record.leaves.length>1000)throw failure('invalid-ownership-record');
   ids.add(record.id);const revisions=new Set();
   for(const leaf of record.leaves){
-   if(!onlyKeys(leaf,['rev','deleted','pouchDeleted','ancestry','bodyHash','chunks'])||!onlyKeys(leaf.ancestry,['start','ids'])
+   if(!onlyKeys(leaf,['rev','deleted','pouchDeleted','ancestry','bodyHash','chunks','missingChunks'])||!onlyKeys(leaf.ancestry,['start','ids'])
     ||leaf.chunks?.some(chunk=>!onlyKeys(chunk,['id','rev','bodyHash'])))throw failure('invalid-ownership-leaf');
+   if(leaf.missingChunks!==undefined&&(!value.localSnapshot||!Array.isArray(leaf.missingChunks)||leaf.missingChunks.length>4096||leaf.missingChunks.some(id=>!documentId(id)||!id.startsWith('h:'))))throw failure('invalid-local-snapshot');
    assertLeaf(leaf);if(revisions.has(leaf.rev)||record.path===null&&!leaf.pouchDeleted)throw failure('invalid-ownership-record');revisions.add(leaf.rev);
   }
  }
@@ -99,22 +105,29 @@ export async function ownershipReadyMatches(manifest,reply) {
 
 const controls=new Set(['syncinfo','versioninfo','milestoneinfo','nodeinfo']);
 const fileTypes=new Set(['plain','newnote','notes']);
+async function readProof(action,side,kind='document') {
+ try{return await action();}
+ catch(error){
+  const code=error?.status===404?`ownership-${side}-${kind}-missing`:`ownership-${side}-read-failed`;
+  throw Object.assign(failure(code),{status:error?.status});
+ }
+}
 /**
  * One bounded, read-only proof page. No counters or revision-existence claims substitute for bodies.
  * Historical ancestor bodies stay in the quarantined source; every available leaf carries its ancestry.
- * @param {{source:any,remote:any,sequence:any,since?:any,limit?:number,isOrdinary?:(path:string)=>boolean|Promise<boolean>,getPath?:(doc:any)=>string|null,isCurrent?:()=>boolean|Promise<boolean>}} options
+ * @param {{source:any,remote:any,sequence:any,since?:any,limit?:number,isOrdinary?:(path:string)=>boolean|Promise<boolean>,getPath?:(doc:any)=>string|null,isCurrent?:()=>boolean|Promise<boolean>,localOnly?:boolean}} options
  */
-export async function proveOwnershipPage({source,remote,sequence,since=0,limit=32,isOrdinary=()=>true,getPath=doc=>doc.path||null,isCurrent=()=>true}) {
+export async function proveOwnershipPage({source,remote,sequence,since=0,limit=32,isOrdinary=()=>true,getPath=doc=>doc.path||null,isCurrent=()=>true,localOnly=false}) {
  if(!Number.isInteger(limit)||limit<1||limit>128)throw failure('invalid-ownership-page');
- const check=async()=>{if(!await isCurrent()||!same((await source.info()).update_seq,sequence))throw failure('ownership-source-changed');};
+ const check=async()=>{if(!await isCurrent()||!same((await readProof(()=>source.info(),'local')).update_seq,sequence))throw failure('ownership-source-changed');};
  await check();
- const page=await source.changes({since,limit,style:'all_docs',return_docs:true}),records=[];
+ const page=await readProof(()=>source.changes({since,limit,style:'all_docs',return_docs:true}),'local'),records=[],documents=new Map();
  for(const change of page.results){
   await check();
   if(change.id.startsWith('_')||change.id.startsWith('h:')||change.id.startsWith('i:')||controls.has(change.id))continue;
   const leaves=[];let recordPath=null,omitted=false;
   for(const item of change.changes){
-   const doc=await source.get(change.id,{rev:item.rev,revs:true});
+   const doc=await readProof(()=>source.get(change.id,{rev:item.rev,revs:true}),'local');
    if(doc._rev!==item.rev||doc._id!==change.id)throw failure('ownership-revision-mismatch');
    const path=getPath(doc);
    if(path!==null&&!safeCompanionPath(path))throw failure('ownership-path-unreadable');
@@ -125,28 +138,32 @@ export async function proveOwnershipPage({source,remote,sequence,since=0,limit=3
    if(path!==null&&!await isOrdinary(path)){omitted=true;continue;}
    if(recordPath!==null&&path!==null&&recordPath!==path)throw failure('ownership-path-conflict');
    if(path!==null)recordPath=path;
-   const actual=await remote.get(change.id,{rev:item.rev,revs:true}),tree=ancestry(doc);
+   const actual=localOnly?doc:await readProof(()=>remote.get(change.id,{rev:item.rev,revs:true}),'remote'),tree=ancestry(doc);
+   if(localOnly)documents.set(doc._id+'@'+doc._rev,{...ownershipDocumentBody(doc),_revisions:tree});
    const bodyHash=await ownershipBodyHash(doc);
-   if(!same(tree,ancestry(actual))||bodyHash!==await ownershipBodyHash(actual))throw failure('ownership-remote-body-mismatch');
-   const chunks=[];
+   if(!same(tree,ancestry(actual)))throw failure('ownership-remote-history-mismatch');
+   if(bodyHash!==await ownershipBodyHash(actual))throw failure('ownership-remote-body-mismatch');
+   const chunks=[],missingChunks=[];
    if(!doc._deleted&&doc.type!=='notes'){
     if(!Array.isArray(doc.children)||doc.children.length>4096)throw failure('ownership-chunks-unreadable');
     for(const id of [...new Set(doc.children)]){
      if(typeof id!=='string'||!id.startsWith('h:')||!documentId(id))throw failure('ownership-chunks-unreadable');
      if(Object.hasOwn(doc.eden||{},id))continue; // Eden plaintext is already bound by the complete metadata hash.
-     const chunk=await source.get(id,{conflicts:true,revs:true});
+     let chunk;try{chunk=await readProof(()=>source.get(id,{conflicts:true,revs:true}),'local','chunk');}
+     catch(error){if(localOnly&&error.code==='ownership-local-chunk-missing'){missingChunks.push(id);continue;}throw error;}
      if(chunk.type!=='leaf'||typeof chunk.data!=='string'||chunk._deleted||chunk.isCorrupted||chunk._conflicts?.length)throw failure('ownership-chunks-unreadable');
-     const chunkHash=await ownershipBodyHash(chunk),remoteChunk=await remote.get(id,{rev:chunk._rev,revs:true});
+     const chunkHash=await ownershipBodyHash(chunk),remoteChunk=localOnly?chunk:await readProof(()=>remote.get(id,{rev:chunk._rev,revs:true}),'remote','chunk');
      if(chunkHash!==await ownershipBodyHash(remoteChunk))throw failure('ownership-remote-chunk-mismatch');
+     if(localOnly)documents.set(chunk._id+'@'+chunk._rev,{...ownershipDocumentBody(chunk),_revisions:ancestry(chunk)});
      chunks.push({id,rev:chunk._rev,bodyHash:chunkHash});
     }
    }
-   leaves.push({rev:item.rev,pouchDeleted:doc._deleted===true,deleted:doc.deleted===true,ancestry:tree,bodyHash,chunks:chunks.sort((a,b)=>a.id.localeCompare(b.id))});
+   leaves.push({rev:item.rev,pouchDeleted:doc._deleted===true,deleted:doc.deleted===true,ancestry:tree,bodyHash,...(localOnly?{missingChunks:missingChunks.sort()}:{}),chunks:chunks.sort((a,b)=>a.id.localeCompare(b.id))});
   }
   if(omitted&&leaves.length)throw failure('ownership-mixed-scope-revisions');
   if(leaves.length)records.push({id:change.id,path:recordPath,leaves:leaves.sort((a,b)=>a.rev.localeCompare(b.rev))});
  }
  await check();
  if(page.results.length&&same(page.last_seq,since))throw failure('ownership-non-advancing-page');
- return {records,since:page.last_seq,done:page.results.length===0};
+ return {records,since:page.last_seq,done:page.results.length===0,...(localOnly?{documents:[...documents.values()]}:{})};
 }

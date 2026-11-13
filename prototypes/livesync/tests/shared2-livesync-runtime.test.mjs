@@ -129,6 +129,7 @@ test('viewer uses the same LiveSync lifecycle with pull-only finite and live tra
 
 test('actual shared local-engine factory catches up and stays live through the scoped admission adapter',async t=>{
  const remoteName='factory-remote-'+crypto.randomUUID(),remote=createDB(remoteName),engines=[],received=[];
+ await remote.put({_id:'_design/arcalink_shared2_access',filters:{files:"function(doc){return doc._id.charAt(0)!=='_';}"}});
  const profile={kind:'shared',account:'test',workspace:'stand',folder:'a'.repeat(32),database:'arcalink_s_'+'a'.repeat(32),generation:1,keyEpoch:0,encrypted:false,role:'editor',documentRoot:'Shared'};
  let allowed=true,connections=0,closed=0;
  t.after(async()=>{for(const engine of engines)await engine.close();await remote.destroy();});
@@ -155,7 +156,8 @@ test('actual shared local-engine factory catches up and stays live through the s
  await editor.write('Shared/note.md',{bytes:new TextEncoder().encode('Live update'),baseRevision:initial.revision});
  await waitFor(async()=>new TextDecoder().decode((await viewer.read('Shared/note.md'))?.bytes)==='Live update');
  assert.ok(received.some(doc=>doc.path==='Shared/note.md'));
- assert.equal((await remote.allDocs()).rows.some(row=>row.id.startsWith('_')),false);
+ assert.deepEqual((await remote.allDocs()).rows.filter(row=>row.id.startsWith('_')).map(row=>row.id),['_design/arcalink_shared2_access']);
+ assert.equal(received.some(doc=>doc._id.startsWith('_')),false);
  await editor.close();await a;
  await viewer.close();await b;
  assert.equal(connections,closed);
@@ -166,6 +168,7 @@ test('actual shared local-engine factory catches up and stays live through the s
 
 test('full maintained LiveSync pipeline applies files continuously across different local mounts',async t=>{
  const remote=createDB('pipeline-server-'+crypto.randomUUID()),clients=[],errors=[],root='Owner/Shared';
+ await remote.put({_id:'_design/arcalink_shared2_access',filters:{files:"function(doc){return doc._id.charAt(0)!=='_';}"}});
  const profile={kind:'shared',account:'test',workspace:'stand',folder:'a'.repeat(32),database:'arcalink_s_'+'a'.repeat(32),generation:1,keyEpoch:0,encrypted:false,role:'editor',documentRoot:root};
  t.after(async()=>{for(const client of clients)await client.engine.close();await remote.destroy();});
  async function client(mount){
@@ -243,4 +246,126 @@ test('encrypted shared scopes use their own envelope with the maintained finite 
  const a=await client(),b=await client();
  await a.write('Encrypted/private.md',{bytes:new TextEncoder().encode('Folder-scoped secret')});await a.synchronize();await b.synchronize();
  assert.equal(new TextDecoder().decode((await b.read('Encrypted/private.md')).bytes),'Folder-scoped secret');
+});
+
+test('changing the pull filter preserves the old checkpoint, conflict leaves and local edits',async t=>{
+ const remote=createDB('checkpoint-source-'+crypto.randomUUID()),local=createDB('checkpoint-target-'+crypto.randomUUID());
+ t.after(async()=>{await local.destroy();await remote.destroy();});
+ await remote.put({_id:'_design/arcalink_shared2_access',filters:{files:"function(doc){return doc._id.charAt(0)!=='_';}"}});
+ const root='1-'+ 'a'.repeat(32),left='2-'+ 'b'.repeat(32),right='2-'+ 'c'.repeat(32);
+ await remote.bulkDocs([{_id:'conflict',_rev:left,_revisions:{start:2,ids:['b'.repeat(32),'a'.repeat(32)]},value:'left'},
+  {_id:'conflict',_rev:right,_revisions:{start:2,ids:['c'.repeat(32),'a'.repeat(32)]},value:'right'}],{new_edits:false});
+ await remote.put({_id:'removed',value:'before deletion'});
+ const oldFilter=doc=>typeof doc._id==='string'&&!doc._id.startsWith('_');
+ const oldOptions={checkpoint:'target',filter:oldFilter};
+ await local.replicate.from(remote,oldOptions);
+ const generateId=require('pouchdb-generate-replication-id');
+ const oldId=await generateId(remote,local,oldOptions),newOptions={checkpoint:'target',filter:'arcalink_shared2_access/files'},newId=await generateId(remote,local,newOptions);
+ assert.notEqual(oldId,newId);const oldCheckpoint=await local.get(oldId);
+ await local.put({_id:'local-draft',value:'keep'});
+ const prior=await remote.get('removed');const tombstone=await remote.remove(prior);
+ await remote.put({_id:'fresh',value:'arrived later'});
+ await local.replicate.from(remote,newOptions);
+ assert.equal((await local.get(oldId)).last_seq,oldCheckpoint.last_seq);
+ assert.ok(await local.get(newId));assert.equal((await local.get('local-draft')).value,'keep');assert.equal((await local.get('fresh')).value,'arrived later');
+ const leaves=await local.get('conflict',{open_revs:'all',revs:true});
+ assert.deepEqual(leaves.map(x=>x.ok._rev).sort(),[left,right].sort());
+ assert.ok(leaves.every(x=>x.ok._revisions.ids[1]===root.slice(2)));
+ const deleted=await local.get('removed',{rev:tombstone.rev});assert.equal(deleted._deleted,true);
+ await assert.rejects(local.get('_design/arcalink_shared2_access'),{status:404});
+ assert.equal((await local.replicate.from(remote,newOptions)).docs_written,0);
+});
+
+test('finite editor replication keeps uploads bounded while pulling remote changes',async()=>{
+ const local=createDB('push-batch-local-'+crypto.randomUUID()),remote=createDB('push-batch-remote-'+crypto.randomUUID()),pushBatches=[];
+ await remote.put({_id:'_design/arcalink_shared2_access',filters:{files:"function(doc){return doc._id.charAt(0)!=='_';}"}});
+ await remote.bulkDocs(Array.from({length:3},(_,i)=>({_id:'incoming-'+i,type:'leaf',data:'remote'})));
+ await local.bulkDocs(Array.from({length:40},(_,i)=>({_id:'outgoing-'+String(i).padStart(3,'0'),type:'leaf',data:'local'})));
+ const originalBulk=remote.bulkDocs.bind(remote);remote.bulkDocs=function(docs,...rest){pushBatches.push((Array.isArray(docs)?docs:docs.docs).length);return originalBulk(docs,...rest);};
+ const profile={kind:'shared',role:'editor',database:'arcalink_s_'+'a'.repeat(32),folder:'a'.repeat(32),account:'test',workspace:'work',generation:1,keyEpoch:0,encrypted:false,documentRoot:'Team'};
+ const services={context:{translate:key=>key},API:{isMobile:()=>false},setting:{currentSettings:()=>({encrypt:false,hashAlg:'sha1',chunkSplitterVersion:'v1',useEden:false,remoteType:'',readChunksOnline:false,useOnlyLocalChunk:true})},replicator:{replicationStatics:{value:{}}},replication:{parseSynchroniseResult:async()=>{}},database:{localDatabase:{localDatabase:local}}};
+ const lifecycle=createShared2LiveSyncLifecycle({services,profile,accessCheck:async()=>true,openRemote:async()=>({database:remote,close:async()=>{}})});
+ try{
+  await lifecycle.synchronize();
+  assert.ok(pushBatches.length>1);assert.ok(pushBatches.every(count=>count<=8),JSON.stringify(pushBatches));
+  assert.equal((await remote.allDocs()).rows.filter(row=>row.id.startsWith('outgoing-')).length,40);
+  for(let i=0;i<3;i++)assert.equal((await local.get('incoming-'+i)).data,'remote');
+ }finally{await lifecycle.close();await local.destroy();await remote.destroy();}
+});
+
+test('temporary gateway failures do not complete or retry a scoped finite pull',async()=>{
+ const {EventEmitter}=await import('node:events');
+ const {createShared2RemoteTransport}=await import('../plugin/shared2-remote-transport.mjs');
+ for(const failure of [429,502,504,'timeout']){
+  const profile={kind:'shared',role:'viewer',database:'arcalink_s_'+'a'.repeat(32),folder:'a'.repeat(32),account:'test',workspace:'work',generation:1,keyEpoch:0,encrypted:false,documentRoot:'Team',revision:1,catalogRevision:1};
+  let opens=0,mutations=0,closed=0;
+  const services={context:{translate:key=>key},API:{isMobile:()=>false},setting:{currentSettings:()=>({encrypt:false,hashAlg:'sha1',chunkSplitterVersion:'v1',useEden:false,remoteType:'',readChunksOnline:false,useOnlyLocalChunk:true})},replicator:{replicationStatics:{value:{}}},replication:{parseSynchroniseResult:async()=>{mutations++;}},database:{localDatabase:{localDatabase:{name:'fault-'+crypto.randomUUID(),info:async()=>({update_seq:0}),replicate:{from(remote){
+   const events=new EventEmitter();let reject;const task=new Promise((_,bad)=>{reject=bad});task.on=(...args)=>{events.on(...args);return task;};task.cancel=()=>{};
+   queueMicrotask(async()=>{try{const response=await remote.transport.fetch(remote.transport.url+'/_changes');if(!response.ok)throw Object.assign(Error('gateway-failure'),{status:response.status});throw Error('expected failure');}catch(error){events.emit('error',error);reject(error);}});return task;
+  }}}}}};
+  const lifecycle=createShared2LiveSyncLifecycle({services,profile,accessCheck:async()=>true,openRemote:async(p,observer)=>{
+   opens++;const transport=createShared2RemoteTransport({origin:'http://127.0.0.1',allowLocalTest:true,profile:p,onResponse:observer?.onResponse,onError:observer?.onError,resolveAccess:async()=>({...p,token:'synthetic'}),fetch:async url=>{if(!String(url).endsWith('/_changes'))return new Response('{}');if(failure==='timeout')throw Object.assign(Error('synthetic timeout'),{name:'TimeoutError'});return new Response('{}',{status:failure});}});
+   return {database:{transport,info:async()=>{await transport.fetch(transport.url);return {update_seq:1};}},close:async()=>{await transport.close();closed++;}};
+  }});
+  try{await assert.rejects(lifecycle.synchronize());assert.equal(opens,1,String(failure));assert.equal(closed,1,String(failure));assert.equal(mutations,0,String(failure));}finally{await lifecycle.close();}
+ }
+});
+
+test('a grant failure after 413 does not start a fallback attempt',async()=>{
+ const {EventEmitter}=await import('node:events');
+ const {createShared2RemoteTransport}=await import('../plugin/shared2-remote-transport.mjs');
+ const profile={kind:'shared',role:'viewer',database:'arcalink_s_'+'a'.repeat(32),folder:'a'.repeat(32),account:'test',workspace:'work',generation:1,keyEpoch:0,encrypted:false,documentRoot:'Team',revision:1,catalogRevision:1};
+ let denied=false,opens=0,http=0,grants=0;
+ const services={context:{translate:key=>key},API:{isMobile:()=>false},setting:{currentSettings:()=>({encrypt:false,hashAlg:'sha1',chunkSplitterVersion:'v1',useEden:false,remoteType:'',readChunksOnline:false,useOnlyLocalChunk:true})},replicator:{replicationStatics:{value:{}}},replication:{parseSynchroniseResult:async()=>{}},database:{localDatabase:{localDatabase:{name:'fallback-grant-'+crypto.randomUUID(),info:async()=>({update_seq:0}),replicate:{from(remote){
+  const events=new EventEmitter();let reject;const task=new Promise((_,bad)=>{reject=bad});task.on=(...args)=>{events.on(...args);return task;};task.cancel=()=>{};
+  (async()=>{await remote.transport.fetch(remote.transport.url+'/_bulk_get');denied=true;await remote.transport.fetch(remote.transport.url+'/doc');})().catch(error=>{events.emit('error',error);reject(error);});return task;
+ }}}}}};
+ const lifecycle=createShared2LiveSyncLifecycle({services,profile,accessCheck:async()=>true,openRemote:async(p,observer)=>{
+  opens++;const transport=createShared2RemoteTransport({origin:'http://127.0.0.1',allowLocalTest:true,profile:p,onResponse:observer?.onResponse,onError:observer?.onError,
+   resolveAccess:async()=>{grants++;if(denied)throw Object.assign(Error('shared2-grant-mismatch'),{code:'shared2-grant-mismatch'});return {...p,token:'synthetic'};},
+   fetch:async()=>{http++;return new Response('{}',{status:http===1?200:413});}});
+  return {database:{transport,info:async()=>{await transport.fetch(transport.url);return {update_seq:1};}},close:()=>transport.close()};
+ }});
+ try{await assert.rejects(lifecycle.synchronize());assert.equal(opens,1);assert.equal(http,2);assert.equal(grants,3);}finally{await lifecycle.close();}
+});
+
+test('scoped upstream close failure prevents both ready and 413 fallback',async()=>{
+ const {EventEmitter}=await import('node:events');
+ for(const fail413 of [false,true]){
+  let opens=0,observer;
+  const profile={kind:'shared',role:'viewer',database:'arcalink_s_'+'a'.repeat(32),folder:'a'.repeat(32),account:'test',workspace:'work',generation:1,keyEpoch:0,encrypted:false,documentRoot:'Team'};
+  const services={context:{translate:key=>key},API:{isMobile:()=>false},setting:{currentSettings:()=>({encrypt:false,hashAlg:'sha1',chunkSplitterVersion:'v1',useEden:false,remoteType:'',readChunksOnline:false,useOnlyLocalChunk:true})},replicator:{replicationStatics:{value:{}}},replication:{parseSynchroniseResult:async()=>{}},database:{localDatabase:{localDatabase:{name:'fallback-close-'+crypto.randomUUID(),info:async()=>({update_seq:0}),replicate:{from(){
+   const events=new EventEmitter();let resolve,reject;const task=new Promise((yes,no)=>{resolve=yes;reject=no;});task.on=(...args)=>{events.on(...args);return task;};task.cancel=()=>{};
+   queueMicrotask(()=>{if(fail413){observer.onResponse(413,'/shared2/couch/'+profile.database+'/_bulk_get');const error=Object.assign(Error('payload too large'),{status:413});events.emit('error',error);reject(error);}else{events.emit('complete',{ok:true});resolve({ok:true});}});return task;
+  }}}}}};
+  const lifecycle=createShared2LiveSyncLifecycle({services,profile,accessCheck:async()=>true,openRemote:async(_p,options)=>{opens++;observer=options;return {database:{info:async()=>({update_seq:1})},close:async()=>{throw Error('synthetic-close-failed');}};}});
+  try{await assert.rejects(lifecycle.synchronize(),/synthetic-close-failed/);assert.equal(opens,1);await assert.rejects(lifecycle.synchronize(),/synthetic-close-failed/);assert.equal(opens,1);}finally{await assert.rejects(lifecycle.close(),/synthetic-close-failed/);}
+ }
+});
+
+test('a continuous scoped close failure rejects stop and blocks reopening',async()=>{
+ const {EventEmitter}=await import('node:events');let opens=0,attempt=0;
+ const profile={kind:'shared',role:'viewer',database:'arcalink_s_'+'d'.repeat(32),folder:'d'.repeat(32),account:'test',workspace:'work',generation:1,keyEpoch:0,encrypted:false,documentRoot:'Team'};
+ const services={context:{translate:key=>key},API:{isMobile:()=>false},setting:{currentSettings:()=>({encrypt:false,hashAlg:'sha1',chunkSplitterVersion:'v1',useEden:false,remoteType:'',readChunksOnline:false,useOnlyLocalChunk:true})},replicator:{replicationStatics:{value:{}},runFiniteReplicationActivity:fn=>fn()},replication:{parseSynchroniseResult:async()=>{}},database:{localDatabase:{localDatabase:{name:'continuous-close-'+crypto.randomUUID(),info:async()=>({update_seq:0}),replicate:{from(){
+  const events=new EventEmitter();let resolve;const task=new Promise(yes=>{resolve=yes;});task.on=(...args)=>{events.on(...args);return task;};task.cancel=()=>{events.emit('complete',{status:'cancelled'});resolve({status:'cancelled'});};
+  if(++attempt===1)queueMicrotask(()=>{events.emit('complete',{ok:true});resolve({ok:true});});return task;
+ }}}}}};
+ const lifecycle=createShared2LiveSyncLifecycle({services,profile,accessCheck:async()=>true,openRemote:async()=>{const number=++opens;return {database:{info:async()=>({update_seq:1})},close:async()=>{if(number===2)throw Error('continuous-close-failed');}};}});
+ const live=lifecycle.start();live.catch(()=>{});
+ try{await waitFor(()=>opens===2);await assert.rejects(lifecycle.stop(),/continuous-close-failed/);await assert.rejects(lifecycle.synchronize(),/continuous-close-failed/);assert.equal(opens,2);await assert.rejects(lifecycle.close(),/continuous-close-failed/);}finally{await lifecycle.close().catch(()=>{});await Promise.allSettled([live]);}
+});
+
+test('an external response-body abort after 413 does not start fallback',async()=>{
+ const {EventEmitter}=await import('node:events');const {createShared2RemoteTransport}=await import('../plugin/shared2-remote-transport.mjs');
+ const profile={kind:'shared',role:'viewer',database:'arcalink_s_'+'e'.repeat(32),folder:'e'.repeat(32),account:'test',workspace:'work',generation:1,keyEpoch:0,encrypted:false,documentRoot:'Team',revision:1,catalogRevision:1};
+ let opens=0,attempt=0;const observed=[];
+ const services={context:{translate:key=>key},API:{isMobile:()=>false},setting:{currentSettings:()=>({encrypt:false,hashAlg:'sha1',chunkSplitterVersion:'v1',useEden:false,remoteType:'',readChunksOnline:false,useOnlyLocalChunk:true})},replicator:{replicationStatics:{value:{}}},replication:{parseSynchroniseResult:async()=>{}},database:{localDatabase:{localDatabase:{name:'body-abort-'+crypto.randomUUID(),info:async()=>({update_seq:0}),replicate:{from(remote){
+  const events=new EventEmitter();let resolve,reject;const task=new Promise((yes,no)=>{resolve=yes;reject=no;});task.on=(...args)=>{events.on(...args);return task;};task.cancel=()=>{};
+  (async()=>{await Promise.resolve();if(++attempt===1){await(await remote.transport.fetch(remote.transport.url+'/_bulk_get')).json();const abort=new AbortController();const response=await remote.transport.fetch(remote.transport.url+'/slow',{signal:abort.signal});const reading=response.json();abort.abort();await reading;}events.emit('complete',{ok:true});resolve({ok:true});})().catch(error=>{events.emit('error',error);reject(error);});return task;
+ }}}}}};
+ const lifecycle=createShared2LiveSyncLifecycle({services,profile,accessCheck:async()=>true,openRemote:async(p,observer)=>{
+  opens++;const transport=createShared2RemoteTransport({origin:'http://127.0.0.1',allowLocalTest:true,profile:p,onResponse:observer?.onResponse,onError:(error,detail)=>{observed.push(detail);observer?.onError?.(error,detail);},resolveAccess:async()=>({...p,token:'synthetic'}),fetch:async url=>url.endsWith('/slow')?new Response(new ReadableStream({},{highWaterMark:0})):new Response('{}',{status:url.endsWith('/_bulk_get')?413:200})});
+  return {database:{transport,info:async()=>{await(await transport.fetch(transport.url)).json();return {update_seq:1};}},close:()=>transport.close()};
+ }});
+ try{await assert.rejects(lifecycle.synchronize());assert.equal(opens,1);assert.ok(observed.some(detail=>detail.externalAborted===true));}finally{await lifecycle.close();}
 });

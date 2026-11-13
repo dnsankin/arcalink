@@ -10,7 +10,7 @@ export function createShared2ResultRuntime({ResultProcessor,services,files,keyVa
  const scope=services?.database?.localDatabase?.localDatabase?.name;
  if(typeof ResultProcessor!=='function'||!services?.database?.localDatabase||!files?.incoming||!keyValueDB?.get||!keyValueDB?.set||!safeRelative(documentRoot)
   ||typeof scope!=='string'||!scope||scope.length>512||typeof assertCurrent!=='function'||typeof retire!=='function'||typeof onError!=='function')throw fail('invalid-shared2-result-runtime');
- let closing=false,retired=false,closingTask,lastWriteError,writeTail=Promise.resolve();const active=new Set();
+ let closing=false,retired=false,closingTask,lastWriteError,applicationError,writeTail=Promise.resolve();const active=new Set();
  // A retired processor can still have a throttled snapshot callback scheduled
  // by upstream. Fence it so it cannot overwrite a replacement scope's state.
  const snapshotStore={
@@ -22,14 +22,15 @@ export function createShared2ResultRuntime({ResultProcessor,services,files,keyVa
   }
  };
  const inside=path=>safeRelative(path)&&path.startsWith(documentRoot+'/');
+ const reportError=error=>{applicationError=error;onError(error);};
  const replication={replicationResultCount:{value:0},databaseQueueCount:{value:0},storageApplyingCount:{value:0},
   processVirtualDocument:async()=>false,processOptionalSynchroniseResult:async()=>false,
-  processSynchroniseResult:async entry=>{try{const result=await files.incoming(entry);if(result!==true)onError(fail('shared2-file-apply-incomplete'));return result;}catch(error){onError(error);throw error;}}};
+  processSynchroniseResult:async entry=>{try{const result=await files.incoming(entry);if(result!==true)reportError(fail('shared2-file-apply-incomplete'));return result;}catch(error){reportError(error);throw error;}}};
  class ScopedResults extends ResultProcessor {
   parseDocumentChange(change){
    // The upstream dispatcher intentionally starts this asynchronously. Track
    // those exact tasks so database retirement drains application as well.
-   const task=Promise.resolve().then(()=>super.parseDocumentChange(change)).catch(onError);
+   const task=Promise.resolve().then(()=>super.parseDocumentChange(change)).catch(reportError);
    active.add(task);task.then(()=>active.delete(task),()=>active.delete(task));return task;
   }
  }
@@ -51,8 +52,19 @@ export function createShared2ResultRuntime({ResultProcessor,services,files,keyVa
    processor.enqueueAll(structuredClone(docs));return true;
   },
   async restore(){if(closing)throw fail('shared2-result-runtime-closed');await processor.restoreFromSnapshotOnce();},
+  async reprocessStoredDocuments(){if(closing)throw fail('shared2-result-runtime-closed');applicationError=undefined;return processor.reprocessStoredDocuments();},
   resume(){if(!closing)processor.resume();},
   pause(){processor.suspend();},
+  async confirmDrained(){
+   if(closing||applicationError)throw applicationError||fail('shared2-result-runtime-closed');
+   await Promise.resolve();
+   if(typeof processor._takeSnapshot!=='function')throw fail('shared2-result-proof-unavailable');
+   await processor._takeSnapshot();await writeTail;
+   if(lastWriteError)throw lastWriteError;
+   const snapshot=await snapshotStore.get('replicationResultProcessorSnapshot');
+   if(applicationError||active.size||!snapshot||!Array.isArray(snapshot.queued)||!Array.isArray(snapshot.processing)||snapshot.queued.length||snapshot.processing.length||Object.values(replication).slice(0,3).some(count=>count.value))throw applicationError||fail('shared2-results-pending');
+   return true;
+  },
   get state(){return {pending:replication.replicationResultCount.value,loading:replication.databaseQueueCount.value,applying:replication.storageApplyingCount.value};},
   close(){
    if(closingTask)return closingTask;closing=true;processor.suspend();
