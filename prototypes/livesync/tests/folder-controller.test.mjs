@@ -5,13 +5,13 @@ globalThis.crypto??=webcrypto;
 class TestFolder {constructor(path,children=[]){this.path=path;this.children=children;}}
 class TestFile {constructor(path){this.path=path;this.extension=path.split('.').at(-1);}}
 function file(doc,id,path,content,type='text'){const f=new Y.Map();f.set('path',path);f.set('type',type);if(type==='text'){const t=new Y.Text();t.insert(0,content);f.set('content',t);}else f.set('content',content);doc.getMap('files').set(id,f);return f;}
-import fs from 'node:fs';import {stripTypeScriptTypes} from 'node:module';import {runInNewContext} from 'node:vm';
+import fs from 'node:fs';import {transformSync} from '../.cache/source/node_modules/esbuild/lib/main.js';import {runInNewContext} from 'node:vm';
 import {createSyncFeedback,folderSyncFailure} from '../plugin/sync-feedback.mjs';
 import {unsupportedVersionMessage} from '../plugin/pilot-http.mjs';
 import {createStartupNoticeGate} from '../plugin/startup-notices.mjs';
 import {createMessageTranslator} from '../plugin/message-language.mjs';
 import catalog from '../plugin/message-catalog.mjs';
-function controller(){const notices=[];const ctx={Y,crypto:webcrypto,TextEncoder,TextDecoder,TFile:TestFile,TFolder:TestFolder,blobDigest,uploadSharedBlob,downloadSharedBlob,bytesToBase64,base64ToBytes,folderPaths,safeRelative,createSyncFeedback,folderSyncFailure,Logger:()=>{},LOG_LEVEL_VERBOSE:0,EditorState:{readOnly:{of:v=>({readOnly:v})}},EditorView:{editable:{of:v=>({editable:v})}},Prec:{highest:v=>v},StateEffect:{appendConfig:{of:v=>v}},yCollab:()=>({binding:true}),keymap:{of:v=>v},yUndoManagerKeymap:[],Notice:class{constructor(message){this.message=message;notices.push(this);}hide(){this.hidden=true;}}};const source=fs.readFileSync(new URL('../plugin/folders.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/\bexport /g,'');runInNewContext(stripTypeScriptTypes(source,{mode:'transform'})+'\nglobalThis.Controller=SharedFolders;',ctx);const settings={isConfigured:true,couchDB_DBNAME:'personal',couchDB_USER:'pilot_test',couchDB_PASSWORD:'test-only'};const manager=new ctx.Controller({app:{},core:{services:{setting:{currentSettings:()=>settings}}},unifiedVault:{base:'https://example.invalid/api'},collaboration:{api:async()=>({role:'owner'})}});manager.settings=settings;manager.notices=notices;manager.save=async()=>{};manager.refresh=()=>{};return manager;}
+function controller(){const notices=[];const ctx={Y,crypto:webcrypto,TextEncoder,TextDecoder,TFile:TestFile,TFolder:TestFolder,blobDigest,uploadSharedBlob,downloadSharedBlob,bytesToBase64,base64ToBytes,folderPaths,safeRelative,createSyncFeedback,folderSyncFailure,Logger:()=>{},LOG_LEVEL_VERBOSE:0,EditorState:{readOnly:{of:v=>({readOnly:v})}},EditorView:{editable:{of:v=>({editable:v})}},Prec:{highest:v=>v},StateEffect:{appendConfig:{of:v=>v}},yCollab:()=>({binding:true}),keymap:{of:v=>v},yUndoManagerKeymap:[],Notice:class{constructor(message){this.message=message;notices.push(this);}hide(){this.hidden=true;}}};const source=fs.readFileSync(new URL('../plugin/folders.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/\bexport /g,'');runInNewContext(transformSync(source,{loader:'ts',target:'es2022'}).code+'\nglobalThis.Controller=SharedFolders;',ctx);const settings={isConfigured:true,couchDB_DBNAME:'personal',couchDB_USER:'pilot_test',couchDB_PASSWORD:'test-only'};const manager=new ctx.Controller({app:{},core:{services:{setting:{currentSettings:()=>settings}}},unifiedVault:{base:'https://example.invalid/api'},collaboration:{api:async()=>({role:'owner'})}});manager.settings=settings;manager.notices=notices;manager.save=async()=>{};manager.refresh=()=>{};return manager;}
 test('mobile shared-folder startup keeps its failure state without showing transient popups',async()=>{
  const manager=controller();manager.plugin.startupSyncNotices=createStartupNoticeGate({enabled:true,translate:createMessageTranslator(catalog),readState:async()=>({}),notify:()=>{},schedule:()=>1,cancel:()=>{}});
  manager.discover=async()=>{throw Error('network timeout');};assert.equal(await manager.refreshBeforeSync(),false);
@@ -354,4 +354,16 @@ test('Community sharing with unavailable shared2 reports failure before reading 
  manager.create=()=>assert.fail('must not fall back to legacy copying');
  await manager.openSharePicker(async()=>assert.fail('must not complete legacy sharing'));
  assert.equal(manager.notices.length,1);assert.match(manager.notices[0].message,/Сервер временно недоступен/);
+});
+test('personal admission waits for the real durable folder registry and remains independent of network',async()=>{
+ const manager=controller();let release,reads=0;const wait=new Promise(resolve=>{release=resolve;});
+ manager.plugin.pilotDirectory='pilot';manager.app.vault={adapter:{exists:async()=>true,read:async()=>{reads++;await wait;return JSON.stringify([{id:'f',mount:'Private Shared'}]);}}};
+ let admitted=false;const task=(async()=>{await manager.loadRegistry();admitted=!manager.contains('Private Shared/note.md');})();
+ await Promise.resolve();assert.equal(admitted,false);release();await task;assert.equal(admitted,false);assert.equal(reads,1);
+ await manager.loadRegistry();assert.equal(reads,1);
+});
+test('personal admission fails closed on an unreadable registry',async()=>{
+ const manager=controller();manager.plugin.pilotDirectory='pilot';manager.app.vault={adapter:{exists:async()=>true,read:async()=>'{broken'}};
+ await assert.rejects(manager.loadRegistry());assert.equal(manager.records.length,0);
+ manager.app.vault.adapter.read=async()=>JSON.stringify([{id:'x',mount:'Team'}]);await manager.loadRegistry();assert.equal(manager.contains('Team/note.md'),true);
 });

@@ -5,13 +5,13 @@ const fail=code=>Object.assign(Error(code),{code});
  * content decisions remain in the maintained LiveSync services.
  * The legacy controller is used ONCE to establish the cutover baseline.
  */
-export function createShared2LiveController({profile,engine,baseline,store,scan,checkLease,canUpload=()=>true,onReady=async(_result)=>{},onState=()=>{},isVerified=async(_meta)=>false,prepareEmptyMount=async()=>false}){
- let closed=false,ready=false,initialized=false,initializing,pumping,checking,live,localPrepared=false,problem='',localProblem='',progress=null,queued=0,displayLocalPending=0;
+export function createShared2LiveController({profile,engine,baseline,store,scan,checkLease,canUpload=()=>true,onReady=async(_result)=>{},onState=()=>{},isVerified=async(_meta)=>false,prepareEmptyMount=async()=>false,initialProof}){
+ let closed=false,ready=false,applyingResults=false,initialized=false,initializing,pumping,checking,live,initialReprocessed=false,localPrepared=false,problem='',localProblem='',progress=null,queued=0,displayLocalPending=0;
  const conflicts=new Set(),submissions=new Set();
  const valid=path=>safeRelative(path)&&path.startsWith(profile.documentRoot+'/');
  const healthy=async()=>{if(closed||await checkLease()!==true||closed)throw fail('shared2-vault-lease-rejected');};
  function notify(){onState(api.state);}
- function failed(error){if(!closed){problem=error.code||error.message||'shared2-vault-sync-failed';notify();}}
+ function failed(error){if(!closed){problem=error.code||error.message||'shared2-vault-sync-failed';if(initialProof?.needed())initialReprocessed=false;notify();}}
  async function applyPending(startup=false){
   if(pumping)return pumping;
   const task=(async()=>{
@@ -45,12 +45,31 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
   task.then(result=>{if(live===task)live=undefined;if(!closed&&ready&&result===false)failed(fail('shared2-live-connection-interrupted'));notify();},error=>{if(live===task)live=undefined;failed(error);});
  }
  async function connect(){
-  await healthy();progress={state:'syncing',phase:'exchange'};notify();
+  progress={state:'syncing',phase:'connection'};notify();await healthy();
+  if(initialProof?.needed())await initialProof.preflight?.();
   await engine.results.restore();
-  await engine.synchronize();await healthy();
-  ready=true;initialized=true;problem='';progress=null;engine.results.resume();await applyPending(true);startLive();notify();
+  progress={state:'syncing',phase:'exchange'};notify();await engine.synchronize();await healthy();
+  if(initialProof?.needed()){
+   progress={state:'syncing',phase:'application'};notify();
+   if(!initialReprocessed){await engine.results.reprocessStoredDocuments();initialReprocessed=true;}
+   applyingResults=true;engine.results.resume();
+   for(;;){
+    try{await engine.results.confirmDrained();break;}catch(error){
+     if(error?.code!=='shared2-results-pending'||initialProof.singleAttempt)throw error;
+     await new Promise(resolve=>setTimeout(resolve,100));await healthy();
+    }
+   }
+   await healthy();
+   progress={state:'syncing',phase:'verification'};notify();await initialProof.verify();await healthy();
+   await initialProof.complete();
+  }
+  applyingResults=true;ready=true;initialized=true;problem='';progress=null;engine.results.resume();await applyPending(true);startLive();notify();
  }
  async function prepare(){
+  if(initialProof?.needed()){
+   if(!await store.prepared())await store.markPrepared();
+   localPrepared=true;return connect();
+  }
   if(!await store.prepared()){
    if(await prepareEmptyMount()){
     await healthy();
@@ -81,9 +100,10 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
   await connect();
  }
  const api={
-  get ready(){return ready&&!closed;},get closed(){return closed;},
+  get ready(){return ready&&!closed;},get applyingResults(){return applyingResults&&!closed;},get closed(){return closed;},
   baselineProgress(state){progress=state;notify();},
   get state(){
+   if(problem==='shared2-initial-proof-conflict')return {state:'conflict',code:problem};
    if(problem)return {state:'error',code:problem};
    if(progress)return progress;
    const network=engine.getReplicationState?.()||{},incoming=engine.results?.state||{};
@@ -123,7 +143,7 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
    checking=task;task.then(()=>{if(checking===task)checking=undefined;notify();},error=>{if(checking===task)checking=undefined;failed(error);});return task;
   },
   ledger:()=>baseline.ledger(),
-  async close(){closed=true;ready=false;engine.results.pause();await baseline.close();await engine.stopLive();await Promise.allSettled([initializing,pumping,checking,live,...submissions].filter(Boolean));await store.drain();},
+  async close(){closed=true;ready=false;applyingResults=false;engine.results.pause();await baseline.close();await engine.stopLive();await Promise.allSettled([initializing,pumping,checking,live,...submissions].filter(Boolean));await store.drain();},
  };
  return api;
 }

@@ -4,6 +4,8 @@ import {createShared2EncryptedTransfers} from './shared2-encrypted-transfers.mjs
 import {createShared2MigrationView} from './shared2-migration-view.mjs';
 import {configureShared2PrivateTarget,configureShared2PrivateSource} from './shared2-private-encryption.mjs';
 import {encodeFolderPolicy,folderPolicyExcludes} from './folder-policy.mjs';
+import {createShared2SessionMetrics} from './shared2-session-metrics.mjs';
+import {checkedShared2Bindings,assertEmptyShared2Mount,listPhysicalShared2Files} from './shared2-bindings.mjs';
 import {checkedShared2ServerCatalog,shared2AuthorityTransition} from './shared2-server-catalog.mjs';
 import {preserveShared2LegacyTexts,importShared2LegacyTexts} from './shared2-legacy-cache.mjs';
 import {shared2Message,shared2Phase} from './shared2-messages.mjs';
@@ -40,7 +42,7 @@ const recordCache=(records:any[],id:string)=>records.find(record=>record.id===id
  * for a shared2 mount. Server unavailability retains the boundary and pauses it.
  */
 export class Shared2 {
- enabled=false;disposed=false;busy=false;initialized=false;transferCount=0;catalog:any=null;scope:any=null;
+ enabled=false;disposed=false;busy=false;initialized=false;transferCount=0;catalog:any=null;scope:any=null;bindings:any=null;bindingConflicts=new Map<string,string>();
  preparations=new Map<string,any>();retentionStatus=new Map<string,any>();
  deviceTransfers:any=null;deviceState:any={requests:[],jobs:[]};
  aliasTransfers:any=null;aliasState:any={requests:[],jobs:[]};
@@ -81,9 +83,10 @@ export class Shared2 {
   if(!this.initialized)await this.init();else await this.poll();
  }
  async start(){
+  await this.plugin.folders.loadRegistry?.();
   this.initialized=false;
   if(this.disposed)return;const current=await this.session();if(!current.session?.accessToken||!current.workspace)return;if(!/^[a-f0-9]{32}$/.test(current.workspace))throw Error('shared2-invalid-workspace');
-  const context=this.signature(current);if(this.context&&this.context!==context){await this.aliasTransfers?.close();this.aliasTransfers=null;this.aliasState={requests:[],jobs:[]};await this.reverseTransfers?.close();this.reverseTransfers=null;this.reverseState={requests:[],jobs:[]};await this.encryptedTransfers?.close();this.encryptedTransfers=null;this.encryptedState={requests:[],jobs:[]};await this.deviceTransfers?.close();this.deviceTransfers=null;this.deviceState={requests:[],jobs:[]};await this.retire();await this.jobs?.close();await this.namespaceJobs?.close();this.namespaceJobs=null;this.namespaceState={requests:[],jobs:[]};this.catalog=null;this.retentionStatus.clear();this.enabled=false;this.scope=null;this.keys=null;this.jobs=null;}
+  const context=this.signature(current);if(this.context&&this.context!==context){await this.aliasTransfers?.close();this.aliasTransfers=null;this.aliasState={requests:[],jobs:[]};await this.reverseTransfers?.close();this.reverseTransfers=null;this.reverseState={requests:[],jobs:[]};await this.encryptedTransfers?.close();this.encryptedTransfers=null;this.encryptedState={requests:[],jobs:[]};await this.deviceTransfers?.close();this.deviceTransfers=null;this.deviceState={requests:[],jobs:[]};await this.retire();await this.jobs?.close();await this.namespaceJobs?.close();this.namespaceJobs=null;this.namespaceState={requests:[],jobs:[]};this.catalog=null;this.bindings=null;this.bindingConflicts.clear();this.retentionStatus.clear();this.enabled=false;this.scope=null;this.keys=null;this.jobs=null;}
   this.context=context;
   const response=await this.request('/shared2/catalog');if(response.status!==200)return;
   const catalog=checkedShared2ServerCatalog(response.json);
@@ -138,6 +141,93 @@ export class Shared2 {
   }
   if(changed)await this.plugin.folders.save();this.plugin.folders.refresh();
  }
+ async refreshBindings(){
+  if(this.catalog?.capabilities?.workspaceBindings!==1){this.bindings=null;return;}
+  const scope=this.scope,context=this.context,response=await this.request('/shared2/workspaces/'+scope.workspace+'/bindings');
+  if(response.status!==200)throw Error('shared2-bindings-unavailable');
+  const snapshot=checkedShared2Bindings(response.json,scope);
+  if(this.scope!==scope||this.context!==context)throw Error('shared2-account-changed');
+  if(this.bindings&&snapshot.revision<this.bindings.revision)throw Error('shared2-stale-bindings-snapshot');
+  this.bindings=snapshot;
+  for(const record of this.plugin.folders.records)if(record.shared2BindingRevision&&record.shared2Scope?.account===scope.account&&record.shared2Scope?.workspace===scope.workspace&&!snapshot.bindings.some((item:any)=>item.folder===record.id)){record.shared2BindingInactive=true;await this.closeEntry(record.id);await this.plugin.folders.save();}
+  for(const binding of snapshot.bindings){
+   const foreign=this.plugin.folders.records.find((item:any)=>item.id===binding.folder&&(item.shared2Scope?.account!==scope.account||item.shared2Scope?.workspace!==scope.workspace));
+   if(foreign){foreign.shared2ProtectedMounts??=[];if(!foreign.shared2ProtectedMounts.includes(binding.mount)){foreign.shared2ProtectedMounts.push(binding.mount);await this.plugin.folders.save();}this.bindingConflicts.set(binding.folder,'shared2-other-workspace-active');continue;}
+   const record=this.plugin.folders.records.find((item:any)=>item.id===binding.folder&&item.shared2Scope?.account===scope.account&&item.shared2Scope?.workspace===scope.workspace);
+   const row=this.catalog.folders.find((item:any)=>item.id===binding.folder);
+   const active=binding.state==='connected'&&binding.accessible===1&&row&&row.generation===binding.generation&&row.authorityEpoch===binding.authority_epoch&&row.membershipEpoch===binding.membership_epoch;
+   if(record&&!record.shared2BindingWaiting){
+    if((!record.shared2BindingRevision&&record.mount.toLowerCase()!==binding.mount.toLowerCase())||(record.shared2RecommendedMount&&record.shared2RecommendedMount!==binding.mount)){record.shared2BindingInactive=true;record.shared2BindingConflict=true;await this.closeEntry(binding.folder);await this.plugin.folders.save();continue;}
+    if(record.shared2BindingConflict)continue;
+    if(record.shared2BindingRevision!==binding.revision||record.shared2BindingInactive!==!active||!record.shared2RecommendedMount){
+     await this.closeEntry(binding.folder);record.shared2BindingRevision=binding.revision;record.shared2BindingInactive=!active;record.shared2RecommendedMount=binding.mount;await this.plugin.folders.save();
+    }
+    continue;
+   }
+   if(!active){if(record){record.shared2BindingInactive=true;await this.closeEntry(binding.folder);await this.plugin.folders.save();}continue;}
+   try{
+    const folders=this.plugin.folders,adapter=this.plugin.app.vault.adapter,mount=record?.shared2LocalOverride||binding.mount;
+    let validationError:any;if(!record)try{folders.validateMount(mount,row.role==='owner'?row.ownerWorkspace:undefined);}catch(error){validationError=error;}
+    const waiting:any=record||{id:row.id,mount,role:row.role,protocol:2,shared2Scope:{...scope},shared2BindingRevision:binding.revision,shared2RecommendedMount:binding.mount,shared2BindingInactive:true,shared2BindingWaiting:true};
+    if(!record){folders.records.push(waiting);try{await folders.save();}catch(error){folders.records=folders.records.filter((item:any)=>item!==waiting);throw error;}}
+    if(validationError)throw validationError;
+    const adopt=async()=>{
+    if(waiting.mount!==mount)throw Error('shared2-mount-conflict');waiting.shared2BindingRevision=binding.revision;
+    const validate=()=>{this.plugin.companionOwnership?.assertSharedScopeChange();this.plugin.folderPolicies?.assertSharedMount(mount,row.role==='owner'?row.ownerWorkspace:undefined);if(mount.toLowerCase()==='arcalink shared'||mount.toLowerCase().startsWith('arcalink shared/'))throw Error('shared2-mount-conflict');if(this.context!==context||this.scope!==scope||this.bindings!==snapshot||!folders.records.includes(waiting)||folders.records.some((r:any)=>[...(r===waiting?[]:[r.mount]),...(r.shared2ProtectedMounts||[])].some((other:string)=>mount.toLowerCase()===other.toLowerCase()||mount.toLowerCase().startsWith(other.toLowerCase()+'/')||other.toLowerCase().startsWith(mount.toLowerCase()+'/'))))throw Error('shared2-mount-conflict');};
+    await assertEmptyShared2Mount(adapter,mount,validate);
+    validate();await this.mkdirs(mount,validate);await assertEmptyShared2Mount(adapter,mount,validate);
+    const cacheEpoch=crypto.randomUUID().replace(/-/g,'');Object.assign(waiting,{shared2CacheEpoch:cacheEpoch,shared2InitialPull:cacheEpoch,shared2ReconcileAuthority:false,shared2AuthorityEpoch:row.authorityEpoch,shared2MembershipEpoch:row.membershipEpoch,shared2Generation:row.generation,shared2Database:row.database,shared2KeyEpoch:row.keyEpoch,shared2BindingInactive:false,shared2BindingWaiting:false});
+    try{await folders.save();}catch(error){waiting.shared2BindingInactive=true;waiting.shared2BindingWaiting=true;throw error;}
+    this.bindingConflicts.delete(row.id);
+    };
+    if(this.plugin.companionOwnership)await this.plugin.companionOwnership.sharedScopeMutation(adopt);else await adopt();
+   }catch(error:any){this.bindingConflicts.set(binding.folder,error.code||error.message||'shared2-mount-conflict');}
+  }
+ }
+ async assertRecordContext(record:any,context:any,scope:any){
+  const current=()=>!this.disposed&&this.context===context&&this.scope===scope&&this.plugin.folders.records.includes(record)&&record.shared2Scope?.account===scope?.account&&record.shared2Scope?.workspace===scope?.workspace;
+  if(!current()||this.signature(await this.session())!==context||!current())throw Error('shared2-account-changed');
+ }
+ async acceptBindingPath(record:any,context:any,scope:any){
+  await this.assertRecordContext(record,context,scope);
+  const binding=this.bindings?.bindings.find((item:any)=>item.folder===record.id);if(!binding||binding.state!=='connected'||binding.accessible!==1)throw Error('shared2-binding-conflict');
+  const previous={...record};Object.assign(record,{shared2LocalOverride:record.mount,shared2RecommendedMount:binding.mount,shared2BindingRevision:binding.revision,shared2BindingConflict:false,shared2BindingInactive:false});
+  try{await this.plugin.folders.save();}catch(error){Object.assign(record,previous);throw error;}await this.assertRecordContext(record,context,scope);await this.poll();
+ }
+ async chooseWaitingPath(record:any,path:string,context:any,scope:any,leased=false){
+  if(!leased&&this.plugin.companionOwnership)return this.plugin.companionOwnership.sharedScopeMutation(()=>this.chooseWaitingPath(record,path,context,scope,true));
+  await this.assertRecordContext(record,context,scope);this.plugin.folders.validateMount(path);
+  const old=record.mount,previous=record.shared2ProtectedMounts,override=record.shared2LocalOverride;
+  record.shared2ProtectedMounts=[...new Set([...(previous||[]),old])];record.mount=path;record.shared2LocalOverride=path;
+  try{await this.plugin.folders.save();}catch(error){record.mount=old;record.shared2ProtectedMounts=previous;record.shared2LocalOverride=override;throw error;}
+  await this.assertRecordContext(record,context,scope);await this.refreshBindings();this.redraw();
+ }
+ async relocateInitial(record:any,row:any,path:string,context=this.context,scope=this.scope,leased=false){
+  if(!leased&&this.plugin.companionOwnership)return this.plugin.companionOwnership.sharedScopeMutation(()=>this.relocateInitial(record,row,path,context,scope,true));
+  await this.assertRecordContext(record,context,scope);
+  const folders=this.plugin.folders,adapter=this.plugin.app.vault.adapter;
+  folders.validateMount(path);
+  const previous=record.shared2ProtectedMounts;record.shared2ProtectedMounts=[...new Set([...(previous||[]),path])];
+  try{await folders.save();}catch(error){record.shared2ProtectedMounts=previous;throw error;}
+  const validate=()=>{this.plugin.companionOwnership?.assertSharedScopeChange();if(this.context!==context||this.scope!==scope||!folders.records.includes(record)||folders.records.some((r:any)=>r!==record&&[r.mount,...(r.shared2ProtectedMounts||[])].some((other:string)=>path.toLowerCase()===other.toLowerCase()||path.toLowerCase().startsWith(other.toLowerCase()+'/')||other.toLowerCase().startsWith(path.toLowerCase()+'/'))))throw Error('shared2-mount-conflict');};
+  await assertEmptyShared2Mount(adapter,path,validate);validate();await this.mkdirs(path,validate);await assertEmptyShared2Mount(adapter,path,validate);
+  await this.entryTasks.get(record.id)?.catch(()=>{});await this.closeEntry(record.id);validate();
+  const old={...record},epoch=crypto.randomUUID().replace(/-/g,'');
+  Object.assign(record,{shared2ProtectedMounts:[...new Set([...(record.shared2ProtectedMounts||[]).filter((item:string)=>item!==path),record.mount])],mount:path,shared2LocalOverride:path,shared2CacheEpoch:epoch,shared2InitialPull:epoch,shared2InitialVerifiedEpoch:undefined,shared2ReconcileAuthority:false,shared2InitialReview:false,shared2BindingWaiting:false});
+  try{await folders.save();}catch(error){Object.assign(record,old);throw error;}
+  await this.poll();this.redraw();
+ }
+ async updateBinding(row:any,record:any,state:string,expectedContext=this.context,expectedScope=this.scope){
+  const current=()=>!this.disposed&&this.context===expectedContext&&this.scope===expectedScope&&record.shared2Scope?.account===expectedScope?.account&&record.shared2Scope?.workspace===expectedScope?.workspace&&this.plugin.folders.records.includes(record)&&this.catalog?.folders.some((item:any)=>item.id===row.id&&this.version(item)===this.version(row));
+  if(!current()||this.signature(await this.session())!==expectedContext||!current())throw Error('shared2-account-changed');
+  if(!this.bindings||this.bindings.account!==this.scope.account||this.bindings.workspace!==this.scope.workspace)throw Error('shared2-bindings-unavailable');
+  const existing=this.bindings.bindings.find((item:any)=>item.folder===row.id);
+  const body={mount:existing?.mount||record.mount,state,revision:existing?.revision||0,generation:row.generation,authorityEpoch:row.authorityEpoch,membershipEpoch:row.membershipEpoch,requestKey:crypto.randomUUID().replace(/-/g,''),acknowledgeUpgrade:true};
+  const response=await this.request('/shared2/workspaces/'+this.scope.workspace+'/bindings/'+row.id,{method:'PUT',body:JSON.stringify(body)});
+  if(!current()||this.signature(await this.session())!==expectedContext||!current())throw Error('shared2-account-changed');
+  if(response.status!==200)throw Error(response.status===409?'shared2-binding-conflict':response.json?.error||'shared2-binding-unavailable');
+  await this.closeEntry(row.id);await this.refreshBindings();this.redraw();
+ }
  version(row:any){return JSON.stringify([row.database,row.generation,row.revision,row.role,row.keyEpoch,row.authorityEpoch,row.membershipEpoch]);}
  retentionFor(row:any){const status=this.retentionStatus.get(row?.id);return status&&status.database===row.database&&status.generation===row.generation?status:null;}
  retentionPaused(row:any){const status=this.retentionFor(row);return !!status&&(!['active','restored','retained'].includes(status.state)||status.state==='retained'&&Date.parse(status.retainedUntil)<=Date.now());}
@@ -176,7 +266,7 @@ export class Shared2 {
  async poll(){
   if(this.busy||this.disposed||!this.enabled)return;this.busy=true;
   try{
-   await this.reconcileDeviceTransfers();await this.encryptedTransfers.refresh();await this.reconcileEncryptedTransfers();await this.reverseTransfers.refresh();await this.reconcileReverseTransfers();if(this.aliasTransfers){await this.aliasTransfers.refresh();await this.reconcileAliasTransfers();}const response=await this.request('/shared2/catalog');if(response.status!==200)throw Error('shared2-catalog-unavailable');await this.applyCatalog(response.json);
+   await this.reconcileDeviceTransfers();await this.encryptedTransfers.refresh();await this.reconcileEncryptedTransfers();await this.reverseTransfers.refresh();await this.reconcileReverseTransfers();if(this.aliasTransfers){await this.aliasTransfers.refresh();await this.reconcileAliasTransfers();}const response=await this.request('/shared2/catalog');if(response.status!==200)throw Error('shared2-catalog-unavailable');await this.applyCatalog(response.json);await this.refreshBindings();
    const retention=await this.request('/shared2/retention');if(retention.status===200){if(!Array.isArray(retention.json.folders))throw Error('shared2-retention-unavailable');this.retentionStatus=new Map(retention.json.folders.map((row:any)=>[row.folder,row]));}
    await this.deviceTransfers.refresh();await this.reconcileDeviceTransfers();await this.jobs.refresh();await this.namespaceJobs.refresh();await this.reconcileNamespaceJobs();const inbox=await this.request('/shared2/inbox');if(inbox.status===200)this.inbox=inbox.json.invitations;
    const keyInbox=await this.request('/shared2/key-inbox');if(keyInbox.status===200){this.keyInbox=[];for(const delivery of keyInbox.json.envelopes){const row=this.catalog.folders.find((row:any)=>row.id===delivery.envelope.folder);if(!row)continue;try{await this.keys.get(this.profile(row));}catch{this.keyInbox.push(delivery);}}}
@@ -185,7 +275,7 @@ export class Shared2 {
     if(row.role==='owner'&&this.access.get(row.id)?.revision!==row.revision){const members=await this.request('/shared2/folders/'+row.id+'/members'),invitations=await this.request('/shared2/folders/'+row.id+'/invitations'),devices=await this.request('/shared2/folders/'+row.id+'/devices');this.access.set(row.id,{revision:row.revision,members:members.status===200?members.json.members:[],invitations:invitations.status===200?invitations.json.invitations:[],devices:devices.status===200?devices.json.devices:[]});}
     if(!/^arcalink_s_[a-f0-9]{32}$/.test(row.database))continue;
     const record=this.plugin.folders.records.find((record:any)=>record.id===row.id&&record.protocol===2&&!record.shared2Left&&!record.shared2Revoked&&!record.shared2Creating&&!record.shared2Unsharing&&!record.shared2Rekeying&&!record.shared2Reconciling&&record.shared2Scope?.account===this.scope.account&&record.shared2Scope?.workspace===this.scope.workspace);if(!record)continue;
-    if(record.shared2LocalPaused||this.retentionPaused(row)){await this.closeEntry(row.id);continue;}
+    if(record.shared2LocalPaused||record.shared2BindingInactive||record.shared2BindingWaiting||this.retentionPaused(row)){await this.closeEntry(row.id);continue;}
     const entry=await this.ensure(row,record.mount);void entry.controller.wake().catch(()=>this.redraw());
    }
    for(const record of this.plugin.folders.records)if(record.shared2Preparing&&!record.shared2EncryptedRequest&&!record.shared2NamespaceRequest&&!record.shared2Job&&record.shared2Scope?.account===this.scope.account&&record.shared2Scope?.workspace===this.scope.workspace&&!this.preparations.get(record.id)?.promise)void this.migrate(record.id).catch((error:any)=>{this.warning=error.code||error.message;this.redraw();});
@@ -335,16 +425,20 @@ export class Shared2 {
  }
  async openScope(row:any,mount:string){
   if(!recordCache(this.plugin.folders.records,row.id))throw Error('shared2-cache-scope-unavailable');
-  const profile={kind:'shared',...this.scope,cacheEpoch:recordCache(this.plugin.folders.records,row.id),authorityEpoch:row.authorityEpoch,membershipEpoch:row.membershipEpoch,folder:row.id,ownerWorkspace:row.ownerWorkspace,database:row.database,generation:row.generation,revision:row.revision,catalogRevision:this.catalog.revision,role:row.role,encrypted:row.encrypted,keyEpoch:row.keyEpoch,documentRoot:row.documentRoot};
+  const profile={kind:'shared',...this.scope,...(this.plugin.folders.records.find((item:any)=>item.id===row.id)?.shared2BindingRevision?{bindingRevision:this.plugin.folders.records.find((item:any)=>item.id===row.id).shared2BindingRevision}:{}),cacheEpoch:recordCache(this.plugin.folders.records,row.id),authorityEpoch:row.authorityEpoch,membershipEpoch:row.membershipEpoch,folder:row.id,ownerWorkspace:row.ownerWorkspace,database:row.database,generation:row.generation,revision:row.revision,catalogRevision:this.catalog.revision,role:row.role,encrypted:row.encrypted,keyEpoch:row.keyEpoch,documentRoot:row.documentRoot};
   let controller:any,baseline:any,engine:any,scan:any;
-  const checked=async()=>{if(this.disposed||controller?.closed||this.signature(await this.session())!==this.context)return false;const current=this.catalog?.folders.find((item:any)=>item.id===row.id);return !!current&&this.version(current)===this.version(row);};
+  const checked=async()=>{if(this.disposed||controller?.closed||this.signature(await this.session())!==this.context)return false;const current=this.catalog?.folders.find((item:any)=>item.id===row.id),record=this.plugin.folders.records.find((item:any)=>item.id===row.id);const binding=this.bindings?.bindings.find((item:any)=>item.folder===row.id);return !!current&&this.version(current)===this.version(row)&&(!record?.shared2BindingRevision||!!binding&&binding.state==='connected'&&binding.accessible===1&&binding.revision===record.shared2BindingRevision&&!record.shared2BindingInactive);};
   const adapter=this.plugin.app.vault.adapter,record=this.plugin.folders.records.find((r:any)=>r.id===row.id);
+  const metrics=createShared2SessionMetrics();
+  let initialVerified=record.shared2InitialVerifiedEpoch===profile.cacheEpoch;
+  const canUpload=()=>initialVerified&&!record?.shared2ReconcileAuthority;
   const storage=this.plugin.core.serviceModules.storageAccess;
   const readStream=(path:string)=>this.readStream(path);
   const readBlob=async(path:string)=>{const response=await fetch(adapter.getResourcePath(path),{cache:'no-store'});if(!response.ok)throw Error('shared2-native-file-read-unavailable');return response.blob();};
   const disk=createShared2VaultDisk({adapter,mount,privateRoot:'ArcaLink Shared/shared2/'+this.scope.account+'/'+this.scope.workspace+'/'+row.id,listFiles:async(root:string)=>this.plugin.app.vault.getFiles().filter((file:any)=>file.path.startsWith(root+'/')).map((file:any)=>file.path),readStream,readBlob,beforeCommit:async(path:string,operation:()=>Promise<any>)=>{if(!await checked())throw Error('shared2-vault-lease-rejected');return this.withProjectionEvents(mount+'/'+path,['create','delete'],operation);}});
   await disk.recover();
   const runtime=createShared2RuntimeStore({profile,mount,store:this.store('livesync-'+row.id+'-'+row.generation+'-'+profile.cacheEpoch)});
+  if(!record.shared2InitialPull&&!await runtime.prepared())initialVerified=true;
   const native=createShared2LiveSyncStorage({storage,disk,mount,stat:(path:string)=>adapter.stat(path),hashStream:hashShared2Stream,
    commit:async(path:string,operation:()=>Promise<any>)=>{if(!await checked())throw Error('shared2-vault-lease-rejected');return this.withProjectionEvents(path,['rename'],operation);},
    // The public trigger is fire-and-forget. Keep the fence through the
@@ -357,16 +451,16 @@ export class Shared2 {
    fingerprint:(path:string)=>disk.fingerprint(path.slice(row.documentRoot.length+1)),
    metadata:(path:string)=>engine.metadata(path),revisionProof:(path:string,revision:string)=>hashShared2Stream(engine.stream(path,revision))});
   const getSession=async()=>(await this.session()).session,client=createShared2CatalogClient({request:(...args:any[])=>this.request(args[0],args[1]),getSession});
-  const openRemote=createShared2RemoteFactory({origin:new URL(this.plugin.unifiedVault.base).origin,gatewayPath:new URL(this.plugin.unifiedVault.base).pathname.replace(/\/$/,'')+'/shared2/couch/',createPouchDB:(name:string,options:any)=>new PouchDB(name,options),resolveAccess:(p:any)=>client.resolveAccess(p),configureEncryption:(db:any,p:any)=>configureShared2Encryption(db,p,(p:any)=>this.keys.get(p))});
+  const openRemote=createShared2RemoteFactory({origin:new URL(this.plugin.unifiedVault.base).origin,gatewayPath:new URL(this.plugin.unifiedVault.base).pathname.replace(/\/$/,'')+'/shared2/couch/',createPouchDB:(name:string,options:any)=>new PouchDB(name,options),resolveAccess:(p:any)=>client.resolveAccess(p),onBytes:(count:number)=>metrics.read(count),configureEncryption:(db:any,p:any)=>configureShared2Encryption(db,p,(p:any)=>this.keys.get(p))});
   try{
    engine=await this.engineFactory({namespace:'shared2-vault',createPouchDB:(name:string,options:any)=>new PouchDB(name,options),settingsFor:async(p:any)=>({database:p.database,generation:p.generation,settings:{hashAlg:'sha1',chunkSplitterVersion:'v1',useEden:false,disableWorkerForGeneratingChunks:true,disableWorkerForDecrypting:true}}),keyProvider:(p:any)=>this.keys.get(p),openRemote,accessCheck:checked,
-    lifecycle:'livesync',createLiveSyncLifecycle:(options:any)=>createShared2LiveSyncLifecycle({...options,canUpload:()=>!record?.shared2ReconcileAuthority}),
+    lifecycle:'livesync',createLiveSyncLifecycle:(options:any)=>createShared2LiveSyncLifecycle({...options,canUpload}),
     fileRuntimeFor:async(_profile:any,services:any)=>{
-     scan=createShared2OfflineScan({documentRoot:row.documentRoot,store:runtime,services,role:row.role,canUpload:()=>!record?.shared2ReconcileAuthority,assertCurrent:checked,rememberRevision:checkpoint.remember});
-     return {storageAccess:createShared2ScopedStorage({storage:native,mount,documentRoot:row.documentRoot}),fileReflectionProvenance:runtime.provenance,onReflected:checkpoint.remember,
+     scan=createShared2OfflineScan({documentRoot:row.documentRoot,store:runtime,services,role:row.role,canUpload,assertCurrent:checked,rememberRevision:checkpoint.remember});
+     return {storageAccess:createShared2ScopedStorage({storage:native,mount,documentRoot:row.documentRoot}),fileReflectionProvenance:runtime.provenance,onReflected:async(doc:any,establish:boolean)=>{await checkpoint.remember(doc,establish||!initialVerified);if(!establish){try{const latest=await engine.metadata(doc.path);if(latest?._rev===doc._rev&&await checkpoint.isVerified(latest))metrics.applied();}catch{/* Metrics must not alter file application. */}}},
       conflict:{queueCheckFor:(path:string)=>controller?.conflict(path),queueCheckForIfOpen:(path:string)=>controller?.conflict(path)},vault:{isTargetFile:async()=>true,isFileSizeTooLarge:()=>false},assertCurrent:checked};
     },
-    resultRuntimeFor:({services,files}:any)=>createShared2ResultRuntime({ResultProcessor:ReplicateResultProcessor,services,files,keyValueDB:runtime.kv,documentRoot:row.documentRoot,assertCurrent:checked,isReady:()=>controller?.ready===true,isOnline:()=>navigator.onLine,retire:()=>{controller?.reportError(Error('shared2-engine-version-unsupported'));void (async()=>{await controller?.close();await engine?.close();})().catch(()=>{});},onError:(error:any)=>controller?.reportError(error)})
+    resultRuntimeFor:({services,files}:any)=>createShared2ResultRuntime({ResultProcessor:ReplicateResultProcessor,services,files,keyValueDB:runtime.kv,documentRoot:row.documentRoot,assertCurrent:checked,isReady:()=>controller?.applyingResults===true,isOnline:()=>navigator.onLine,retire:()=>{controller?.reportError(Error('shared2-engine-version-unsupported'));void (async()=>{await controller?.close();await engine?.close();})().catch(()=>{});},onError:(error:any)=>controller?.reportError(error)})
    })(profile);
    if(record?.shared2LegacyVersions?.length&&record.shared2LegacyImportApprovedEpoch===profile.cacheEpoch&&record.shared2LegacyImportedEpoch!==profile.cacheEpoch){
     await engine.synchronize();const versions:any[]=[];
@@ -374,9 +468,44 @@ export class Shared2 {
     const result=await importShared2LegacyTexts({versions,documentRoot:row.documentRoot,engine,role:row.role,hashStream:hashShared2Stream,readBackup:async(path:string)=>{if(!record.shared2LegacyVersions.some((saved:any)=>path.startsWith(saved.root+'/objects/')))throw Error('shared2-legacy-cache-scope-mismatch');return readBlob(path);},assertCurrent:async()=>{if(!await checked())throw Error('shared2-vault-lease-rejected');}});
     if(!result.pending){record.shared2LegacyImportedEpoch=profile.cacheEpoch;await this.plugin.folders.save();}
    }
-   baseline=createShared2VaultController({profile,engine,disk,store:this.store('ledger-'+row.id+'-'+row.generation+'-'+profile.cacheEpoch),checkLease:checked,hashStream:hashShared2Stream,canUpload:()=>!record?.shared2ReconcileAuthority,onState:(state:any)=>controller?.baselineProgress(state)});
-   controller=createShared2LiveController({profile,engine,baseline,store:runtime,checkLease:checked,isVerified:checkpoint.isVerified,canUpload:()=>!record?.shared2ReconcileAuthority,
+   baseline=createShared2VaultController({profile,engine,disk,store:this.store('ledger-'+row.id+'-'+row.generation+'-'+profile.cacheEpoch),checkLease:checked,hashStream:hashShared2Stream,canUpload,onState:(state:any)=>controller?.baselineProgress(state)});
+   controller=createShared2LiveController({profile,engine,baseline,store:runtime,checkLease:checked,isVerified:checkpoint.isVerified,canUpload,
     scan,
+    initialProof:{needed:()=>!initialVerified,preflight:async()=>{
+     if(record.shared2InitialPull===profile.cacheEpoch)return;
+     const review=async()=>{record.shared2InitialReview=true;await this.plugin.folders.save();throw Error('shared2-initial-review-required');};
+     if((await runtime.pending()).length)return review();
+     const docs=await engine.metadataFiles(),local=await listPhysicalShared2Files(adapter,mount),expected=new Set<string>();
+     for(const doc of docs){
+      if(!doc?.path?.startsWith(row.documentRoot+'/')||doc._conflicts?.length)return review();
+      const path=(mount+doc.path.slice(row.documentRoot.length)).toLowerCase();
+      if(doc.deleted||doc._deleted){if(local.some((item:string)=>item.toLowerCase()===path))return review();continue;}
+      expected.add(path);if(!await checkpoint.isVerified(doc))return review();
+     }
+     if(local.some((path:string)=>!expected.has(path.toLowerCase()))||local.length!==expected.size)return review();
+    },verify:async()=>{
+     const files=await engine.metadataFiles(),projected=new Set<string>();
+     for(const doc of files){
+      if(!doc||typeof doc.path!=='string'||!doc.path.startsWith(row.documentRoot+'/')||typeof doc._rev!=='string')throw Error('shared2-initial-proof-incomplete');
+      if(doc._conflicts?.length)throw Error('shared2-initial-proof-conflict');
+      if(!doc.deleted&&!doc._deleted)projected.add((mount+doc.path.slice(row.documentRoot.length)).toLowerCase());
+      if(doc.deleted||doc._deleted){if(await disk.fingerprint(doc.path.slice(row.documentRoot.length+1)))throw Error('shared2-initial-proof-incomplete');}
+      else if(!await checkpoint.isVerified(doc))throw Error('shared2-initial-proof-incomplete');
+      const latest=await engine.metadata(doc.path);if(!latest||latest._rev!==doc._rev||!!latest.deleted!==!!doc.deleted||!!latest._deleted!==!!doc._deleted)throw Error('shared2-initial-proof-changed');
+     }
+     const local=await listPhysicalShared2Files(adapter,mount),events=await runtime.pending();
+     if(local.some((path:string)=>!projected.has(path.toLowerCase()))){record.shared2InitialReview=true;await this.plugin.folders.save();throw Error('shared2-initial-review-required');}
+     // A delayed native CREATE can describe the file just projected by this
+     // pull. Discard it only when the exact live revision is independently
+     // verified against stable on-disk bytes; never discard edits/deletions.
+     for(const event of events){const item=event.item,path=item?.args?.file?.path,doc=files.find((value:any)=>value.path===path);
+      if(item?.type!=='CREATE'||item.args?.renameTarget!==undefined||!doc||!await checkpoint.isVerified(doc)){record.shared2InitialReview=true;await this.plugin.folders.save();throw Error('shared2-initial-review-required');}
+      const latest=await engine.metadata(path);if(!latest||latest._rev!==doc._rev||!await checkpoint.isVerified(latest))throw Error('shared2-initial-proof-changed');
+     }
+     for(const event of events)await runtime.ack(event.id);
+     if((await runtime.pending()).length)throw Error('shared2-initial-proof-changed');
+     await engine.results.confirmDrained();
+    },complete:async()=>{if(record.shared2ReconcileAuthority){const result=await baseline.synchronize();if(result.conflicts.length)throw Error('shared2-initial-proof-conflict');record.shared2ReconcileAuthority=false;}const previous=record.shared2InitialVerifiedEpoch,previousReview=record.shared2InitialReview;record.shared2InitialVerifiedEpoch=profile.cacheEpoch;record.shared2InitialReview=false;try{await this.plugin.folders.save();}catch(error){record.shared2InitialVerifiedEpoch=previous;record.shared2InitialReview=previousReview;throw error;}initialVerified=true;}},
     prepareEmptyMount:async()=>{
      if(row.role==='owner'||record.shared2InitialPull!==profile.cacheEpoch||record.shared2ReconcileAuthority)return false;
      if(!(await disk.list()).length)return true;
@@ -386,15 +515,15 @@ export class Shared2 {
      await this.plugin.folders.save();
      return false;
     },
-    onReady:async(result:any)=>{if(record.shared2ReconcileAuthority&&!result.conflicts.length){record.shared2ReconcileAuthority=false;await this.plugin.folders.save();this.plugin.folders.refresh();}},onState:()=>{}});
+    onReady:async(result:any)=>{if(record.shared2ReconcileAuthority&&!result.conflicts.length){record.shared2ReconcileAuthority=false;await this.plugin.folders.save();this.plugin.folders.refresh();}},onState:()=>this.redraw()});
    if(!await checked())throw Error('shared2-vault-lease-rejected');
-   const entry={version:this.version(row),controller,engine,get state(){return controller.state;}};this.entries.set(row.id,entry);return entry;
+   const entry={version:this.version(row),controller,engine,mount,get state(){return controller.state;},get metrics(){return metrics.snapshot();}};this.entries.set(row.id,entry);return entry;
   }catch(error){await engine?.close();throw error;}
  }
  get activity(){return this.transferCount+[...this.entries.values()].reduce((sum,entry)=>sum+(entry.controller?.activity||0),0);}
- get errorMessages(){return [...this.entries.values()].filter(entry=>entry.state?.state==='error').map(entry=>shared2Message({code:entry.state.code}));}
+ get errorMessages(){const messages=[...this.entries.values()].filter(entry=>entry.state?.state==='error'||entry.state?.state==='conflict').map(entry=>shared2Message({code:entry.state.code}));for(const record of this.plugin.folders.records)if(record.shared2Scope?.account===this.scope?.account&&record.shared2Scope?.workspace===this.scope?.workspace&&(record.shared2BindingWaiting||record.shared2BindingConflict||record.shared2InitialReview))messages.push(record.shared2InitialReview?'Локальные изменения требуют решения. Выберите другую пустую папку, чтобы сохранить прежние файлы.':'Путь занят или пересекается с другой папкой. Выберите другую пустую папку.');return [...new Set(messages)];}
  scopeRow(record:any,includeLocalPause=false){
-  if(!record||(!includeLocalPause&&record.shared2LocalPaused)||record.protocol!==2||record.shared2Left||record.shared2Revoked||record.shared2Creating||record.shared2Unsharing||record.shared2Rekeying||record.shared2Reconciling||record.shared2Scope?.account!==this.scope?.account||record.shared2Scope?.workspace!==this.scope?.workspace)return null;
+  if(!record||record.shared2BindingInactive||record.shared2BindingWaiting||(!includeLocalPause&&record.shared2LocalPaused)||record.protocol!==2||record.shared2Left||record.shared2Revoked||record.shared2Creating||record.shared2Unsharing||record.shared2Rekeying||record.shared2Reconciling||record.shared2Scope?.account!==this.scope?.account||record.shared2Scope?.workspace!==this.scope?.workspace)return null;
   const row=this.catalog?.folders.find((row:any)=>row.id===record.id);return row&&!this.retentionPaused(row)?row:null;
  }
  fileStub(file:any,path:string){return {path,name:path.split('/').pop(),stat:{type:'file',ctime:file.stat?.ctime||0,mtime:file.stat?.mtime||0,size:file.stat?.size||0}};}
@@ -507,7 +636,7 @@ export class Shared2 {
   for(const item of versions)new Setting(dialog.contentEl).setName(item.path).addButton(button=>button.setButtonText('Восстановить отдельно').onClick(async()=>{button.setDisabled(true);try{if(this.disposed||this.context!==context||this.signature(await this.session())!==context)throw Error('shared2-account-changed');if((await this.hashFile(item.backup)).sha256!==item.hash)throw Error('shared2-backup-proof-mismatch');const destination=root+'/recovered/'+crypto.randomUUID()+'/'+item.path;await this.mkdirs(destination.split('/').slice(0,-1).join('/'));await this.plugin.app.vault.adapter.copy(item.backup,destination);if((await this.hashFile(destination)).sha256!==item.hash)throw Error('shared2-backup-proof-mismatch');new Notice('Локальная версия восстановлена: '+destination,15000);}catch(error:any){new Notice(shared2Message(error));}finally{button.setDisabled(false);}}));
   dialog.open();
  }
- async mkdirs(root:string){let path='';for(const part of root.split('/')){path+=(path?'/':'')+part;if(!await this.plugin.app.vault.adapter.exists(path))try{await this.plugin.app.vault.adapter.mkdir(path);}catch(error){if(!await this.plugin.app.vault.adapter.exists(path))throw error;}}}
+ async mkdirs(root:string,check:()=>void=()=>{}){let path='';for(const part of root.split('/')){check();path+=(path?'/':'')+part;const exists=await this.plugin.app.vault.adapter.exists(path);check();if(!exists)try{await this.plugin.app.vault.adapter.mkdir(path);}catch(error){if(!await this.plugin.app.vault.adapter.exists(path))throw error;}check();}}
  async readStream(path:string){const adapter=this.plugin.app.vault.adapter;const response=await fetch(adapter.getResourcePath(path),{cache:'no-store'});if(!response.ok||!response.body)throw Error('shared2-native-file-read-unavailable');return response.body;}
  async hashFile(path:string){return hashShared2Stream(await this.readStream(path));}
  async flushLegacy(record:any){
@@ -550,13 +679,34 @@ export class Shared2 {
   for(const record of this.plugin.folders.records){
    if(record.shared2Left)continue;
    const cancelled=this.jobState.jobs?.find((job:any)=>job.id===record.shared2Job&&job.state==='cancelled');if(cancelled&&record.shared2Preparing)new Setting(container).setName('Перенос отменён: '+record.mount).addButton(button=>button.setButtonText('Возобновить прежнее подключение').onClick(()=>this.confirm('Возобновить прежнее подключение?','Сначала сохранится резервная копия текущих локальных файлов для сверки. Затем подключится прежняя общая папка.',()=>this.resumeCancelled(record))));
+   const dialogContext=this.context,dialogScope=this.scope;
    const row=this.catalog.folders.find((row:any)=>row.id===record.id),card=container.createDiv({cls:'arcalink-shared2-card'});
+   const liveEntry=this.entries.get(record.id),liveState=liveEntry?.state,transfer=liveEntry?.engine?.getReplicationState?.();
    const setting=new Setting(card).setName('Папка: '+record.mount).setDesc(row?(row.role==='owner'?'Владелец':row.role==='editor'?'Редактор':'Читатель')+' · '+(record.shared2LocalPaused?'Синхронизация на этом устройстве приостановлена':shared2Phase(this.entries.get(row.id)?.state?.state)):'Доступ приостановлен');
+   if(liveState?.state==='syncing'&&liveState.phase)new Setting(card).setName(shared2Phase(liveState.phase));
+   if(Number.isFinite(transfer?.sent)&&Number.isFinite(transfer?.arrived))new Setting(card).setName('Передано за сеанс: записи базы').setDesc('↑ '+transfer.sent+'  ↓ '+transfer.arrived);
+   if(liveEntry?.controller?.displayBacklog?.incoming)new Setting(card).setName('Ожидают применения: записи базы').setDesc(String(liveEntry.controller.displayBacklog.incoming));
+   const sessionMetrics=liveEntry?.metrics;if(sessionMetrics){
+    new Setting(card).setName('Обработано тел ответов за сеанс: декодированные байты').setDesc(String(sessionMetrics.bytes));
+    new Setting(card).setName('Средняя скорость обработки за сеанс: байт/с').setDesc(sessionMetrics.bytesPerSecond===null?'Ожидание':String(Math.round(sessionMetrics.bytesPerSecond)));
+    new Setting(card).setName('Подтверждено применений файлов за сеанс').setDesc(String(sessionMetrics.applied));
+    new Setting(card).setName('Последнее продвижение за сеанс').setDesc(sessionMetrics.lastProgress===null?'Ожидание':new Date(sessionMetrics.lastProgress).toLocaleTimeString());
+   }
    if(record.protocol!==2&&!record.shared2Job&&record.role==='owner')setting.addButton(button=>{button.setButtonText('Перенести папку').onClick(()=>{void this.migrate(record.id).catch((e:any)=>new Notice(shared2Message(e)));});tariffGate(button.buttonEl);} );
    if(row)card.createEl('p',{text:'Владелец папки: '+(row.ownerLabel||row.owner)});
    const retention=row&&this.retentionFor(row);if(retention&&retention.state!=='active')new Setting(card).setName(retention.state==='purged'?'Серверная копия удалена':'Хранение серверной копии').setDesc(retention.state==='purged'?'Локальные файлы сохранены. Для восстановления нужен полный локальный кэш с историей.':retention.retainedUntil?'Срок хранения: '+new Date(retention.retainedUntil).toLocaleString():shared2Phase(retention.state)).addButton(button=>button.setButtonText('Восстановить из локальной копии').setDisabled(!retention.canRestore||row.ownerWorkspace!==this.scope.workspace||!!record.shared2Rekeying||!!record.shared2Reconciling||!!record.shared2Unsharing).onClick(()=>this.confirm('Восстановить серверную копию?','Будет проверена полнота сохранённого кэша и его истории. При недостающих версиях восстановление остановится. Для зашифрованной папки будет создан новый ключ; участникам потребуется передать его заново.',async()=>{await this.deviceTransfers.plan(row.id,'restore');await this.poll();})));
    if(record.protocol===2)new Setting(card).setName('Сохранённые локальные версии').setDesc('Версии, сохранённые перед заменой файлов или сменой прав.').addButton(button=>button.setButtonText('Посмотреть').onClick(()=>{void this.showRecoveries(record).catch((error:any)=>new Notice(shared2Message(error)));}));
    if(row&&record.shared2Revoked)new Setting(card).setName('Доступ предоставлен повторно').addButton(button=>button.setButtonText('Восстановить подключение').onClick(()=>this.confirm('Восстановить подключение?','Сохранённые локальные файлы будут сверены с общей папкой.',async()=>{if(record.shared2CacheEpoch){record.shared2RetiredLedgers??=[];record.shared2RetiredLedgers.push('ledger-'+row.id+'-'+(record.shared2Generation||row.generation)+'-'+record.shared2CacheEpoch);}record.shared2Revoked=false;record.shared2ReconcileAuthority=true;record.shared2AuthorityEpoch=row.authorityEpoch;record.shared2MembershipEpoch=row.membershipEpoch;record.shared2Generation=row.generation;record.shared2Database=row.database;record.shared2KeyEpoch=row.keyEpoch;record.shared2CacheEpoch=crypto.randomUUID().replace(/-/g,'');record.role=row.role;await this.plugin.folders.save();await this.poll();})));
+   if(row&&record.protocol===2&&this.bindings){
+    const binding=this.bindings.bindings.find((item:any)=>item.folder===row.id),connected=binding?.state==='connected'&&binding?.accessible===1,capturedContext=this.context,capturedScope=this.scope;
+    new Setting(card).setName('Подключение на устройствах этого хранилища').setDesc(record.shared2BindingWaiting?'Ожидается пустой безопасный путь. Локальные файлы сохранены.':binding?'Рекомендуемый путь: '+binding.mount+(binding.mount!==record.mount?' · локальный путь: '+record.mount:''):'Пока только на этом устройстве.')
+     .addButton(button=>button.setButtonText(connected?'Отключить на всех устройствах':'Подключить на всех устройствах').onClick(()=>this.confirm(connected?'Отключить на всех устройствах?':'Подключить на всех устройствах?',connected?'Доступ к общей папке сохраняется, локальные копии не удаляются.':'Все устройства этого аккаунта для данной папки должны быть обновлены: старые версии потеряют подключение. Другие участники не затрагиваются.',()=>this.updateBinding(row,record,connected?'disconnected':'connected',capturedContext,capturedScope))));
+   }
+   if(record.shared2BindingConflict)new Setting(card).setName('Разные локальные пути').setDesc('На другом устройстве указан другой путь. Выберите, использовать ли сохранённый путь этого устройства.').addButton(button=>button.setButtonText('Использовать локальный путь').onClick(()=>this.confirm('Использовать локальный путь?', 'Путь этого устройства сохранится отдельно; серверный рекомендуемый путь не изменится.',()=>this.acceptBindingPath(record,dialogContext,dialogScope))));
+   if(row&&record.shared2InitialReview)new Setting(card).setName('Локальные изменения требуют решения').setDesc('Исходные файлы и отложенные изменения сохранены. Можно подключить общую папку в другую пустую папку; старый путь останется защищён.').addButton(button=>button.setButtonText('Подключить в другую папку').onClick(()=>chooseSharedFolder(this.plugin.app,{title:'Новая пустая папка',description:'Прежние локальные файлы останутся на месте.',action:'Выбрать',unavailable:(path:string)=>{try{this.plugin.folders.validateMount(path);return '';}catch(error:any){return error.message;}},select:(path:string)=>this.relocateInitial(record,row,path,dialogContext,dialogScope)})));
+   if(record.shared2BindingWaiting)new Setting(card).setName('Ожидание пути').setDesc('Путь занят или недоступен. Файлы не объединяются автоматически.')
+    .addButton(button=>button.setButtonText('Выбрать пустую папку').onClick(()=>chooseSharedFolder(this.plugin.app,{title:'Выбрать пустую папку',description:'Исходный локальный путь останется защищён от личной синхронизации.',action:'Выбрать',unavailable:(path:string)=>{try{this.plugin.folders.validateMount(path);return '';}catch(error:any){return error.message;}},select:(path:string)=>this.chooseWaitingPath(record,path,dialogContext,dialogScope)    })));
+
    if(row&&record.protocol===2&&!record.shared2Revoked){
     if(record.shared2LegacyVersions?.length&&record.shared2LegacyImportedEpoch!==record.shared2CacheEpoch)new Setting(card).setName('Сохранены локальные версии прежнего формата').setDesc('Они доступны в локальной резервной копии.').addButton(button=>button.setButtonText('Добавить версии к общей папке').setDisabled(row.role==='viewer').onClick(()=>this.confirm('Добавить сохранённые локальные версии?','Различающиеся варианты сохранятся как конфликтующие версии для сверки.',async()=>{record.shared2LegacyImportApprovedEpoch=record.shared2CacheEpoch;await this.plugin.folders.save();const entry=this.entries.get(row.id);if(entry){await entry.controller.close();await entry.engine.close();this.entries.delete(row.id);}await this.poll();})));
 
@@ -572,6 +722,7 @@ export class Shared2 {
     }else setting.addButton(button=>button.setButtonText('Отказаться от общего доступа').onClick(()=>this.confirm('Отказаться от общего доступа?','Локальные файлы сохранятся на этом устройстве.',()=>this.leave(row,record))));
    }
   }
+  for(const [id,reason] of this.bindingConflicts)if(reason==='shared2-other-workspace-active')new Setting(container).setName('Подключение ожидает выбора хранилища').setDesc('Эта папка уже подключена в другом хранилище на устройстве. Локальные пути сохранены и защищены.');
   for(const row of this.catalog.folders.filter((row:any)=>/^arcalink_s_[a-f0-9]{32}$/.test(row.database)&&!this.plugin.folders.records.some((r:any)=>r.id===row.id)))new Setting(container).setName('Папка: '+row.documentRoot).setDesc('Владелец: '+(row.ownerLabel||row.owner)).addButton(button=>button.setButtonText('Подключить локальную папку').onClick(()=>this.mount(row)));
   for(const delivery of this.keyInbox){const row=this.catalog.folders.find((row:any)=>row.id===delivery.envelope.folder);if(row)new Setting(container).setName('Ключ папки: '+row.documentRoot).setDesc('Устройство владельца: '+delivery.sender.device).addButton(button=>button.setButtonText('Проверить и принять ключ').onClick(()=>this.receiveKey(row,delivery)));}
   for(const invite of this.inbox){const card=container.createDiv({cls:'arcalink-shared2-card'});new Setting(card).setName('Приглашение: '+invite.name).setDesc('Владелец: '+invite.owner+' · '+(invite.role==='editor'?'Редактор':'Читатель')).addButton(button=>button.setButtonText('Принять').onClick(()=>{void this.respond(invite,'accept');})).addButton(button=>button.setButtonText('Отказаться').onClick(()=>{void this.respond(invite,'reject');}));}

@@ -1,5 +1,14 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {fileURLToPath} from 'node:url';import {shared2ProductionPlugin} from '../scripts/shared2-production-build.mjs';
 const source=fileURLToPath(new URL('../.cache/source/',import.meta.url)),require=createRequire(source+'esbuild.config.mjs');const {build}=require('esbuild');
+test('ordinary browser, HTTP action codec and scoped replication can load in one production bundle',async()=>{
+ const output=await build({stdin:{contents:`export {CompanionActionCodec} from '../../plugin/companion-action-codec.ts';export {PouchDB as Browser} from '@vrtmrz/livesync-commonlib/compat/pouchdb/pouchdb-browser';export {PouchDB as Http} from './node_modules/@vrtmrz/livesync-commonlib/dist/pouchdb/pouchdb-http.js';export {Shared2PouchDB as Scoped} from '../../plugin/shared2-pouch.mjs';`,resolveDir:source},plugins:[shared2ProductionPlugin()],bundle:true,platform:'node',format:'cjs',metafile:true,write:false,nodePaths:[source+'node_modules']});
+ assert.ok(Object.keys(output.metafile.inputs).includes('companion-http-core:pouchdb-core'));
+ const Module=require('node:module'),mod=new Module('companion-mixed-production-startup');mod.filename=source+'companion-mixed-production-startup.cjs';mod.paths=Module._nodeModulePaths(source);mod._compile(output.outputFiles[0].text,mod.filename);
+ const {Browser,Http,Scoped,CompanionActionCodec}=mod.exports;assert.equal(typeof CompanionActionCodec,'function');
+ for(const [a,b]of [[Browser,Http],[Browser,Scoped],[Http,Scoped]]){assert.notEqual(a,b);assert.notEqual(a.prototype,b.prototype);}
+ for(const Pouch of [Browser,Http,Scoped]){assert.equal(typeof Pouch.replicate,'function');assert.equal(typeof Object.getOwnPropertyDescriptor(Pouch.prototype,'replicate').get,'function');assert.equal(typeof Pouch.adapters.http,'function');}
+ assert.equal(Http.adapters.idb,undefined);assert.equal(Http.adapters.indexeddb,undefined);
+});
 test('shared2 replicator patch is a separate module/constructor and leaves the personal replicator intact',async()=>{
  const output=await build({stdin:{contents:`export {PouchDB as Base} from '@vrtmrz/livesync-commonlib/compat/pouchdb/pouchdb-browser';export {Shared2PouchDB} from '../../plugin/shared2-pouch.mjs';import Memory from 'pouchdb-adapter-memory';export {Memory};`,resolveDir:source},plugins:[shared2ProductionPlugin()],bundle:true,platform:'node',format:'cjs',metafile:true,write:false,nodePaths:[source+'node_modules']});
  const inputs=Object.keys(output.metafile.inputs);assert.ok(inputs.includes('shared2-replication:pouchdb-replication'));assert.ok(inputs.includes('shared2-core:pouchdb-core'));assert.ok(inputs.some(name=>!name.startsWith('shared2-replication:')&&name.endsWith('pouchdb-replication/lib/index.js')));

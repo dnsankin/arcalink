@@ -23,6 +23,11 @@ export class FolderPolicies {
   oldSuspended=false;lastCheck=0;operation:any=null;remoteOperation:any=null;remotePhase='';cloudReady=false;cancelling:Promise<void>|null=null;
   previewing:Promise<any>|null=null;previewCancelled=false;exchangePausedByFreeze=false;recovering=false;
   protectedPaths:string[]=[];protectedRevision='';
+  maintenance:{phase:string;done?:number;lastProgress:number}|null=null;
+  maintenanceError='';
+  reportMaintenance=({phase,done}:{phase:string;done?:number})=>{
+    if(this.loading&&!this.disposed)this.maintenance={phase,done,lastProgress:Date.now()};
+  };
   constructor(private plugin:any){this.active=pluginEnvironment(plugin.manifest).folderPolicies;this.store=createFolderPolicyStore(plugin.app.vault.adapter,plugin.pilotDirectory+'/folder-policy-state');}
   get state(){return this.observed||this.entry?.state;}
   requiresPolicy(){return !!(this.state?.revision||this.entry?.state?.revision||this.entry?.seen?.revision||this.entry?.binding?.revision||this.entry?.journal||this.operation||this.remoteOperation);}
@@ -161,7 +166,7 @@ export class FolderPolicies {
         if(error.code==='policy-changed'&&!this.plugin.core.services.database.isDatabaseReady()){
           // This generation never ran. Re-plan from its intact former source.
           await this.save({binding:e.previousBinding||null,state:e.previousState||null,
-            abandoned:[...(e.abandoned||[]),{logical:e.journal.logical,target:e.journal.target,workspace:e.journal.workspace,revision:e.journal.revision}],journal:null,challenge:null,acknowledgement:null,retirement:null});
+            abandoned:[...(e.abandoned||[]),{logical:e.journal.logical,target:e.journal.target,workspace:e.journal.workspace,revision:e.journal.revision}],journal:null,challenge:null,acknowledgement:null,retirement:null,retirementCheckpoint:null});
           return;
         }
         throw error;
@@ -171,16 +176,21 @@ export class FolderPolicies {
       if(!persist)return; // The caller must persist its destination settings first.
       await this.save({acknowledgement:{workspace:this.workspace,revision:ack.revision,database:e.journal.database}});
     }
+    const scope=this.workspace+'|'+this.logical;
+    const target=this.entry.binding.target;
+    const isCurrent=async()=>!this.disposed&&scope===this.workspace+'|'+this.logical&&target===this.entry?.binding?.target;
     await retirePreparedFolderDatabase({journal:this.entry.journal,binding:this.entry.binding,acknowledgement:this.entry.acknowledgement,
-      retirement:this.entry.retirement,open:this.factory.openRaw,isCurrent:async()=>!this.disposed,isMapped:async(name:string)=>name===this.entry.binding.target,
-      isQuiescent:async()=>!this.plugin.core.services.database.isDatabaseReady(),persistRetirement:async(value:any)=>this.save({retirement:value})});
+      retirement:this.entry.retirement,open:this.factory.openRaw,isCurrent,isMapped:async(name:string)=>name===this.entry?.binding?.target,
+      isQuiescent:async()=>!this.plugin.core.services.database.isDatabaseReady(),persistRetirement:async(value:any)=>this.save({retirement:value}),
+      onProgress:this.reportMaintenance,checkpoint:this.entry.retirementCheckpoint,
+      saveCheckpoint:async(value:any)=>this.save({retirementCheckpoint:value})});
     for(const abandoned of this.entry.abandoned||[]){
       if(abandoned.logical!==this.logical||abandoned.target===this.entry.binding.target)throw fail();
       if(folderDatabaseName(abandoned.logical,{protocol:1,...abandoned})!==abandoned.target)throw fail();
       const candidate=this.factory.openRaw(abandoned.target,{auto_compaction:false});
       await candidate.destroy();
     }
-    await this.save({journal:null,challenge:null,acknowledgement:null,retirement:null,previousBinding:null,previousState:null,abandoned:[]});
+    await this.save({journal:null,challenge:null,acknowledgement:null,retirement:null,retirementCheckpoint:null,previousBinding:null,previousState:null,abandoned:[]});
   }
   async prepare(settings:any,persist=true){
     // Recover a lost earlier acknowledgement before asking for a newer policy.
@@ -199,7 +209,7 @@ export class FolderPolicies {
     const previous=this.entry.journal;
     const journal=await prepareFolderDatabase({state,logical:this.logical,source,journal:previous?.revision===state.revision?previous:null,
       open:this.factory.openRaw,persistJournal:async(value:any)=>this.save({journal:value}),quiesce:async()=>!this.plugin.core.services.database.isDatabaseReady(),
-      isCurrent,isMapped:async(name:string)=>name===this.entry?.binding?.target});
+      isCurrent,isMapped:async(name:string)=>name===this.entry?.binding?.target,onProgress:this.reportMaintenance});
     const refreshed=await this.fetchState(settings);
     if(refreshed?.phase!=='ready'||refreshed.revision!==state.revision||refreshed.database!==state.database)throw fail();
     const binding=await activatePreparedFolderDatabase({state,journal,open:this.factory.openRaw,isCurrent,persistBinding:async(value:any)=>this.save({binding:value,state})});
@@ -256,11 +266,16 @@ export class FolderPolicies {
     try{await this.assertLabVault();}catch(error:any){this.error=error.message;return false;}
     if(!settings.isConfigured)return true;
     this.loading=true;
+    this.maintenanceError='';
+    this.reportMaintenance({phase:'policy'});
     try{const workspace=await this.bindingId();if(!/^[a-f0-9]{32}$/.test(workspace||''))return true;await this.select(workspace,settings);const ready=await this.prepare(settings);this.error=ready?'':'Применяются общие исключения папок. Дождитесь завершения.';return ready;}
     catch(e:any){
       if(this.legacyUnavailable(e)){this.available=false;this.error='';return true;}
-      this.error=fail().message;return false;
-    }finally{this.loading=false;}
+      this.error=fail().message;
+      this.maintenanceError=typeof e?.code==='string'&&/^[a-z0-9-]{1,64}$/.test(e.code)?e.code:
+        Number.isInteger(e?.status)?String(e.status):e?.unavailable?'network-unavailable':'';
+      return false;
+    }finally{this.loading=false;this.maintenance=null;}
   }
   async beforeExchange(){
     if(!this.active)return true;
@@ -331,6 +346,8 @@ export class FolderPolicies {
       if(!this.holding)await this.hold();
       quiesced=true;
       this.loading=true;s.appLifecycle.resetIsReady();
+      this.maintenanceError='';
+      this.reportMaintenance({phase:'policy'});
       await s.database.localDatabaseDirect?.close();
       if(!current()||!await this.prepare(s.setting.currentSettings()))throw fail();
       if(!current()||!await s.database.openDatabase({databaseEvents:s.databaseEvents,replicator:s.replicator}))throw fail();
@@ -341,7 +358,7 @@ export class FolderPolicies {
     }catch(error){
       if(quiesced&&!released){this.holding=true;s.appLifecycle.setSuspended(true);s.appLifecycle.resetIsReady();}
       throw error;
-    }finally{this.loading=false;}
+    }finally{this.loading=false;this.maintenance=null;}
   }
   async hold(){
     if(this.holding||this.loading||this.recovering)throw fail();

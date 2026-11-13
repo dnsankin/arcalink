@@ -28,6 +28,7 @@ const textIfPresent=file=>{try{return syncFS.readFileSync(file,'utf8');}catch(er
 
 test('actual host scopes use continuous LiveSync on physical files, preserve recovery copies and do not repeat a full scan',async t=>{
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'arcalink-host-live-')),remote=createDB('host-server-'+crypto.randomUUID()),clients=[],errors=[];
+ await remote.put({_id:'_design/arcalink_shared2_access',filters:{files:"function(doc,req){return doc._id.charAt(0)!=='_';}"}});
  const originalFetch=globalThis.fetch;
  globalThis.fetch=async(input,options)=>{
   const url=new URL(typeof input==='string'?input:input.url);
@@ -77,6 +78,7 @@ test('actual host scopes use continuous LiveSync on physical files, preserve rec
  await be.controller.wake();
  const bNote=path.join(b.root,b.mount,'note.md');await waitFor(()=>syncFS.existsSync(bNote));
  await waitFor(()=>ae.controller.activity===0&&be.controller.activity===0);
+ assert.ok(be.metrics.applied>=1,'verified file applications are counted for this session');
  assert.deepEqual(await fs.readFile(path.join(b.root,b.mount,'attachment.bin')),attachment);
  const interrupted=await client('interrupted','Retry');
  interrupted.record.shared2InitialPull=interrupted.record.shared2CacheEpoch;
@@ -86,12 +88,45 @@ test('actual host scopes use continuous LiveSync on physical files, preserve rec
  firstPull.engine.synchronize=async()=>{await pull();throw Error('interrupted before applying results');};
  await assert.rejects(firstPull.controller.wake(),/interrupted before applying results/);
  await firstPull.controller.close();await firstPull.engine.close();interrupted.manager.entries.delete(interrupted.row.id);
+ await fs.writeFile(path.join(interrupted.root,interrupted.mount,'extra.md'),'Added while closed');
  const retry=await interrupted.manager.ensure(interrupted.row,interrupted.mount);
  retry.controller.baselineProgress=()=>assert.fail('a resumed pull must not use the legacy baseline');
+ await assert.rejects(retry.controller.wake(),/shared2-initial-review-required/);
+ assert.equal(interrupted.record.shared2InitialVerifiedEpoch,undefined);
+ assert.equal(await fs.readFile(path.join(interrupted.root,interrupted.mount,'extra.md'),'utf8'),'Added while closed');
+ assert.equal(await retry.engine.metadata('Owner/Shared/extra.md'),null);
+ await fs.unlink(path.join(interrupted.root,interrupted.mount,'extra.md'));
+ await retry.controller.enqueue({type:'CREATE',args:{file:{path:'Owner/Shared/note.md',name:'note.md',stat:{type:'file',size:1,mtime:1,ctime:1}}}});
  await retry.controller.wake();
+ const pendingRuntime=await interrupted.manager.store('livesync-'+interrupted.row.id+'-'+interrupted.row.generation+'-'+interrupted.record.shared2CacheEpoch).load();assert.deepEqual(pendingRuntime.events,[]);
+
+ assert.equal(interrupted.record.shared2InitialReview,false);assert.deepEqual(interrupted.manager.errorMessages,[]);
  await waitFor(()=>retry.controller.activity===0);
  assert.deepEqual(await fs.readFile(path.join(interrupted.root,interrupted.mount,'attachment.bin')),attachment);
  await retry.controller.close();await retry.engine.close();interrupted.manager.entries.delete(interrupted.row.id);
+ const unsafe=await client('unsafe','Unsafe');unsafe.record.shared2InitialPull=unsafe.record.shared2CacheEpoch;
+ await fs.writeFile(path.join(unsafe.root,unsafe.mount,'note.md'),'Local unsynced bytes');
+ const unsafeEntry=await unsafe.manager.ensure(unsafe.row,unsafe.mount);
+ const unsafeFile={path:'Owner/Shared/note.md',name:'note.md',stat:{type:'file',size:20,mtime:1,ctime:1}};
+ await unsafeEntry.controller.enqueue({type:'CREATE',args:{file:unsafeFile}});await unsafeEntry.controller.enqueue({type:'CHANGED',args:{file:unsafeFile}});
+ await assert.rejects(unsafeEntry.controller.wake(),/shared2-initial-review-required|shared2-initial-proof-incomplete|shared2-initial-proof-conflict/);
+ const unsafeRuntime=await unsafe.manager.store('livesync-'+unsafe.row.id+'-'+unsafe.row.generation+'-'+unsafe.record.shared2CacheEpoch).load();
+ assert.deepEqual(unsafeRuntime.events.map(event=>event.item.type),['CREATE','CHANGED']);assert.equal(unsafe.record.shared2InitialVerifiedEpoch,undefined);
+ assert.equal(await fs.readFile(path.join(unsafe.root,unsafe.mount,'note.md'),'utf8'),'Local unsynced bytes');
+ await unsafeEntry.controller.close();await unsafeEntry.engine.close();unsafe.manager.entries.delete(unsafe.row.id);
+ const legacy=await client('legacy','Legacy');
+ legacy.record.shared2InitialPull=legacy.record.shared2CacheEpoch;
+ let legacyEntry=await legacy.manager.ensure(legacy.row,legacy.mount);await legacyEntry.controller.wake();
+ const originalRevision=(await legacyEntry.engine.metadata('Owner/Shared/note.md'))._rev;
+ await legacyEntry.controller.close();await legacyEntry.engine.close();legacy.manager.entries.delete(legacy.row.id);
+ delete legacy.record.shared2InitialPull;delete legacy.record.shared2InitialVerifiedEpoch;
+ await fs.writeFile(path.join(legacy.root,legacy.mount,'note.md'),'Offline legacy edit');
+ legacyEntry=await legacy.manager.ensure(legacy.row,legacy.mount);
+ await assert.rejects(legacyEntry.controller.wake(),/shared2-initial-review-required/);
+ assert.equal(await fs.readFile(path.join(legacy.root,legacy.mount,'note.md'),'utf8'),'Offline legacy edit');
+ assert.equal((await legacyEntry.engine.metadata('Owner/Shared/note.md'))._rev,originalRevision);
+ assert.equal(legacy.record.shared2InitialReview,true);
+ await legacyEntry.controller.close();await legacyEntry.engine.close();legacy.manager.entries.delete(legacy.row.id);
  const beforeA=a.reads.length,beforeB=b.reads.length;
  for(let i=0;i<20;i++){await ae.controller.wake();await be.controller.wake();}
  assert.equal(a.reads.length,beforeA);assert.equal(b.reads.length,beforeB);

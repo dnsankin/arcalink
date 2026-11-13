@@ -1,9 +1,16 @@
 import {readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {patchIdbMemory} from './patch-idb-memory.mjs';
+import {patchPeerFilePolicy,patchPeerIntegrityMetadata} from './patch-peer-file-policy.mjs';
 import {patchLargeContent,patchDecodedBinary,patchBinaryConflictReader} from './patch-large-content.mjs';
 import {patchReplicationBusy} from './patch-replication.mjs';
 import {patchTicketRelayLifecycle,patchFreeChunkRetries,patchTicketedPeerCleanup,patchTicketedRtcRelease,patchTicketedFreshJoin} from './patch-free-relay.mjs';
+
+export function patchActionRpcExports(value,types=false){
+ const marker=types?'export { RpcRoom } from "./RpcRoom.js";':'  RpcRoom,';
+ if(value.split(marker).length!==2||value.includes('generateJoinRoomOptions')||value.includes('subscribeTrysteroPeerEvents'))throw Error('Unexpected RPC export boundary');
+ return value+'\nexport { generateJoinRoomOptions } from "./transports/trysteroUtils.js";\nexport { subscribeTrysteroPeerEvents } from "./transports/trysteroRoomEvents.js";\nexport { joinRoom as joinTrysteroRoom, selfId as trysteroSelfId, getRelaySockets as getTrysteroRelaySockets } from "@trystero-p2p/nostr";\n';
+}
 
 /** Identical maintained protocol patches shared by plugin and autonomous host. */
 export async function patchMaintainedEngine(source,{foldersLab=false}={}) {
@@ -36,6 +43,7 @@ const roomOwnerPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/di
 // signals and bounded deadlines, but allow Free bulk RPCs to outlive 30 seconds.
 const rpcRoomPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/rpc/RpcRoom.js');
 await writeFile(rpcRoomPath,patchFreeChunkRetries(await readFile(rpcRoomPath,'utf8')));
+for(const [file,types] of [['index.js',false],['index.d.ts',true]]){const rpcIndex=path.join(path.dirname(rpcRoomPath),file);await writeFile(rpcIndex,patchActionRpcExports(await readFile(rpcIndex,'utf8'),types));}
 const rpcTransportPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/rpc/transports/TrysteroTransport.js');
 const rpcTransport=await readFile(rpcTransportPath,'utf8');
 const optionsMarker='    ...TRYSTERO_RPC_DEFAULTS,';
@@ -82,6 +90,11 @@ if(foldersLab){
     await writeFile(file,labSource);
   }
 }
+const fileHandlerPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/serviceModules/ServiceFileHandlerBase.js');
+const actionRevisionHelper=path.relative(path.dirname(fileHandlerPath),path.join(source,'src/companion-action-revision.mjs')).split(path.sep).join('/');
+const fileHandlerSource=await readFile(fileHandlerPath,'utf8');
+await writeFile(fileHandlerPath+'.upstream',fileHandlerSource);
+await writeFile(fileHandlerPath,patchPeerFilePolicy(fileHandlerSource,actionRevisionHelper,path.relative(path.dirname(fileHandlerPath),path.join(source,'src/companion-action-integrity.mjs')).split(path.sep).join('/')));
 const contentPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/common/utils.js');
 const contentSource=await readFile(contentPath,'utf8'),contentMarker='function isTextDocument(doc) {';
 if(contentSource.split(contentMarker).length!==2)throw Error('Unexpected upstream content decoding boundary');
@@ -91,7 +104,9 @@ for(const name of ['index.js','index.es.js']){
  await writeFile(idbPath,patchIdbMemory(await readFile(idbPath,'utf8')));
 }
 const largeReaderPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/managers/EntryManager/EntryManagerImpls.js');
-await writeFile(largeReaderPath,patchLargeContent(await readFile(largeReaderPath,'utf8')));
+const peerReaderBaseline=patchLargeContent(await readFile(largeReaderPath,'utf8'));
+await writeFile(largeReaderPath+'.peer-upstream',peerReaderBaseline);
+await writeFile(largeReaderPath,patchPeerIntegrityMetadata(peerReaderBaseline));
 const binaryDecoderPath=path.join(source,'node_modules/octagonal-wheels/dist/binary/index.js');
 await writeFile(binaryDecoderPath,patchDecodedBinary(await readFile(binaryDecoderPath,'utf8')));
 const conflictManagerPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/managers/ConflictManager.js');

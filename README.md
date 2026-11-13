@@ -12,7 +12,13 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-Текущая версия: **[1.0.41](https://github.com/dnsankin/arcalink/releases/tag/1.0.41)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
+**1.0.44** от 13.11.2026 — Android получил индикатор проверки локальной базы и возобновление сверки с сохранённой позиции. Фоновый режим включается по согласию пользователя и работает, пока Obsidian запущен. На Vivo проверена передача Shared2 в обе стороны при свёрнутом Obsidian на тестовом сервере.
+
+**1.0.43** от 13.11.2026 — [скачать ZIP](https://arcalink.ru/downloads/arcalink/community/1.0.43/arcalink-sync.zip). Подключение общей папки можно зарегистрировать для устройств одного хранилища. Занятый путь требует выбора; локальные файлы сохраняются. Для включения подключения необходимо обновить устройства аккаунта, которые используют эту папку. Если та же папка уже подключена на устройстве к другому хранилищу, новое подключение ожидает решения. Во время подключения показываются обработанные декодированные байты ответов за сеанс, подтверждённые применения файлов, средняя скорость обработки и время последнего продвижения. Отмена дожидается завершения чтения ответа перед повторной попыткой.
+
+Локальный кандидат **1.0.42** от 12.11.2026 — не опубликован. Компаньон готовится к первому публичному выпуску: отправка файлов, изменение чекбоксов и обновление кэша работают как самостоятельные операции. Плагин продолжает синхронизацию после остановки Компаньона. Для первого подключения войдите в аккаунт в Компаньоне и откройте хранилище в Obsidian. Размер main.js уменьшен до 4 240 439 байт; все девять языков сохранены. Экспериментальный код миграции, его инструменты и тесты удалены; независимые действия сохранены. Совместимость с прежними тестовыми версиями Компаньона и перенос их состояния не входят в требования первой версии. Результаты проверок и ограничения записаны в отчёте приёмки.
+
+Текущий GitHub Release: **[1.0.41](https://github.com/dnsankin/arcalink/releases/tag/1.0.41)**. После обновления перезапустите Obsidian. Для нового формата вложений общих папок обновите все устройства. Очень большие одиночные файлы зависят от памяти устройства.
 
 Версия 1.0.12 отозвана из-за ошибки запуска. Если она установлена, обновитесь до 1.0.14; настройки подключения сохраняются.
 
@@ -169,7 +175,13 @@ The [Android companion](https://arcalink.ru/android) provides note and task-list
 
 ## Version history
 
-Current version: **[1.0.41](https://github.com/dnsankin/arcalink/releases/tag/1.0.41)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
+**1.0.44**, 2026-11-13 — Android shows local database verification progress and resumes verification from a saved checkpoint. Background sync is opt-in and runs while Obsidian remains alive. Shared2 transferred notes in both directions on a Vivo with Obsidian minimized against a test server.
+
+**1.0.43**, 2026-11-13 — [download ZIP](https://arcalink.ru/downloads/arcalink/community/1.0.43/arcalink-sync.zip). A shared-folder connection can be registered for devices using the same vault. An occupied path requires a choice, and local files are preserved. Devices on the account using this folder must be updated before enabling the connection. If the same folder is already connected to another vault on the device, the new connection waits for a decision. During connection, the plugin shows decoded response bytes processed this session, confirmed file applications, average processing rate, and the time of last progress. Cancellation waits for response-body reading to end before retrying.
+
+Local candidate **1.0.42**, 2026-11-12 — unpublished. Companion is being prepared for its first public release: file sending, checkbox edits and cache refresh run as independent actions. The plugin continues synchronization after Companion stops. To connect for the first time, sign in within Companion and open the vault in Obsidian. The main.js bundle is reduced to 4,240,439 bytes with all nine languages retained. Experimental migration code, tools and tests have been removed; independent actions are retained. Compatibility with previous experimental Companion builds and migration of their state are outside the first-release requirements. Validation results and limitations are recorded in the acceptance report.
+
+Current GitHub Release: **[1.0.41](https://github.com/dnsankin/arcalink/releases/tag/1.0.41)**. Restart Obsidian after updating. Update all devices for the new shared-attachment format. Very large individual files remain subject to device memory.
 
 Version 1.0.12 was withdrawn because of a startup issue. If installed, update to 1.0.14; connection settings are retained.
 

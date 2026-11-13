@@ -60,13 +60,26 @@ test('help is discoverable and can be revisited without starting sync or touchin
  assert.deepEqual(f.effects,[]);f.assistant.dispose();
 });
 
+test('reading the preparation diagnostic does not start sync, request data or alter ownership',()=>{
+ const ownership={committed:false,blocksOrdinary:false,preparationDiagnostic:'Первая причина'};
+ const f=fixture({mobile:true,ownership});f.assistant.render(f.root);
+ assert.match(f.root.textContent(),/Первая причина/);
+ ownership.preparationDiagnostic='Последняя причина';
+ f.button(f.root,'Показать текущее состояние подключения').click();
+ assert.match(f.root.textContent(),/Последняя причина/);assert.equal(f.root.textContent().includes('Первая причина'),false);
+ assert.deepEqual(f.effects,[]);assert.equal(ownership.blocksOrdinary,false);
+ ownership.committed=true;f.button(f.root,'Показать текущее состояние подключения').click();
+ assert.match(f.root.textContent(),/Последняя причина/);assert.deepEqual(f.effects,[]);
+ f.assistant.dispose();
+});
+
 test('desktop paths come from this vault and are not presented as phone configuration',()=>{
  const f=fixture(),help=f.open(),content=help.contentEl.textContent();
  const paths=help.contentEl.all().filter(element=>element.tag==='code').map(element=>element.text);
  assert.deepEqual(paths,['<Личное хранилище>','Входящие/Заметки','Личное/Обмен']);
  assert.match(content,/Начальные назначения:.*Быстрые заметки.*Задачи\.md.*Exchange.*Attachments/);
  assert.match(content,/папки телефона и компьютера могут отличаться/);
- assert.match(content,/Этот Obsidian не подтверждает подключение Компаньона на телефоне/);
+ assert.match(content,/папки телефона и компьютера могут отличаться/);
  assert.deepEqual(f.effects,[]);
  f.button(help.contentEl,'Настройки папок на компьютере').click();
  assert.equal(help.closed,true);assert.deepEqual(f.effects,[['desktop-settings']]);f.assistant.dispose();
@@ -87,20 +100,12 @@ test('mobile Obsidian never labels desktop settings as Android destinations',()=
  assert.deepEqual(f.effects,[]);f.assistant.dispose();
 });
 
-for(const [name,ownership,message] of [
- ['pending',{blocksOrdinary:true,committed:false,state:{phase:'held'}},/подключение Компаньона ещё не завершено/],
- ['confirmed',{blocksOrdinary:true,committed:true,state:{phase:'committed'}},/подключение Компаньона подтверждено\. Текущее состояние передачи смотрите на телефоне/],
- ['shared-folder pause',{blocksOrdinary:true,committed:true,state:{phase:'committed',scopeWindow:{status:'open'}}},/передача приостановлена для изменения общих папок/]
-])test(`help reports ${name} without asserting delivery or invoking ownership actions`,()=>{
- const f=fixture({ownership}),help=f.open(),content=help.contentEl.textContent();
- assert.match(content,message);
- assert.match(content,/Сохранено на устройстве.*локальный файл/);
- assert.match(content,/Ожидает передачи.*ещё не подтверждает получение/);
- assert.match(content,/В облаке.*Получено устройством.*подтверждают конкретную передачу/);
- assert.match(content,/Free нужно доступное второе устройство/);
- assert.deepEqual(f.effects,[]);
- f.button(help.contentEl,'Настройки синхронизации плагина').click();
- assert.equal(help.closed,true);assert.deepEqual(f.effects,[['sync-settings']]);f.assistant.dispose();
+for(const phase of ['held','committed'])test('help keeps plugin authority even with a stale '+phase+' journal',()=>{
+ const f=fixture({ownership:{blocksOrdinary:false,committed:false,state:{phase}}}),help=f.open(),content=help.contentEl.textContent();
+ assert.match(content,/обычную синхронизацию всегда выполняет плагин/);assert.match(content,/Для самостоятельной отправки.*войдите в свой аккаунт/);
+ assert.equal(content.includes('Обычные файлы синхронизирует Компаньон'),false);assert.equal(content.includes('вернуть плагину'),false);
+ assert.match(content,/Сохранено на устройстве.*локальный файл/);assert.match(content,/Ожидает передачи.*ещё не подтверждает получение/);
+ assert.deepEqual(f.effects,[]);f.button(help.contentEl,'Настройки синхронизации плагина').click();assert.equal(help.closed,true);assert.deepEqual(f.effects,[['sync-settings']]);f.assistant.dispose();
 });
 
 test('help keeps theme typography, wraps paths and uses a scrollable content area',()=>{

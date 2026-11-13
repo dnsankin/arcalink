@@ -162,6 +162,53 @@ test('byte verification rejects corruption with an unchanged revision and source
  await source.close();await target.close();
 });
 
+test('retirement resumes the verified source pass after restart and rejects a changed target',async t=>{
+ const f=await fixture(t);
+ await f.prepare();await f.activate();
+ let checkpoint;
+ await assert.rejects(f.retire({saveCheckpoint:async value=>{
+  checkpoint=structuredClone(value);
+  throw Error('process stopped before target pass');
+ }}),/process stopped/);
+ assert.equal(checkpoint.phase,'target');
+ assert.ok(await read(f,f.logical,'pending'));
+ const phases=[];
+ await f.retire({checkpoint,saveCheckpoint:async()=>{},onProgress:({phase})=>phases.push(phase)});
+ assert.deepEqual([...new Set(phases)],['inventory','target','finish']);
+ assert.equal(f.retirement.phase,'retired');
+
+ const g=await fixture(t);
+ await g.prepare();await g.activate();
+ await assert.rejects(g.retire({saveCheckpoint:async value=>{
+  checkpoint=structuredClone(value);
+  throw Error('process stopped before target pass');
+ }}),/process stopped/);
+ const target=g.open(g.binding.target);
+ await target.put({_id:'changed-after-checkpoint',data:'new'});
+ await target.close();
+ await checked(g.retire({checkpoint,saveCheckpoint:async()=>{}}),'prepared-target-changed');
+ assert.ok(await read(g,g.logical,'pending'));
+});
+
+test('verification resumes within a pass at the last saved page',async t=>{
+ const f=await fixture(t),source=f.open(f.logical),target=f.open(f.logical+'-verify');
+ await source.bulkDocs(Array.from({length:1030},(_,i)=>({_id:'h:resume-'+i,type:'leaf',data:'payload '+i})));
+ const plan=planFolderCleanup(await inspectCleanupDatabase(source),['Фото'],{allowMissingKeptChunks:true});
+ const copied=await copyCleanupSnapshot(source,target,plan);
+ let checkpoint;
+ await assert.rejects(verifyCleanupSnapshot(source,target,plan,{saveCheckpoint:async value=>{
+  checkpoint=structuredClone(value);
+  throw Error('interrupted');
+ }}),/interrupted/);
+ assert.equal(checkpoint.phase,'source');
+ assert.equal(checkpoint.done,1024);
+ const phases=[];
+ const verified=await verifyCleanupSnapshot(source,target,plan,{checkpoint,saveCheckpoint:async()=>{},onProgress:progress=>phases.push(progress)});
+ assert.deepEqual(phases[0],{phase:'source',done:1024});
+ assert.equal(verified.verified_revisions,copied.verified_revisions);
+ await source.close();await target.close();
+});
+
 test('staging preserves the engine ancestry of retained long conflict branches',async t=>{
  const f=await fixture(t),source=f.open(f.logical,{revs_limit:100});
  const id='long-conflict';

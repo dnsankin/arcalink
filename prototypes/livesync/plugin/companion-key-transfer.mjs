@@ -26,8 +26,21 @@ export async function keyTransferComparison(request,now=Date.now()) {
 /** Ciphertext is the only key-transfer material written into the vault mailbox. */
 export async function sealCompanionIdKey(request,idDerivationKey,now=Date.now()) {
  if(typeof idDerivationKey!=='string'||!/^[a-f0-9]{64}$/.test(idDerivationKey))throw fail();
- const approved=await keyTransferComparison(request,now),context={...ownershipIdentity(request),publicKeyFingerprint:approved.fingerprint,expiresAt:approved.expiresAt};
  const payload={idDerivationVersion:1,idDerivationKey,idDerivationKeyFingerprint:await sha256(new TextEncoder().encode(idDerivationKey))};
+ return seal(request,payload,now);
+}
+export async function sealCompanionBootstrap(request,settings,now=Date.now()){
+ if(typeof settings.encrypt!=='boolean'||typeof settings.passphrase!=='string'||settings.passphrase.length>4096||settings.encrypt&&!settings.passphrase)throw fail();
+ const payload={encrypt:settings.encrypt,passphrase:settings.encrypt?settings.passphrase:'',idDerivationVersion:settings.idDerivationVersion||0};
+ if(payload.idDerivationVersion===1){
+  if(typeof settings.idDerivationKey!=='string'||!/^[a-f0-9]{64}$/.test(settings.idDerivationKey))throw fail();
+  payload.idDerivationKey=settings.idDerivationKey;payload.idDerivationKeyFingerprint=await sha256(new TextEncoder().encode(settings.idDerivationKey));
+ }else if(payload.idDerivationVersion!==0)throw fail();
+ if(settings.localSnapshotKey!==undefined){if(!/^[a-f0-9]{64}$/.test(settings.localSnapshotKey))throw fail();payload.localSnapshotKey=settings.localSnapshotKey;}
+ return seal(request,payload,now,'arcalink-companion-bootstrap-settings-v1');
+}
+async function seal(request,payload,now,purpose){
+ const approved=await keyTransferComparison(request,now),context={...ownershipIdentity(request),publicKeyFingerprint:approved.fingerprint,expiresAt:approved.expiresAt,...(purpose?{purpose}: {})};
  const plaintext=new TextEncoder().encode(canonicalOwnership(payload)),iv=crypto.getRandomValues(new Uint8Array(12));
  const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']),raw=new Uint8Array(await crypto.subtle.exportKey('raw',key));
  try{

@@ -121,3 +121,13 @@ test('startup restores incoming work without replaying the database and skips ve
  assert.deepEqual(order.slice(3),['manual','restore','sync']);
  await controller.close();
 });
+test('unverified initial pull resumes without scanning or outgoing events until application is proven and persisted',async()=>{
+ const first=fixture();let verified=false,drained=false;const order=[];
+ first.engine.results.reprocessStoredDocuments=async()=>order.push('reprocess');
+ first.engine.results.confirmDrained=async()=>{order.push('drain');if(!drained)throw Error('shared2-results-pending');};
+ const proof={singleAttempt:true,needed:()=>!verified,verify:async()=>order.push('verify'),complete:async()=>{order.push('persist');verified=true;}};
+ const make=f=>createShared2LiveController({profile,engine:f.engine,store:f.store,baseline:{close:async()=>{}},scan:async()=>assert.fail('unverified startup scan'),checkLease:async()=>true,canUpload:()=>verified,initialProof:proof});
+ const controller=make(first);await assert.rejects(controller.wake(),/results-pending/);assert.equal(controller.ready,false);assert.equal(await first.store.prepared(),true);assert.deepEqual(first.calls.events,[]);await controller.close();
+ const next=fixture({saved:first.saved});next.engine.results.reprocessStoredDocuments=async()=>order.push('reprocess');next.engine.results.confirmDrained=async()=>{order.push('drain');if(!drained)throw Error('pending');};drained=true;
+ const resumed=make(next);await resumed.wake();assert.equal(resumed.ready,true);assert.equal(verified,true);assert.equal(next.calls.list,0);assert.deepEqual(order,['reprocess','drain','reprocess','drain','verify','persist']);await resumed.close();
+});

@@ -3,6 +3,15 @@ import {patchShared2PouchProgress} from './shared2-pouch-progress.mjs';
 import {patchScopedLiveSync} from './patch-scoped-livesync.mjs';
 /** Production alias only: never onLoad/patch the personal replication module. */
 export function shared2ProductionPlugin(){return {name:'arcalink-shared2-isolated-engine',setup(build){
+ // DirectFileManipulator and BrowserServices both install the non-configurable
+ // replication getter. Keep the HTTP codec's unmodified core separate from the
+ // ordinary browser constructor, just as their adapter sets are separate.
+ build.onResolve({filter:/^pouchdb-core$/},args=>{
+  if(!args.importer.endsWith('/@vrtmrz/livesync-commonlib/dist/pouchdb/pouchdb-http.js'))return;
+  const require=createRequire(args.importer);return {path:'pouchdb-core',namespace:'companion-http-core',pluginData:{entry:require.resolve('pouchdb-core')}};
+ });
+ build.onLoad({filter:/.*/,namespace:'companion-http-core'},async args=>({contents:await readFile(args.pluginData.entry,'utf8'),loader:'js',resolveDir:dirname(args.pluginData.entry)}));
+ build.onResolve({filter:/.*/,namespace:'companion-http-core'},args=>build.resolve(args.path,{resolveDir:args.resolveDir,kind:args.kind,namespace:'file'}));
  build.onResolve({filter:/^@arcalink\/shared2-result-processor$/},args=>{
   const require=createRequire(join(args.resolveDir,'shared2-resolver.cjs')),entry=require.resolve('@vrtmrz/livesync-commonlib/context',{paths:[args.resolveDir,join(args.resolveDir,'../.cache/source/node_modules')]});
   return {path:join(dirname(entry),'../../../../src/serviceFeatures/replication/ReplicateResultProcessor.ts')};
@@ -33,6 +42,10 @@ export function shared2ProductionPlugin(){return {name:'arcalink-shared2-isolate
  });
  build.onLoad({filter:/.*/,namespace:'shared2-livesync'},async args=>({contents:patchScopedLiveSync(await readFile(args.pluginData.entry,'utf8')),loader:'js',resolveDir:dirname(args.pluginData.entry)}));
  build.onResolve({filter:/.*/,namespace:'shared2-livesync'},args=>build.resolve(args.path,{resolveDir:args.resolveDir,kind:args.kind,namespace:'file'}));
+ build.onResolve({filter:/^@arcalink\/migration-engine-compression$/},async args=>{
+  const require=createRequire(join(args.resolveDir,'shared2-resolver.cjs')),entry=require.resolve('@vrtmrz/livesync-commonlib/context',{paths:[join(args.resolveDir,'../.cache/source/node_modules')]}),target=join(dirname(entry),'pouchdb/compress.js'),source=await readFile(target);
+  if(createHash('sha256').update(source).digest('hex')!=='282189cfa9ff8ee38bf471d00a273e6805663e847e67ae15a5a5d169da058690')throw Error('Unexpected pinned engine compression implementation');return {path:target};
+ });
  build.onResolve({filter:/^@arcalink\/shared2-engine-encryption$/},async args=>{
   const require=createRequire(join(args.resolveDir,'shared2-resolver.cjs')),entry=require.resolve('@vrtmrz/livesync-commonlib/context',{paths:[join(args.resolveDir,'../.cache/source/node_modules')]}),target=join(dirname(entry),'pouchdb/encryption.js'),source=await readFile(target);
   if(createHash('sha256').update(source).digest('hex')!=='34225c4a954cfaa4adde6885976fb9fcd648031797e66117cb2c0d12a996000f')throw Error('Unexpected pinned engine encryption implementation');return {path:target};

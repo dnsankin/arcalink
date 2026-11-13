@@ -13,6 +13,16 @@ test('startup and an unconfigured vault are distinct from a working connection',
  assert.equal(mobileSyncState({...cloud,ready:false}).label,'Запуск синхронизации');
  assert.equal(mobileSyncState({...cloud,kind:'active',status:'STARTED'}).kind,'active');
 });
+test('local database verification shows its own stage and count while the engine is closed',()=>{
+ const maintenance={phase:'target',done:1024,lastProgress:100};
+ const state=mobileSyncState({...cloud,ready:false,status:'CLOSED',sent:0,arrived:0,maintenance});
+ assert.equal(state.label,'Сверяем подготовленную локальную базу');
+ assert.equal(state.counters,null);
+ assert.deepEqual(state.maintenance,maintenance);
+ assert.equal(mobileSyncState({maintenanceFailed:true}).kind,'error');
+ const translate=createMessageTranslator(catalog);
+ for(const text of [state.label,state.detail])assert.doesNotMatch(translate(text,'en'),/[А-Яа-яЁё]/);
+});
 test('offline, closed transport, pause and manual sync while auto-sync is off are distinct',()=>{
  assert.equal(mobileSyncState({...cloud,offline:true}).kind,'offline');
  for(const status of ['NOT_CONNECTED','CLOSED'])assert.equal(mobileSyncState({...cloud,kind:'idle',status}).label,'Нет связи');
@@ -42,4 +52,12 @@ test('mobile labels and guidance translate to English without changing counts',(
  for(const input of [{},{...cloud},{...cloud,ready:false},{...cloud,offline:true},{...cloud,paused:true},{...cloud,kind:'error'},{...cloud,kind:'active'},{...cloud,automaticOff:true},{...cloud,kind:'idle'},{...cloud,kind:'idle',status:'CLOSED'},...Array.from({length:3},(_,i)=>({...cloud,free:true,connected:i>0,peers:i>1?1:0}))]){
   const state=mobileSyncState(input);for(const text of [state.label,state.detail]){assert.doesNotMatch(translate(text,'en'),/[А-Яа-яЁё]/);assert.equal(translate(translate(text,'en'),'ru'),text);}
  }
+});
+
+test('ownership hold is explained without claiming startup or confirmed file delivery',()=>{
+ for(const companion of ['preparing','held','committing']){
+  const view=mobileSyncState({companion,ready:false});assert.equal(view.label,'Подключаем Компаньон');assert.equal(view.counters,null);
+ }
+ const view=mobileSyncState({companion:'committed',ready:false});assert.equal(view.label,'Синхронизирует Компаньон');assert.match(view.detail,/Подтверждение отправки смотрите/);
+ assert.equal(mobileSyncState({companion:'held',errors:['failure']}).label,'Подключение требует внимания');
 });
