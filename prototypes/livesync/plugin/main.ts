@@ -275,7 +275,19 @@ export default class ArcaLinkPilot extends LiveSync {
       resume: () => services.control.applySettings(),
       start: () => services.replication.startContinuous({ trigger: 'resume', interaction: { kind: 'forbidden' } }),
     });
-    this.registerInterval(window.setInterval(() => { void this.pilotRecovery.tick(); }, 15000));
+    const recoverLiveSync = () => {
+      if (!navigator.onLine) this.pilotRecovery.markUnavailable();
+      else void this.pilotRecovery.tick();
+    };
+    if (!Platform.isMobileApp) {
+      this.registerDomEvent(window, 'offline', () => this.pilotRecovery.markUnavailable());
+      this.registerDomEvent(window, 'online', recoverLiveSync);
+      if (!navigator.onLine) this.pilotRecovery.markUnavailable();
+    }
+    this.registerInterval(window.setInterval(() => {
+      if (Platform.isMobileApp) void this.pilotRecovery.tick();
+      else recoverLiveSync();
+    }, 15000));
     this.addCommand({ id: 'pilot-recovery-status', name: 'Синхронизация: состояние восстановления', callback: () => {
       new Notice(JSON.stringify(this.pilotRecovery.status));
     }});
