@@ -44,6 +44,7 @@ export async function listPhysicalShared2Files(adapter,root){
   const parent=todo.pop(),listing=await adapter.list(parent);
   if(!listing||!Array.isArray(listing.files)||!Array.isArray(listing.folders))throw fail('shared2-mount-check-unavailable');
   for(const [type,items] of [['file',listing.files],['folder',listing.folders]])for(const path of items){
+   if(type==='file'&&path===parent+'/.DS_Store')continue;
    if(typeof path!=='string'||!safeRelative(path)||!path.startsWith(parent+'/')||path.slice(parent.length+1).includes('/'))throw fail('shared2-mount-check-unavailable');
    const folded=path.toLowerCase();if(seen.has(folded))throw fail('shared2-mount-case-conflict');seen.add(folded);
    const stat=await adapter.stat(path);if(!stat||stat.type!==type)throw fail('shared2-mount-check-unavailable');

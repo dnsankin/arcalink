@@ -1,3 +1,4 @@
+import {requestPilot,responseData,responseError} from './pilot-http.mjs';
 import {pluginEnvironment} from './environment.mjs';
 import {Notice,requestUrl,Setting} from 'obsidian';
 import {isFreeRelayConnection as isFreeRelay,FREE_SIGNAL_URL} from './free-relay-settings.mjs';
@@ -15,9 +16,10 @@ export class UnifiedVault {
   async save(data:any){await this.plugin.app.vault.adapter.write(this.path,JSON.stringify(data));}
   async poll(){
     if(this.busy||!navigator.onLine)return;
-    const p=this.plugin,s=p.core.services.setting.currentSettings();if(!s?.isConfigured||p.workspaces.busy||await p.workspaces.pendingMerge()||await p.workspaces.pendingMigration())return;
+    const p=this.plugin,s=p.core.services.setting.currentSettings();if(!s?.isConfigured||p.workspaces.busy)return;
     this.busy=true;
     try{
+      if(await p.workspaces.pendingMerge()||await p.workspaces.pendingMigration())return;
       let saved=await this.saved();const workspace=await p.workspaces.session();let free=await p.freeRelay.session()||saved?.auth;
       const id=saved?.workspaceId||workspace.workspaceId;
       // Bind cloud-only account credentials to the existing workspace.
@@ -28,7 +30,7 @@ export class UnifiedVault {
       // Access sessions are permanent. Recover only a rejected token, once;
       // use the recovered session for the heartbeat and all gateway requests.
       const request=async(options:any)=>{
-        const send=async()=>{try{return await requestUrl({...options,headers:{...options.headers,Authorization:auth}});}catch{throw free?p.freeRelay.authError(503):Error('Сервер временно недоступен. Повторите попытку.');}};
+        const send=async()=>{try{return await requestPilot(requestUrl,{...options,headers:{...options.headers,Authorization:auth}});}catch{throw free?p.freeRelay.authError(503):Error('Сервер временно недоступен. Повторите попытку.');}};
         let response=await send();
         if(response.status===401&&free?.refreshToken){
           free=await p.freeRelay.refresh(free);auth='Bearer '+free.accessToken;saved={...saved,auth:free};
@@ -41,15 +43,19 @@ export class UnifiedVault {
       if(this.announcedVersion!==versionKey&&await announceClientVersion(request,p.manifest,free))this.announcedVersion=versionKey;
       const response=await request({url:this.base+'/workspaces/state',method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify(id?{id}:{}),throw:false});
       if(response.status!==200)return;
-      const state=response.json;if(state.policy_version!==1||!state.relay_free_enabled)return;
+      const state=responseData(response);
+      if(!state||typeof state!=='object'||Array.isArray(state))throw Error('Сервер временно недоступен. Повторите попытку.');
+      if(state.policy_version!==1||!state.relay_free_enabled)return;
       if(!/^[a-f0-9]{32}$/.test(state.workspace_id)||(id&&state.workspace_id!==id)||!['cloud','relay'].includes(state.sync_mode)||typeof state.relay_passphrase!=='string'||state.relay_passphrase.length<16||!/^[a-f0-9]{32}$/.test(state.relay_group))throw Error('Некорректная привязка хранилища');
       if(state.sync_mode==='cloud')await p.folderPolicies?.ensureCloudAccess(state.workspace_id);
       // Refresh the gateway binding too: account token rotation invalidates its
       // previous token even while the transport remains cloud.
       if(state.sync_mode==='cloud'&&!isFreeRelay(s)&&auth.startsWith('Bearer ')){
         const bound=await request({url:this.base+'/workspaces/connect',method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({id:state.workspace_id}),throw:false});
-        if(bound.status!==200)throw Error('Не удалось обновить авторизацию облачного хранилища');
-        if(bound.json.user!==s.couchDB_USER||bound.json.password!==s.couchDB_PASSWORD||bound.json.database!==s.couchDB_DBNAME)throw Error('Привязка облачного клиента изменилась');
+        if(bound.status!==200)throw Error(responseError(bound));
+        const credentials=responseData(bound);
+        if(!credentials||typeof credentials.user!=='string'||typeof credentials.password!=='string'||typeof credentials.database!=='string')throw Error('Сервер временно недоступен. Повторите попытку.');
+        if(credentials.user!==s.couchDB_USER||credentials.password!==s.couchDB_PASSWORD||credentials.database!==s.couchDB_DBNAME)throw Error('Привязка облачного клиента изменилась');
       }
       this.state=state;
       saved={...saved,workspaceId:state.workspace_id,title:state.title};
@@ -65,8 +71,10 @@ export class UnifiedVault {
         await p.core.services.setting.applyPartial(next,true);await p.core.services.control.applySettings();saved.transition=null;await this.save(saved);
       }else if(state.sync_mode==='cloud'&&isFreeRelay(s)){
         saved.transition='to-cloud';await this.save(saved);
-        const r=await request({url:this.base+'/workspaces/connect',method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({id:state.workspace_id}),throw:false});if(r.status!==200)throw Error('Облачное подключение пока не восстановлено. Free и локальные заметки сохранены.');
-        const next={...s,...(saved.cloud||{liveSync:true,syncOnSave:true,syncOnStart:true}),...(saved.connectionEnabled===false?PAUSE:{}),remoteType:'',couchDB_URI:r.json.url.replace(/\/$/,''),couchDB_DBNAME:r.json.database,couchDB_USER:r.json.user,couchDB_PASSWORD:r.json.password,P2P_AutoStart:false};
+        const r=await request({url:this.base+'/workspaces/connect',method:'POST',headers:{Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({id:state.workspace_id}),throw:false});if(r.status!==200)throw Error(responseError(r));
+        const credentials=responseData(r);
+        if(!credentials||!['url','database','user','password'].every(key=>typeof credentials[key]==='string'&&credentials[key]))throw Error('Сервер временно недоступен. Повторите попытку.');
+        const next={...s,...(saved.cloud||{liveSync:true,syncOnSave:true,syncOnStart:true}),...(saved.connectionEnabled===false?PAUSE:{}),remoteType:'',couchDB_URI:credentials.url.replace(/\/$/,''),couchDB_DBNAME:credentials.database,couchDB_USER:credentials.user,couchDB_PASSWORD:credentials.password,P2P_AutoStart:false};
         await p.workspaces.checkDestinationKey(next);
         upsertRemoteConfigurationInPlace(next as any,'couchdb',{id:'arcalink-pilot',name:state.title,activate:true});
         await p.arcalinkP2P.transportLifecycle.disconnect();await p.core.services.setting.applyPartial(next,true);await p.core.services.control.applySettings();saved.transition=null;await this.save(saved);

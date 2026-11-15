@@ -5,7 +5,7 @@ const fail=code=>Object.assign(Error(code),{code});
  * content decisions remain in the maintained LiveSync services.
  * The legacy controller is used ONCE to establish the cutover baseline.
  */
-export function createShared2LiveController({profile,engine,baseline,store,scan,checkLease,canUpload=()=>true,onReady=async(_result)=>{},onState=()=>{},isVerified=async(_meta)=>false,prepareEmptyMount=async()=>false,initialProof}){
+export function createShared2LiveController({profile,engine,baseline,store,scan,checkLease,canUpload=()=>true,onReady=async(_result)=>{},onConnected=async()=>{},onState=()=>{},isVerified=async(_meta)=>false,prepareEmptyMount=async()=>false,initialProof}){
  let closed=false,ready=false,applyingResults=false,initialized=false,initializing,pumping,checking,live,initialReprocessed=false,localPrepared=false,problem='',localProblem='',progress=null,queued=0,displayLocalPending=0;
  const conflicts=new Set(),submissions=new Set();
  const valid=path=>safeRelative(path)&&path.startsWith(profile.documentRoot+'/');
@@ -63,6 +63,7 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
    progress={state:'syncing',phase:'verification'};notify();await initialProof.verify();await healthy();
    await initialProof.complete();
   }
+  await healthy();await onConnected();
   applyingResults=true;ready=true;initialized=true;problem='';progress=null;engine.results.resume();await applyPending(true);startLive();notify();
  }
  async function prepare(){

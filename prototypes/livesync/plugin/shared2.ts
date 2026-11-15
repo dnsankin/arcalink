@@ -469,8 +469,22 @@ export class Shared2 {
     if(!result.pending){record.shared2LegacyImportedEpoch=profile.cacheEpoch;await this.plugin.folders.save();}
    }
    baseline=createShared2VaultController({profile,engine,disk,store:this.store('ledger-'+row.id+'-'+row.generation+'-'+profile.cacheEpoch),checkLease:checked,hashStream:hashShared2Stream,canUpload,onState:(state:any)=>controller?.baselineProgress(state)});
+   // A prepared cache with a ledger from this mount predates the explicit
+   // initial proof marker. Resume through the normal offline reconciliation.
+   const resumeExisting=!initialVerified&&!record.shared2InitialPull&&
+    !record.shared2ReconcileAuthority&&await runtime.prepared()&&await baseline.hasBaseline();
+   if(resumeExisting)initialVerified=true;
    controller=createShared2LiveController({profile,engine,baseline,store:runtime,checkLease:checked,isVerified:checkpoint.isVerified,canUpload,
     scan,
+    onConnected:async()=>{
+     if(!resumeExisting||record.shared2InitialVerifiedEpoch===profile.cacheEpoch)return;
+     const previousEpoch=record.shared2InitialVerifiedEpoch;
+     const previousReview=record.shared2InitialReview;
+     record.shared2InitialVerifiedEpoch=profile.cacheEpoch;
+     record.shared2InitialReview=false;
+     try{await this.plugin.folders.save();}
+     catch(error){record.shared2InitialVerifiedEpoch=previousEpoch;record.shared2InitialReview=previousReview;throw error;}
+    },
     initialProof:{needed:()=>!initialVerified,preflight:async()=>{
      if(record.shared2InitialPull===profile.cacheEpoch)return;
      const review=async()=>{record.shared2InitialReview=true;await this.plugin.folders.save();throw Error('shared2-initial-review-required');};
