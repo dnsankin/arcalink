@@ -1,3 +1,4 @@
+import {withConnectionTimeout} from './recovery.mjs';
 import {pluginEnvironment} from './environment.mjs';
 import {Notice,requestUrl,Setting,Platform} from 'obsidian';
 import {accountClientVersion} from './client-version.mjs';
@@ -16,17 +17,48 @@ export class FreeRelay {
   lastError="";
   constructor(private plugin:any) {}
   get sessionPath(){return this.plugin.pilotDirectory+'/free-relay-session.json';}
-  async session(){
+  private sessionRead: Promise<string|null>|null=null;
+  private async readSessionFile(){
     const adapter=this.plugin.app.vault.adapter;
-    if(!await adapter.exists(this.sessionPath))return null;
-    try {const value=JSON.parse(await adapter.read(this.sessionPath));if(!value.accessToken||!/^[a-f0-9]{32}$/.test(value.group))throw Error();return value;}
-    catch {throw Error('Не удалось прочитать подключение Free. Войдите заново.');}
+    for(let attempt=0;;attempt++){
+      try {
+        return await withConnectionTimeout(async()=>{
+          if(!await adapter.exists(this.sessionPath))return null;
+          return await adapter.read(this.sessionPath);
+        },4000);
+      } catch(error:any) {
+        if(attempt===2){
+          const timedOut=/timed out|ERR_TIMED_OUT/i.test(String(error?.message||''));
+          this.plugin.logReplicationPreflight?.('local session storage: '+(timedOut?'timeout':'read failed'));
+          throw Object.assign(Error('Не удалось прочитать локальную сессию ArcaLink. Проверка повторится автоматически.'),{code:'session-storage-read'});
+        }
+        await new Promise(resolve=>setTimeout(resolve,250*(attempt+1)));
+      }
+    }
+  }
+  async session(){
+    if(!this.sessionRead){
+      const read=this.readSessionFile().finally(()=>{
+        if(this.sessionRead===read)this.sessionRead=null;
+      });
+      this.sessionRead=read;
+    }
+    const content=await this.sessionRead;
+    if(content===null)return null;
+    try {
+      const value=JSON.parse(content);
+      if(!value.accessToken||!/^[a-f0-9]{32}$/.test(value.group))throw Error();
+      return value;
+    } catch {
+      throw Object.assign(Error('Не удалось прочитать подключение Free. Войдите заново.'),{code:'session-invalid'});
+    }
   }
   async writeSession(value:any,guard?:()=>Promise<any>){
     const write=this.sessionWrites.then(async()=>{
       const newer=await guard?.();if(newer)return newer;
       try{await this.plugin.app.vault.adapter.write(this.sessionPath,JSON.stringify(value));}
       catch{throw Error('Не удалось сохранить подключение ArcaLink. Проверьте доступ к папке хранилища и повторите попытку.');}
+      this.sessionRead=null;
       return value;
     });
     this.sessionWrites=write.catch(()=>{});return write;

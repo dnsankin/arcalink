@@ -52,7 +52,7 @@ export function createMobileSyncStatus(pilot:any){
     state.counters?localizeMessage('Передано за сеанс: записи базы')+': ↑ '+state.counters.sent+'  ↓ '+state.counters.arrived:'');
    this.hint.setText(progress?localizeMessage('Последнее продвижение за сеанс')+': '+new Date(progress.lastProgress).toLocaleTimeString():
     localizeMessage('Это счётчики обмена данными, а не количество полностью синхронизированных файлов.'));
-   this.reason.setText(state.kind==='error'?[...new Set<string>((snapshot.errors||[]).map((value:any)=>readable(String(value))))].slice(0,2).join('\n'):'');
+   this.reason.setText([...new Set<string>((snapshot.errors||[]).map((value:any)=>readable(String(value))))].slice(0,2).join('\n'));
    this.reason.hidden=!this.reason.textContent;
   }
   override onClose(){dialog=null;this.contentEl.empty();}

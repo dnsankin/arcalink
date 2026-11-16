@@ -12,6 +12,8 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
+**1.0.47** от 16.11.2026 — в общих папках можно сравнить и разрешить конфликты. Карточка успешной публикации папки исчезает после завершения. Уточнены статусы синхронизации и повторное подключение после обрывов.
+
 **1.0.46** от 15.11.2026 — сверка Shared2 пропускает файлы Finder и возобновляется для ранее подключённых папок. При обновлении облачной привязки ArcaLink повторяет запросы после HTTP 429 и обрабатывает ответы без JSON.
 
 **1.0.45** от 14.11.2026 — настольный ArcaLink автоматически восстанавливает LiveSync после возвращения сети.
@@ -178,6 +180,8 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 The [Android companion](https://arcalink.ru/android) provides note and task-list widgets, quick entries, photos and voice. Mobile assistant settings can add its APK from any device to the shared exchange folder; devices syncing that folder receive the file. Android installation remains manual. In version 1.0.30, a compatible companion can transfer ordinary files itself after connection approval in both apps. The plugin continues to handle shared folders and collaborative notes; Free requires an available second device.
 
 ## Version history
+
+**1.0.47**, 2026-11-16 — compare and resolve conflicts in shared folders. Completed folder sharing jobs disappear from settings. Sync status and reconnection after interruptions have been improved.
 
 **1.0.46**, 2026-11-15 — Shared2 verification skips Finder metadata and resumes for previously connected folders. ArcaLink retries cloud binding requests after HTTP 429 and handles responses without JSON.
 

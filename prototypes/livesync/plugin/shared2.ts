@@ -15,6 +15,8 @@ import {createShared2NamespaceJobs} from './shared2-namespace-jobs.mjs';
 import {safeRelative} from './folder-model.mjs';
 import {chooseSharedFolder} from './shared-folder-picker';
 import {Notice,requestUrl,Setting,Modal} from 'obsidian';
+import {diff_match_patch} from 'diff-match-patch';
+import {ConflictResolveModal} from './modules/features/InteractiveConflictResolving/ConflictResolveModal';
 import {Shared2PouchDB as PouchDB} from './shared2-pouch.mjs';
 import {createFolderPolicyStore} from './folder-policy-store.mjs';
 import {createShared2LocalEngineFactory} from './shared2-local-engine.mjs';
@@ -531,11 +533,11 @@ export class Shared2 {
     },
     onReady:async(result:any)=>{if(record.shared2ReconcileAuthority&&!result.conflicts.length){record.shared2ReconcileAuthority=false;await this.plugin.folders.save();this.plugin.folders.refresh();}},onState:()=>this.redraw()});
    if(!await checked())throw Error('shared2-vault-lease-rejected');
-   const entry={version:this.version(row),controller,engine,mount,get state(){return controller.state;},get metrics(){return metrics.snapshot();}};this.entries.set(row.id,entry);return entry;
+   const entry={version:this.version(row),controller,engine,mount,disk,baseline,canUpload,checked,documentRoot:row.documentRoot,role:row.role,get state(){return controller.state;},get recoveringPreviousReview(){return resumeExisting&&controller.state.state==='syncing';},get metrics(){return metrics.snapshot();}};this.entries.set(row.id,entry);return entry;
   }catch(error){await engine?.close();throw error;}
  }
  get activity(){return this.transferCount+[...this.entries.values()].reduce((sum,entry)=>sum+(entry.controller?.activity||0),0);}
- get errorMessages(){const messages=[...this.entries.values()].filter(entry=>entry.state?.state==='error'||entry.state?.state==='conflict').map(entry=>shared2Message({code:entry.state.code}));for(const record of this.plugin.folders.records)if(record.shared2Scope?.account===this.scope?.account&&record.shared2Scope?.workspace===this.scope?.workspace&&(record.shared2BindingWaiting||record.shared2BindingConflict||record.shared2InitialReview))messages.push(record.shared2InitialReview?'Локальные изменения требуют решения. Выберите другую пустую папку, чтобы сохранить прежние файлы.':'Путь занят или пересекается с другой папкой. Выберите другую пустую папку.');return [...new Set(messages)];}
+ get errorMessages(){const messages=[...this.entries.values()].filter(entry=>entry.state?.state==='error'||entry.state?.state==='conflict').map(entry=>shared2Message({code:entry.state.code||(entry.state.state==='conflict'?'shared2-initial-proof-conflict':undefined)}));for(const record of this.plugin.folders.records)if(record.shared2Scope?.account===this.scope?.account&&record.shared2Scope?.workspace===this.scope?.workspace&&(record.shared2BindingWaiting||record.shared2BindingConflict||record.shared2InitialReview&&!this.entries.get(record.id)?.recoveringPreviousReview))messages.push(record.shared2InitialReview?'Локальные изменения требуют решения. Выберите другую пустую папку, чтобы сохранить прежние файлы.':'Путь занят или пересекается с другой папкой. Выберите другую пустую папку.');return [...new Set(messages)];}
  scopeRow(record:any,includeLocalPause=false){
   if(!record||record.shared2BindingInactive||record.shared2BindingWaiting||(!includeLocalPause&&record.shared2LocalPaused)||record.protocol!==2||record.shared2Left||record.shared2Revoked||record.shared2Creating||record.shared2Unsharing||record.shared2Rekeying||record.shared2Reconciling||record.shared2Scope?.account!==this.scope?.account||record.shared2Scope?.workspace!==this.scope?.workspace)return null;
   const row=this.catalog?.folders.find((row:any)=>row.id===record.id);return row&&!this.retentionPaused(row)?row:null;
@@ -650,6 +652,118 @@ export class Shared2 {
   for(const item of versions)new Setting(dialog.contentEl).setName(item.path).addButton(button=>button.setButtonText('Восстановить отдельно').onClick(async()=>{button.setDisabled(true);try{if(this.disposed||this.context!==context||this.signature(await this.session())!==context)throw Error('shared2-account-changed');if((await this.hashFile(item.backup)).sha256!==item.hash)throw Error('shared2-backup-proof-mismatch');const destination=root+'/recovered/'+crypto.randomUUID()+'/'+item.path;await this.mkdirs(destination.split('/').slice(0,-1).join('/'));await this.plugin.app.vault.adapter.copy(item.backup,destination);if((await this.hashFile(destination)).sha256!==item.hash)throw Error('shared2-backup-proof-mismatch');new Notice('Локальная версия восстановлена: '+destination,15000);}catch(error:any){new Notice(shared2Message(error));}finally{button.setDisabled(false);}}));
   dialog.open();
  }
+ async showConflicts(record:any,entry:any){
+  const context=this.context,scope=this.scope;
+  const current=async()=>{
+   await this.assertRecordContext(record,context,scope);
+   if(this.entries.get(record.id)!==entry||!await entry.checked())throw Error('shared2-conflict-changed');
+  };
+  await current();
+  const prefix=entry.documentRoot+'/';
+  const files=(await entry.engine.metadataFiles()).filter((doc:any)=>doc._conflicts?.length&&
+   safeRelative(doc.path)&&doc.path.startsWith(prefix));
+  await current();
+  const dialog=new Modal(this.plugin.app);
+  dialog.setTitle('Конфликты версий');
+  if(!files.length)dialog.contentEl.createEl('p',{text:'Конфликтов версий нет.'});
+  for(const file of files){
+   const relative=file.path.slice(prefix.length);
+   new Setting(dialog.contentEl).setName(relative).addButton(button=>button.setButtonText('Сверить версии').onClick(async()=>{
+    button.setDisabled(true);
+    try{await current();await this.showConflictVersions(record,entry,file.path,relative,current);}
+    catch(error:any){new Notice(shared2Message(error));}
+    finally{button.setDisabled(false);}
+   }));
+  }
+  dialog.open();
+ }
+ async showConflictVersions(record:any,entry:any,path:string,relative:string,current:()=>Promise<void>){
+  const meta=await entry.engine.metadata(path);
+  if(!meta?._conflicts?.length)throw Error('shared2-conflict-changed');
+  const revisions=[...new Set<string>([meta._rev,...meta._conflicts])];
+  const adapter=this.plugin.app.vault.adapter;
+  const root='ArcaLink Shared/shared2/'+this.scope.account+'/'+this.scope.workspace+'/'+record.id+'/recovered/';
+  const dialog=new Modal(this.plugin.app);
+  dialog.setTitle(relative);
+  const read=async(rev:string)=>{
+   await current();
+   const version=await entry.engine.readRevision(path,rev);
+   await current();
+   if(!version||version.revision!==rev)throw Error('shared2-conflict-changed');
+   return version;
+  };
+  const save=async(rev:string,directory:string)=>{
+   const version=await read(rev);
+   if(version.deleted)return;
+   const destination=directory+'/'+rev+'/'+relative;
+   await this.mkdirs(destination.split('/').slice(0,-1).join('/'));
+   await current();
+   await adapter.writeBinary(destination,version.bytes);
+   const saved=new Uint8Array(await adapter.readBinary(destination)),expected=new Uint8Array(version.bytes);
+   if(saved.length!==expected.length||saved.some((byte,index)=>byte!==expected[index]))throw Error('shared2-backup-proof-mismatch');
+   return destination;
+  };
+  const editable=entry.role!=='viewer'&&entry.controller.ready&&entry.canUpload();
+  const localAtReview=editable?await entry.disk.fingerprint(relative):null;
+  const markdown=relative.toLowerCase().endsWith('.md');
+  let applying=false,mergeInput:HTMLTextAreaElement|undefined;
+  const apply=async(keep:string,merged?:string)=>{
+   if(applying)return;
+   applying=true;
+   try{
+    const verify=async()=>{
+     await current();
+     return entry.controller.ready&&entry.canUpload()&&await entry.disk.fingerprint(relative)===localAtReview;
+    };
+    if(!await verify())throw Error('shared2-conflict-changed');
+    const directory=root+crypto.randomUUID();
+    for(const revision of revisions)await save(revision,directory);
+    if(localAtReview){
+     const backup=await entry.disk.backup(relative,localAtReview);
+     await entry.baseline.recordRecovery({path:relative,hash:localAtReview,backup});
+    }
+    const selected=await entry.engine.resolveConflict(path,{revisions,keep,merged,verify});
+    if(!selected||!await entry.engine.files.incoming(selected))throw Error('shared2-conflict-resolution-incomplete');
+    await entry.controller.conflict(path);
+    dialog.close();
+    new Notice('Решение сохранено. Синхронизация отправит выбранную версию.');
+   }catch(error:any){await entry.controller.conflict(path).catch(()=>{});new Notice(shared2Message(error));}
+   finally{applying=false;}
+  };
+  if(markdown&&editable){
+   new Setting(dialog.contentEl).setName('Объединённый текст').setDesc('Составьте итоговый текст и выберите версию, от которой сохранить результат.');
+   mergeInput=dialog.contentEl.createEl('textarea');
+   mergeInput.rows=8;
+  }
+  for(const rev of revisions){
+   const revision=await entry.engine.metadata(path,rev);
+   await current();
+   if(!revision||revision._rev!==rev)throw Error('shared2-conflict-changed');
+   const deleted=revision.deleted||revision._deleted;
+   const row=new Setting(dialog.contentEl).setName(rev).setDesc(deleted?'Удаление':new Date(revision.mtime).toLocaleString());
+   if(!deleted)row.addButton(button=>button.setButtonText('Сохранить копию').onClick(async()=>{
+    try{await save(rev,root+crypto.randomUUID());new Notice('Копия версии сохранена.');}
+    catch(error:any){new Notice(shared2Message(error));}
+   }));
+   if(markdown&&rev!==meta._rev&&!deleted&&!meta.deleted&&!meta._deleted)row.addButton(button=>button.setButtonText('Сравнить').onClick(async()=>{
+    try{
+     if(revision.size+meta.size>256*1024)throw Error('shared2-conflict-preview-too-large');
+     const [a,b]=await Promise.all([read(meta._rev),read(rev)]);
+     const decoder=new TextDecoder('utf-8',{fatal:true}),left=decoder.decode(a.bytes),right=decoder.decode(b.bytes);
+     const diff=new diff_match_patch().diff_main(left,right);
+     new ConflictResolveModal(this.plugin.app,relative as any,{left:{rev:meta._rev,data:left,mtime:a.mtime},right:{rev,data:right,mtime:b.mtime},diff} as any,
+      false,undefined,{readOnly:true,title:'Сравнение версий',localName:meta._rev,remoteName:rev}).open();
+    }catch(error:any){new Notice(shared2Message(error));}
+   }));
+   if(editable)row.addButton(button=>button.setButtonText(deleted?'Принять удаление':'Оставить версию').onClick(()=>this.confirm(
+    'Применить решение?', 'Копии доступных версий будут сохранены перед применением.',()=>apply(rev))));
+   if(editable&&mergeInput&&!deleted)row.addButton(button=>button.setButtonText('Сохранить объединённый текст').onClick(()=>{
+    const text=mergeInput!.value;
+    this.confirm('Сохранить объединённый текст?', 'Копии доступных версий будут сохранены перед применением.',()=>apply(rev,text));
+   }));
+  }
+  dialog.open();
+ }
  async mkdirs(root:string,check:()=>void=()=>{}){let path='';for(const part of root.split('/')){check();path+=(path?'/':'')+part;const exists=await this.plugin.app.vault.adapter.exists(path);check();if(!exists)try{await this.plugin.app.vault.adapter.mkdir(path);}catch(error){if(!await this.plugin.app.vault.adapter.exists(path))throw error;}check();}}
  async readStream(path:string){const adapter=this.plugin.app.vault.adapter;const response=await fetch(adapter.getResourcePath(path),{cache:'no-store'});if(!response.ok||!response.body)throw Error('shared2-native-file-read-unavailable');return response.body;}
  async hashFile(path:string){return hashShared2Stream(await this.readStream(path));}
@@ -687,7 +801,9 @@ export class Shared2 {
   for(const intent of this.encryptedState.requests||[])if(!intent.terminal){const job=this.encryptedState.jobs.find((row:any)=>row.id===intent.job);new Setting(container).setName('Зашифрованный перенос: '+intent.mount).setDesc(intent.error?shared2Message(intent.error):job?.error?shared2Message(job.error):shared2Phase(job?.state||intent.phase)).addButton(button=>button.setButtonText('Повторить').setDisabled(!intent.error&&!job?.error).onClick(()=>{void this.encryptedTransfers.retry(intent.job||intent.requestKey).then(()=>this.poll()).catch((error:any)=>new Notice(shared2Message(error)));})).addButton(button=>button.setButtonText('Отменить').setDisabled(!!intent.cancelRequested||job&& !job.canCancel).onClick(()=>{void this.encryptedTransfers.cancel(intent.job||intent.requestKey).then(()=>this.poll()).catch((error:any)=>new Notice(shared2Message(error)));}));}
   for(const intent of this.namespaceState.requests||[])if(!intent.terminal&&!intent.job)new Setting(container).setName((intent.kind==='share'?'Подготовка папки: ':'Прекращение общего доступа: ')+intent.value).setDesc(intent.error?shared2Message(intent.error):shared2Phase(intent.phase)).addButton(button=>button.setButtonText('Повторить').setDisabled(intent.phase!=='error').onClick(()=>{if(intent.cancelRequested)void this.cancelNamespacePreparation(intent).catch((error:any)=>new Notice(shared2Message(error)));else void this.prepareNamespace(intent);})).addButton(button=>button.setButtonText('Отменить подготовку').setDisabled(!!intent.cancelRequested).onClick(()=>{void this.cancelNamespacePreparation(intent).catch((error:any)=>new Notice(shared2Message(error)));}));
   for(const intent of this.deviceState.requests||[]){if(intent.terminal)continue;const job=this.deviceState.jobs.find((job:any)=>job.id===intent.job);new Setting(container).setName((intent.operation==='restore'?'Восстановление: ':'Шифрование: ')+(this.plugin.folders.records.find((record:any)=>record.id===intent.folder)?.mount||intent.folder)).setDesc(shared2Phase(job?.state||intent.phase)+(intent.error?' · '+shared2Message(intent.error):'')).addButton(button=>button.setButtonText('Повторить').setDisabled(!intent.error&&job?.state!=='error').onClick(()=>{void this.deviceTransfers.retry(intent.job||intent.requestKey).then(()=>this.poll()).catch((error:any)=>new Notice(shared2Message(error)));})).addButton(button=>button.setButtonText('Отменить').setDisabled(job&&!job.canCancel).onClick(()=>this.confirm('Отменить смену ключа?','До переключения сохраняется прежняя общая папка.',async()=>{await this.deviceTransfers.cancel(intent.job||intent.requestKey);await this.poll();})));}
-  for(const job of this.namespaceState.jobs||[]){const card=container.createDiv({cls:'arcalink-shared2-card'});new Setting(card).setName((job.kind==='share'?'Поделиться папкой: ':'Прекратить общий доступ: ')+job.mount).setDesc((job.state==='copying'&&job.total>0&&job.done===job.total?'Проверка данных и подготовка личного хранилища':shared2Phase(job.state))+' · '+job.done+' / '+job.total+(job.error?' · '+shared2Message(job.error):'')).addButton(button=>button.setButtonText('Повторить').setDisabled(job.state!=='error').onClick(()=>{void this.namespaceJobs.retry(job.id).then(()=>this.poll()).catch((error:any)=>new Notice(shared2Message(error)));})).addButton(button=>button.setButtonText('Отменить').setDisabled(!job.canCancel).onClick(()=>this.confirm('Отменить перенос?','Исходная папка и локальные файлы сохранятся.',async()=>{await this.namespaceJobs.cancel(job.id);await this.poll();})));}
+  for(const job of this.namespaceState.jobs||[]){
+   if(job.kind==='share'&&job.state==='completed')continue;
+   const card=container.createDiv({cls:'arcalink-shared2-card'});new Setting(card).setName((job.kind==='share'?'Поделиться папкой: ':'Прекратить общий доступ: ')+job.mount).setDesc((job.state==='copying'&&job.total>0&&job.done===job.total?'Проверка данных и подготовка личного хранилища':shared2Phase(job.state))+' · '+job.done+' / '+job.total+(job.error?' · '+shared2Message(job.error):'')).addButton(button=>button.setButtonText('Повторить').setDisabled(job.state!=='error').onClick(()=>{void this.namespaceJobs.retry(job.id).then(()=>this.poll()).catch((error:any)=>new Notice(shared2Message(error)));})).addButton(button=>button.setButtonText('Отменить').setDisabled(!job.canCancel).onClick(()=>this.confirm('Отменить перенос?','Исходная папка и локальные файлы сохранятся.',async()=>{await this.namespaceJobs.cancel(job.id);await this.poll();})));}
   for(const [id,entry] of this.preparations)if(entry.state&&entry.state.phase!=='admitted'&&!this.jobState.jobs?.some((job:any)=>job.folder===id))new Setting(container).setName('Подготовка: '+(this.plugin.folders.records.find((r:any)=>r.id===id)?.mount||'папка')).setDesc(shared2Phase(entry.state.phase)+' · '+entry.state.done+' / '+entry.state.total);
   for(const job of this.jobState.jobs||[]){const card=container.createDiv({cls:'arcalink-shared2-card'});new Setting(card).setName('Перенос папки').setDesc(shared2Phase(job.state)+' · '+job.done+' / '+job.total+(job.path?' · '+job.path:'' )).addButton(button=>button.setButtonText('Повторить').setDisabled(job.state!=='error').onClick(()=>{void this.jobs.retry(job.id).catch((e:any)=>new Notice(shared2Message(e)));})).addButton(button=>button.setButtonText('Отменить перенос').setDisabled(!job.canCancel).onClick(()=>{void this.jobs.cancel(job.id).catch((e:any)=>new Notice(shared2Message(e)));}));}
   for(const record of this.plugin.folders.records){
@@ -697,6 +813,8 @@ export class Shared2 {
    const row=this.catalog.folders.find((row:any)=>row.id===record.id),card=container.createDiv({cls:'arcalink-shared2-card'});
    const liveEntry=this.entries.get(record.id),liveState=liveEntry?.state,transfer=liveEntry?.engine?.getReplicationState?.();
    const setting=new Setting(card).setName('Папка: '+record.mount).setDesc(row?(row.role==='owner'?'Владелец':row.role==='editor'?'Редактор':'Читатель')+' · '+(record.shared2LocalPaused?'Синхронизация на этом устройстве приостановлена':shared2Phase(this.entries.get(row.id)?.state?.state)):'Доступ приостановлен');
+   if(liveState?.state==='conflict')new Setting(card).setName('Конфликты версий'+(liveState.conflicts?.length?' ('+liveState.conflicts.length+')':''))
+    .addButton(button=>button.setButtonText('Сверить версии').onClick(()=>{void this.showConflicts(record,liveEntry).catch((error:any)=>new Notice(shared2Message(error)));}));
    if(liveState?.state==='syncing'&&liveState.phase)new Setting(card).setName(shared2Phase(liveState.phase));
    if(Number.isFinite(transfer?.sent)&&Number.isFinite(transfer?.arrived))new Setting(card).setName('Передано за сеанс: записи базы').setDesc('↑ '+transfer.sent+'  ↓ '+transfer.arrived);
    if(liveEntry?.controller?.displayBacklog?.incoming)new Setting(card).setName('Ожидают применения: записи базы').setDesc(String(liveEntry.controller.displayBacklog.incoming));

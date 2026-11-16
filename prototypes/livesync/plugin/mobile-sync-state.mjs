@@ -19,9 +19,11 @@ export function mobileSyncState(input={}) {
  }
  if(input.maintenanceFailed)return {kind:'error',label:'Не удалось применить общие исключения',
   detail:'Откройте настройки синхронизации, чтобы проверить подключение и состояние общих исключений.',counters:null,maintenance:null};
- if(input.kind==='error'||input.errors?.length)return result('error','Требуется внимание','Не удалось подтвердить синхронизацию. Проверьте сообщение ниже или откройте настройки.');
+ if(input.kind==='error'||(input.kind==null&&input.errors?.length))return result('error','Требуется внимание','Не удалось подтвердить синхронизацию. Проверьте сообщение ниже или откройте настройки.');
  if(!input.configured)return result('idle','Подключите хранилище','Войдите в аккаунт и выберите хранилище в настройках ArcaLink.');
  if(input.offline)return result('offline','Нет интернета','Проверьте подключение смартфона к интернету.');
+ if(input.sharedActive)return result('active','Идёт синхронизация','Выполняется обмен изменениями.');
+ if(input.sharedReady&&input.kind==='ready')return result('ready','Подключено','Общая папка подключена.');
  if(input.paused)return result('idle','Приостановлено','Синхронизация приостановлена. Проверьте её настройки.');
  if(input.free){
   if(!input.connected)return result('offline','Нет связи','Нет подключения для обмена между устройствами. Проверьте интернет и настройки ArcaLink.');

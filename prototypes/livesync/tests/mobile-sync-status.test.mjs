@@ -31,9 +31,12 @@ test('offline, closed transport, pause and manual sync while auto-sync is off ar
  assert.equal(mobileSyncState({...cloud,automaticOff:true,kind:'active'}).label,'Идёт синхронизация');
 });
 test('a confirmed failure takes precedence over a green transport and keeps raw errors out of the view model',()=>{
- for(const extra of [{kind:'error'},{errors:['HTTP 500 https://private/server TypeError: secret']}]){
+ for(const extra of [{kind:'error'},{kind:undefined,errors:['HTTP 500 https://private/server TypeError: secret']}]){
   const s=mobileSyncState({...cloud,...extra});assert.equal(s.kind,'error');assert.doesNotMatch(JSON.stringify(s),/private|secret|HTTP|TypeError/);
  }
+});
+test('a warning does not override a connected indicator',()=>{
+ assert.equal(mobileSyncState({...cloud,errors:['conflict']}).kind,'ready');
 });
 test('Free distinguishes signalling, peers and completed-file claims; no stale cloud counters',()=>{
  const free={...cloud,free:true,connected:false,peers:0};

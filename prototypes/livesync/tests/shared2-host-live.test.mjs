@@ -16,6 +16,7 @@ const output=await require('esbuild').build({stdin:{contents:`
  import Memory from 'pouchdb-adapter-memory';PouchDB.plugin(Memory);
  export const createDB=(name,options)=>new PouchDB(name,{...options,adapter:'memory'});
 `,resolveDir:source},plugins:[{name:'host-headless',setup(build){
+ build.onResolve({filter:/ConflictResolveModal$/},()=>({path:'conflict-modal',namespace:'host'}));build.onLoad({filter:/^conflict-modal$/,namespace:'host'},()=>({contents:'export class ConflictResolveModal{}'}));
  build.onResolve({filter:/^obsidian$/},()=>({path:'obsidian',namespace:'host'}));
  build.onLoad({filter:/^obsidian$/,namespace:'host'},()=>({contents:'export class Modal{};export class Notice{};export class Setting{};export class TFolder{};export function setIcon(){};export function requestUrl(){throw Error("Unexpected requestUrl");}'}));
  build.onResolve({filter:/^@\/common\/translation$|localized-obsidian$/},()=>({path:'translation',namespace:'host'}));

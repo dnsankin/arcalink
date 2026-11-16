@@ -21,3 +21,18 @@ export function patchPouchNextTick(source) {
  if(source.split(nativeScheduler).length!==2)throw Error('Unexpected upstream PouchDB nextTick');
  return source.replace(nativeScheduler,nativeScheduler.replace('? queueMicrotask','? (fn) => globalThis.queueMicrotask(fn)'));
 }
+
+export function patchReplicationReadinessLog(service, coordinator) {
+ const readiness = 'return (await this._evaluateReadiness({ showMessage, requirements: readiness })).ready;';
+ const hook = 'checkReadiness: (showMessage, readiness) => this.isReplicationReady(showMessage, readiness),';
+ const context = 'if (activeContext !== ready || !isActiveReplicatorContextBoundToSetting(activeContext, setting)) {\n          return replicationBlocked("not-ready");';
+ if ([readiness, hook].some(marker => service.split(marker).length !== 2) || coordinator.split(context).length !== 2) {
+  throw Error('Unexpected LiveSync readiness diagnostics boundary');
+ }
+ return {
+  service: service.replace(readiness, `const result = await this._evaluateReadiness({ showMessage, requirements: readiness });
+    if (!result.ready) this._log("Replication not-ready: " + result.rejectedCondition, LOG_LEVEL_INFO);
+    return result.ready;`).replace(hook, hook+'\n      logChangedContext: () => this._log("Replication not-ready: replicator-context-changed", LOG_LEVEL_INFO),'),
+  coordinator: coordinator.replace(context, context.replace('return replicationBlocked', 'this.dependencies.logChangedContext?.();\n          return replicationBlocked')),
+ };
+}

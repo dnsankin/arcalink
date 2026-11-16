@@ -292,7 +292,10 @@ export class FolderPolicies {
       if(!next.revision){this.error='';return true;}
       if(next.phase==='ready'&&this.entry?.binding?.revision===next.revision&&this.entry.binding.database===next.database&&!this.entry.journal){this.error='';return true;}
       this.reload();return false;
-    }catch(e:any){if(this.legacyUnavailable(e)){this.available=false;this.error='';return true;}this.error=fail().message;return false;}
+    }catch(e:any){if(this.legacyUnavailable(e)){this.available=false;this.error='';return true;}const reason=e?.code==='session-storage-read'||e?.code==='session-invalid'?e.code:
+      Number.isInteger(e?.status)?'HTTP '+e.status:e?.unavailable?'request-unavailable':'validation-failed';
+      this.plugin.logReplicationPreflight?.('folder-policy: '+reason);
+      this.error=fail().message;return false;}
   }
   async recoverFrozenExchange(){
     const s=this.plugin.core.services,settings=s.setting.currentSettings();

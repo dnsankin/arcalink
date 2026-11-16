@@ -9,7 +9,7 @@ import { patchContentRetryProcessor, patchContentRetryLifecycle, patchContentRet
 import { patchCommunityOnboarding } from './patch-community-onboarding.mjs';
 import { patchConfigDoctor } from './patch-config-doctor.mjs';
 import { patchSettingsRegistration } from './patch-settings-registration.mjs';
-import { patchPouchNextTick } from './patch-replication.mjs';
+import { patchPouchNextTick, patchReplicationReadinessLog } from './patch-replication.mjs';
 import { prepareUnitTests } from './prepare-plugin-unit-tests.mjs';
 import {packMessageCatalog} from './packed-message-catalog.mjs';
 import {createRequire} from 'node:module';
@@ -239,6 +239,11 @@ await copyFile(path.join(root,'tests/content-retry.integration.unit.spec.ts'),pa
 await prepareUnitTests(root, source);
 execFileSync('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: source, env, stdio: 'inherit' });
 await patchMaintainedEngine(source,{foldersLab});
+const replicationService = path.join(source, 'node_modules/@vrtmrz/livesync-commonlib/dist/services/base/ReplicationService');
+const readinessLog = patchReplicationReadinessLog(await readFile(replicationService+'.js','utf8'), await readFile(replicationService+'.typedReplication.js','utf8'));
+await writeFile(replicationService+'.js', readinessLog.service);
+await writeFile(replicationService+'.typedReplication.js', readinessLog.coordinator);
+
 // Keep every translation while avoiding large source literals in the bundle.
 // A fresh source tree makes this a one-time, deterministic build transformation.
 const buildRequire=createRequire(path.join(source,'package.json'));

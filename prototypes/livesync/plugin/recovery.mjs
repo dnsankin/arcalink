@@ -12,6 +12,29 @@ export async function nativeConnectionReachable(request,url,headers,timeoutMs=80
  }finally{clearTimeout(timeout);}
 }
 
+export function desktopNetworkSignature(load) {
+  try {
+    const interfaces = load('os').networkInterfaces();
+    return JSON.stringify(Object.entries(interfaces).flatMap(([name, addresses]) =>
+      addresses.filter(address => !address.internal).map(address =>
+        JSON.stringify([name, address.family, address.address, address.scopeid ?? null]))).sort());
+  } catch {
+    return undefined;
+  }
+}
+
+export async function withConnectionTimeout(operation, timeoutMs = 15000) {
+  let timeout;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('ERR_TIMED_OUT')), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function createRecoveryLoop(host) {
   let disposed = false, busy = false;
   let outageGeneration = 0, recoveredGeneration = 0;

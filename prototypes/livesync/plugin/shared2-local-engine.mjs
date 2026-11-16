@@ -134,6 +134,39 @@ export function createShared2LocalEngineFactory({createPouchDB,settingsFor,names
     if(!doc)throw fail('shared2-revision-content-missing');
     return {bytes:await readAsBlob(doc).arrayBuffer(),revision:doc._rev,ctime:doc.ctime,mtime:doc.mtime};
    },
+   async resolveConflict(name,{revisions,keep,merged,verify}){
+    checked(name);
+    if(profile.kind!=='shared'||profile.role==='viewer'||!files||
+       !name.startsWith(profile.documentRoot+'/')||!Array.isArray(revisions)||
+       new Set(revisions).size!==revisions.length||revisions.length<2||
+       !revisions.includes(keep)||!revisions.every(rev=>typeof rev==='string'&&/^\d+-[A-Za-z0-9]+$/.test(rev))||
+       typeof verify!=='function')throw fail('shared2-conflict-resolution-unavailable');
+    const engine=this;
+    return files.scan(async()=>{
+     const expected=new Set(revisions);
+     const check=async()=>{
+      if(await accessCheck(profile)!==true||await verify()!==true)throw fail('shared2-conflict-changed');
+      const meta=await engine.metadata(name);
+      const actual=meta?new Set([meta._rev,...(meta._conflicts||[])]):new Set();
+      if(actual.size!==expected.size||[...expected].some(rev=>!actual.has(rev)))throw fail('shared2-conflict-changed');
+     };
+     await check();
+     if(merged!==undefined){
+      if(!name.toLowerCase().endsWith('.md')||typeof merged!=='string')throw fail('shared2-conflict-resolution-unavailable');
+      const written=await engine.write(name,{baseRevision:keep,bytes:new TextEncoder().encode(merged)});
+      if(typeof written?.rev!=='string')throw fail('shared2-conflict-resolution-incomplete');
+      expected.delete(keep);expected.add(written.rev);
+     }
+     const id=await path.path2id(name);
+     for(const revision of revisions.filter(revision=>revision!==keep)){
+      await check();
+      if(!await local.removeRevision(id,revision))throw fail('shared2-conflict-resolution-incomplete');
+      expected.delete(revision);
+     }
+     await check();
+     return engine.metadata(name);
+    });
+   },
    async read(name){
     checked(name);
     const doc=await local.getDBEntry(name,undefined,false,false,false,true);

@@ -21,7 +21,7 @@ import {diagnosticMessage,parameterFailure} from './diagnostic.mjs';
 import {createSyncFeedback,syncLampState,syncUserMessages,createSyncActivityTracker} from './sync-feedback.mjs';
 import {requestPilot,responseData,responseError,connectionFailure} from './pilot-http.mjs';
 import {Logger,LOG_LEVEL_INFO} from 'octagonal-wheels/common/logger';
-import { createRecoveryLoop,nativeConnectionReachable } from './recovery.mjs';
+import { createRecoveryLoop,nativeConnectionReachable,desktopNetworkSignature,withConnectionTimeout } from './recovery.mjs';
 import { createStorageWarning } from './storage-warning.mjs';
 import { createNewVaultSettings } from '@vrtmrz/livesync-commonlib/settings';
 import { upsertRemoteConfigurationInPlace } from '@vrtmrz/livesync-commonlib/remote-configurations';
@@ -78,6 +78,7 @@ export default class ArcaLinkPilot extends LiveSync {
   unifiedVault=new UnifiedVault(this);
   folderPolicies=new FolderPolicies(this);
   arcalinkP2P:any;
+  logReplicationPreflight(reason:string){Logger("Replication preflight: "+reason,LOG_LEVEL_INFO);}
   async prepareFreeRelaySettings(settings:any,signal:AbortSignal){if(!isFreeRelay(settings))return null;if(!await this.folderPolicies.beforeExchange())throw Error('Применяются общие исключения папок. Дождитесь завершения.');return this.freeRelay.prepare(settings,signal);}
   cloudFeatures:Promise<void>|null=null;
   sharedFeatures:Promise<void>|null=null;
@@ -216,6 +217,8 @@ export default class ArcaLinkPilot extends LiveSync {
           const queue=entry.controller.displayBacklog;
           return {outgoing:sum.outgoing+queue.outgoing,incoming:sum.incoming+queue.incoming};
         },{outgoing:0,incoming:0});
+        const sharedActive=!!sharedProgress||!!sharedBacklog.incoming||!!sharedBacklog.outgoing;
+        const sharedReady=sharedEntries.some(entry=>entry.controller.ready&&entry.state?.state!=='error');
         const sharedStage=sharedProgress?({baseline:'Сверка исходных файлов',local:'Проверка локальных файлов',connection:'Подключение',exchange:'Загрузка в локальную базу',application:'Применение файлов',verification:'Проверка и догрузка изменений',remote:'Проверка серверных версий'} as Record<string,string>)[sharedProgress.phase]:'';
         const sharedCount=sharedProgress?.total?' '+sharedProgress.done+' / '+sharedProgress.total:
           sharedBacklog.outgoing||sharedBacklog.incoming?' '+localizeMessage('Ожидают отправки: события')+': '+sharedBacklog.outgoing+'; '+localizeMessage('Ожидают применения: записи базы')+': '+sharedBacklog.incoming:'';
@@ -232,19 +235,19 @@ export default class ArcaLinkPilot extends LiveSync {
         const settings=services.setting.currentSettings();
         if(isFreeRelay(settings)){
           const connected=this.arcalinkP2P?.transportLifecycle.isConnected,peers=this.arcalinkP2P?.peerDirectory.getPeers()||[];
-          const sharedActive=!!sharedProgress||!!sharedBacklog.incoming||!!sharedBacklog.outgoing;
           const personal=localizeMessage(offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':activity?'Синхронизация выполняется':'Free: второе устройство подключено; состояние передачи — в панели устройств');
-          this.mobileSyncStatus?.update({free:true,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
-          lamp.dataset.state=offline?'offline':sharedErrors.length?'error':sharedActive?'active':connected&&peers.length?(activity?'active':'ready'):'idle';
+          const kind=offline?'offline':sharedActive?'active':sharedReady||connected&&peers.length?(activity?'active':'ready'):sharedErrors.length?'error':connected?'idle':'offline';
+          this.mobileSyncStatus?.update({kind,free:true,sharedActive,sharedReady,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
+          lamp.dataset.state=kind;
           const tooltip=[!offline&&sharedActive&&(sharedDetail||localizeMessage('Обмен общей папки')+sharedCount),...sharedErrors.map(message=>localizeMessage(message)),...sharedMetrics,sharedActive||sharedErrors.length?localizeMessage('Личное хранилище')+' · '+personal:personal].filter(Boolean).join('\n');
           if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
           return;
         }
         const paused=services.appLifecycle.isSuspended(),automaticOff=settings.isConfigured&&!settings.liveSync;
-        const kind=syncLampState({errors,status,offline,paused,automaticOff,active:activity});
+        const kind=syncLampState({errors,status,offline,paused,automaticOff,active:activity,sharedActive,sharedReady});
         lamp.dataset.state=kind;
-        this.mobileSyncStatus?.update({kind,status,offline,configured:settings.isConfigured,ready:services.appLifecycle.isReady(),paused,automaticOff,sent:state.sent,arrived:state.arrived,errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
-        const label=kind==='idle'&&paused?'Синхронизация приостановлена':kind==='idle'&&automaticOff?'Автоматическая синхронизация выключена':{error:'Ошибка синхронизации',offline:'Нет подключения к интернету',ready:'Синхронизация подключена',active:'Синхронизация выполняется',idle:'Синхронизация ожидает'}[kind];
+        this.mobileSyncStatus?.update({kind,status,offline,configured:settings.isConfigured,ready:services.appLifecycle.isReady(),paused,automaticOff,sharedActive,sharedReady,sent:state.sent,arrived:state.arrived,errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
+        const label=kind==='idle'&&paused?'Синхронизация приостановлена':kind==='idle'&&automaticOff?'Автоматическая синхронизация выключена':{error:'Ошибка синхронизации',offline:offline?'Нет подключения к интернету':'Нет соединения для синхронизации',ready:'Синхронизация подключена',active:'Синхронизация выполняется',idle:'Синхронизация ожидает'}[kind];
         // setTooltip owns aria-label; resetting it would erase the detailed hover text.
         const tooltip=[label,localizeMessage('Передано за сеанс: записи базы')+': ↑ '+state.sent+' ↓ '+state.arrived,summary,sharedDetail,...sharedMetrics,...syncUserMessages([...errors,lastMessage].filter(Boolean),this.folders.syncFeedback.messages)].filter(Boolean).map(localizeMessage).join('\n');if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
       } catch {this.mobileSyncStatus?.update({ready:false,configured:true});lamp.dataset.state='idle';setTooltip(lamp,localizeMessage('Синхронизация запускается'),{placement:'top'});}
@@ -279,14 +282,25 @@ export default class ArcaLinkPilot extends LiveSync {
       if (!navigator.onLine) this.pilotRecovery.markUnavailable();
       else void this.pilotRecovery.tick();
     };
-    if (!Platform.isMobileApp) {
-      this.registerDomEvent(window, 'offline', () => this.pilotRecovery.markUnavailable());
-      this.registerDomEvent(window, 'online', recoverLiveSync);
-      if (!navigator.onLine) this.pilotRecovery.markUnavailable();
-    }
+    this.registerDomEvent(window, 'offline', () => this.pilotRecovery.markUnavailable());
+    this.registerDomEvent(window, 'online', recoverLiveSync);
+    this.registerDomEvent(window, 'focus', recoverLiveSync);
+    this.registerDomEvent(document, 'visibilitychange', () => {
+      if (document.visibilityState === 'visible') recoverLiveSync();
+    });
+    const readInterfaces = () => desktopNetworkSignature((window as any).require);
+    let interfaces = Platform.isMobileApp ? undefined : readInterfaces();
+    if (!navigator.onLine) this.pilotRecovery.markUnavailable();
     this.registerInterval(window.setInterval(() => {
-      if (Platform.isMobileApp) void this.pilotRecovery.tick();
-      else recoverLiveSync();
+      if (!Platform.isMobileApp) {
+        const current = readInterfaces();
+        if (interfaces !== undefined && current !== undefined && current !== interfaces) {
+          this.pilotRecovery.markUnavailable();
+          window.dispatchEvent(new Event('arcalink-network-changed'));
+        }
+        interfaces = current;
+      }
+      recoverLiveSync();
     }, 15000));
     this.addCommand({ id: 'pilot-recovery-status', name: 'Синхронизация: состояние восстановления', callback: () => {
       new Notice(JSON.stringify(this.pilotRecovery.status));
@@ -326,7 +340,8 @@ class PilotTab extends PluginSettingTab {
     let accountStatus:any=null,signedIn=!!this.pilot.workspaces.pending;
     const initialMode=this.pilot.core.services.setting.currentSettings()?.remoteType;
     let stopLocalization=()=>{};
-    const cleanup=()=>{window.clearInterval(modeTimer);stopLocalization();};
+    const networkListeners=new AbortController();
+    const cleanup=()=>{window.clearInterval(modeTimer);stopLocalization();networkListeners.abort();};
     const modeTimer=window.setInterval(()=>{if(!el.isConnected){cleanup();return;}if(this.pilot.core.services.setting.currentSettings()?.remoteType!==initialMode){this.renderInto(el);return;}updateSectionStates();},1000);
     (el as any).__arcalinkModeCleanup=cleanup;this.pilot.register(cleanup);
     if(this.pilot.pilotSettingsTab==='free')this.pilot.pilotSettingsTab='vaults';
@@ -429,7 +444,7 @@ class PilotTab extends PluginSettingTab {
     const subscription=new Setting(panels.account).setName('Подписка').setDesc('Данные пока не загружены');
     let email=pending?.email||'',authenticatedEmail=email,password='',emailEdited=false;
     let emailInput:any;
-    let accountBusy=false,retryAccount:any,retryStorage:any;
+    let accountBusy=false,recheckAccount=false,retryAccount:any,retryStorage:any;
     const refreshAccount=async()=>{
       if(accountBusy)return;accountBusy=true;retryAccount?.setDisabled(true);retryStorage?.setDisabled(true);
       try{
@@ -445,9 +460,9 @@ class PilotTab extends PluginSettingTab {
       account.setDesc('Проверяем вход в аккаунт…');meter.hidden=true;
       const headers={Authorization:'Basic '+btoa(settings.couchDB_USER+':'+settings.couchDB_PASSWORD)};
       const outcomes=await Promise.allSettled([
-        requestPilot(requestUrl,{url:this.pilot.unifiedVault.base+'/account-status',headers,throw:false}),
-        requestPilot(requestUrl,{url:this.pilot.unifiedVault.base+'/storage-status',headers,throw:false}),
-        this.pilot.workspaces.api('list')
+        withConnectionTimeout(()=>requestPilot(requestUrl,{url:this.pilot.unifiedVault.base+'/account-status',headers,throw:false})),
+        withConnectionTimeout(()=>requestPilot(requestUrl,{url:this.pilot.unifiedVault.base+'/storage-status',headers,throw:false})),
+        withConnectionTimeout(()=>this.pilot.workspaces.api('list'))
       ]);
       if(!el.isConnected)return;
       const catalog=outcomes[2];
@@ -462,10 +477,19 @@ class PilotTab extends PluginSettingTab {
       const space=outcomes[1];
       if(space.status==='fulfilled'&&space.value.status===200&&responseData(space.value)){const {used_bytes:used,limit_bytes:limit}=responseData(space.value);if(Number.isFinite(used)&&used>=0&&limit===0){storage.setDesc('Free не хранит файлы на сервере. Облачная синхронизация отключена. Срок хранения прежней копии указан в настройках хранилища. Для облачной синхронизации продлите Begin или Pro.');meter.hidden=true;}else if(Number.isFinite(used)&&used>=0&&Number.isFinite(limit)&&limit>0){const size=(n:number)=>(n/1024/1024).toLocaleString(messageLanguage()==='ru'?'ru-RU':'en-US',{maximumFractionDigits:1})+' '+localizeMessage('МБ');storage.setDesc('Занято '+size(used)+' из '+size(limit)+'. Свободно '+size(Math.max(0,limit-used))+'.');meter.value=Math.min(100,used/limit*100);meter.hidden=false;meter.setAttribute('aria-valuetext',Math.round(used/limit*100)+'% занято');}else storage.setDesc('Сервер вернул некорректные данные о хранилище');}
       else storage.setDesc('Не удалось загрузить данные о свободном месте.');
-      }finally{updateSectionStates();accountBusy=false;retryAccount?.setDisabled(false);retryStorage?.setDisabled(false);}
+      }finally{
+        updateSectionStates();accountBusy=false;retryAccount?.setDisabled(false);retryStorage?.setDisabled(false);
+        if(recheckAccount&&!networkListeners.signal.aborted&&el.isConnected){recheckAccount=false;void refreshAccount();}
+      }
     };
     new Setting(panels.account).setName('Проверка аккаунта').setDesc('Повторить загрузку статуса входа и подписки.').addButton(b=>{retryAccount=b;b.setButtonText('Повторить проверку').onClick(refreshAccount);});
     new Setting(panels.vaults).setName('Проверка хранилища').setDesc('Обновить сведения о подключении и свободном месте.').addButton(b=>{retryStorage=b;b.setButtonText('Обновить данные').onClick(refreshAccount);tariffGate(b.buttonEl,'cloud');}).settingEl.setAttribute('data-arcalink-capability','cloud');
+    const recheckConnection=()=>{
+      if(!el.isConnected||!navigator.onLine)return;
+      if(accountBusy)recheckAccount=true;
+      else void refreshAccount();
+    };
+    for(const event of ['online','arcalink-network-changed'])window.addEventListener(event,recheckConnection,{signal:networkListeners.signal});
     void refreshAccount();
     new Setting(panels.account).setName('Электронная почта').addText(t=>{emailInput=t;t.setPlaceholder('Почта аккаунта').setValue(email).onChange(v=>{emailEdited=true;email=v.trim().toLowerCase();});});
     new Setting(panels.account).setName('Пароль').addText(t=>{t.inputEl.type='password';t.onChange(v=>password=v);});

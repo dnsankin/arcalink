@@ -37,8 +37,17 @@ export function createSyncFeedback({diagnose,notify}) {
   }
  };
 }
-export function syncLampState({errors,status,offline,paused,automaticOff,active=false}) {
- return errors.length||/ERRORED|FAILED/.test(status)?'error':offline?'offline':paused?'idle':active||/STARTED|JOURNAL/.test(status)?'active':automaticOff?'idle':/CONNECTED|PAUSED|COMPLETED/.test(status)?'ready':'idle';
+export function syncLampState({errors,status,offline,paused,automaticOff,active=false,sharedActive=false,sharedReady=false}) {
+ if(offline)return 'offline';
+ if(sharedActive)return 'active';
+ if(sharedReady)return active?'active':'ready';
+ if(paused)return 'idle';
+ if(/ERRORED|FAILED/.test(status))return 'error';
+ if(active||/STARTED|JOURNAL/.test(status))return 'active';
+ if(automaticOff)return 'idle';
+ if(/CONNECTED|PAUSED|COMPLETED/.test(status)&&status!=='NOT_CONNECTED')return 'ready';
+ if(errors.length)return 'error';
+ return ['NOT_CONNECTED','CLOSED'].includes(status)?'offline':'idle';
 }
 
 // Display-only samples. Cumulative counters establish a baseline, never activity by themselves.
