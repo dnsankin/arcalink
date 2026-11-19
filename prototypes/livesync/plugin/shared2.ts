@@ -474,7 +474,7 @@ export class Shared2 {
    // A prepared cache with a ledger from this mount predates the explicit
    // initial proof marker. Resume through the normal offline reconciliation.
    const resumeExisting=!initialVerified&&!record.shared2InitialPull&&
-    !record.shared2ReconcileAuthority&&await runtime.prepared()&&await baseline.hasBaseline();
+    await runtime.prepared()&&await baseline.hasBaseline();
    if(resumeExisting)initialVerified=true;
    controller=createShared2LiveController({profile,engine,baseline,store:runtime,checkLease:checked,isVerified:checkpoint.isVerified,canUpload,
     scan,

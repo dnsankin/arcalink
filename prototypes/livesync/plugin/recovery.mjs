@@ -66,3 +66,24 @@ export function createRecoveryLoop(host) {
     },
   };
 }
+
+// Replay durable tombstones whose filesystem projection was interrupted.
+export function createPendingDeletionRecovery({eligible,files,metadata,apply,current,report}) {
+ let running=false,completed;
+ return async()=>{
+  if(running||!eligible()||completed===current())return;
+  running=true;
+  const identity=current();
+  try{
+   for(const path of files()){
+    if(!eligible()||current()!==identity)return;
+    const doc=await metadata(path);
+    if(!doc||!doc.deleted&&!doc._deleted)continue;
+    if(!eligible()||current()!==identity)return;
+    await apply(path);
+   }
+   completed=identity;
+  }catch(error){report(error);}
+  finally{running=false;}
+ };
+}

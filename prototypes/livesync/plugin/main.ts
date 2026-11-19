@@ -1,3 +1,4 @@
+import type {FilePath,FilePathWithPrefix} from '@vrtmrz/livesync-commonlib/compat/common/types';
 import {LocalBackups} from './local-backups';
 import {Shared2} from './shared2';
 import {shared2Message} from './shared2-messages.mjs';
@@ -9,6 +10,7 @@ import {CompanionOwnership} from './companion-ownership';
 import {CompanionActions} from './companion-actions';
 import {MobileAssistant} from './mobile-assistant';
 import {settingsState,settingsStateLabel,capabilityHint} from './settings-state.mjs';
+import {createPendingDeletionRecovery} from './recovery.mjs';
 import {UnifiedVault} from './unified-vault';
 import {VaultControls} from './vault-controls';
 import {FreeRelay} from './free-relay';
@@ -218,7 +220,8 @@ export default class ArcaLinkPilot extends LiveSync {
           return {outgoing:sum.outgoing+queue.outgoing,incoming:sum.incoming+queue.incoming};
         },{outgoing:0,incoming:0});
         const sharedActive=!!sharedProgress||!!sharedBacklog.incoming||!!sharedBacklog.outgoing;
-        const sharedReady=sharedEntries.some(entry=>entry.controller.ready&&entry.state?.state!=='error');
+        const sharedBlocked=sharedErrors.length>0&&!sharedProgress;
+        const sharedReady=!sharedBlocked&&sharedEntries.some(entry=>entry.controller.ready&&entry.state?.state!=='error');
         const sharedStage=sharedProgress?({baseline:'Сверка исходных файлов',local:'Проверка локальных файлов',connection:'Подключение',exchange:'Загрузка в локальную базу',application:'Применение файлов',verification:'Проверка и догрузка изменений',remote:'Проверка серверных версий'} as Record<string,string>)[sharedProgress.phase]:'';
         const sharedCount=sharedProgress?.total?' '+sharedProgress.done+' / '+sharedProgress.total:
           sharedBacklog.outgoing||sharedBacklog.incoming?' '+localizeMessage('Ожидают отправки: события')+': '+sharedBacklog.outgoing+'; '+localizeMessage('Ожидают применения: записи базы')+': '+sharedBacklog.incoming:'';
@@ -236,7 +239,7 @@ export default class ArcaLinkPilot extends LiveSync {
         if(isFreeRelay(settings)){
           const connected=this.arcalinkP2P?.transportLifecycle.isConnected,peers=this.arcalinkP2P?.peerDirectory.getPeers()||[];
           const personal=localizeMessage(offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':activity?'Синхронизация выполняется':'Free: второе устройство подключено; состояние передачи — в панели устройств');
-          const kind=offline?'offline':sharedActive?'active':sharedReady||connected&&peers.length?(activity?'active':'ready'):sharedErrors.length?'error':connected?'idle':'offline';
+          const kind=offline?'offline':sharedBlocked?'error':sharedActive?'active':sharedReady||connected&&peers.length?(activity?'active':'ready'):sharedErrors.length?'error':connected?'idle':'offline';
           this.mobileSyncStatus?.update({kind,free:true,sharedActive,sharedReady,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
           lamp.dataset.state=kind;
           const tooltip=[!offline&&sharedActive&&(sharedDetail||localizeMessage('Обмен общей папки')+sharedCount),...sharedErrors.map(message=>localizeMessage(message)),...sharedMetrics,sharedActive||sharedErrors.length?localizeMessage('Личное хранилище')+' · '+personal:personal].filter(Boolean).join('\n');
@@ -244,7 +247,7 @@ export default class ArcaLinkPilot extends LiveSync {
           return;
         }
         const paused=services.appLifecycle.isSuspended(),automaticOff=settings.isConfigured&&!settings.liveSync;
-        const kind=syncLampState({errors,status,offline,paused,automaticOff,active:activity,sharedActive,sharedReady});
+        const kind=sharedBlocked?'error':syncLampState({errors,status,offline,paused,automaticOff,active:activity,sharedActive,sharedReady});
         lamp.dataset.state=kind;
         this.mobileSyncStatus?.update({kind,status,offline,configured:settings.isConfigured,ready:services.appLifecycle.isReady(),paused,automaticOff,sharedActive,sharedReady,sent:state.sent,arrived:state.arrived,errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
         const label=kind==='idle'&&paused?'Синхронизация приостановлена':kind==='idle'&&automaticOff?'Автоматическая синхронизация выключена':{error:'Ошибка синхронизации',offline:offline?'Нет подключения к интернету':'Нет соединения для синхронизации',ready:'Синхронизация подключена',active:'Синхронизация выполняется',idle:'Синхронизация ожидает'}[kind];
@@ -305,6 +308,16 @@ export default class ArcaLinkPilot extends LiveSync {
     this.addCommand({ id: 'pilot-recovery-status', name: 'Синхронизация: состояние восстановления', callback: () => {
       new Notice(JSON.stringify(this.pilotRecovery.status));
     }});
+    const recoverDeletions=createPendingDeletionRecovery({
+      eligible:()=>services.appLifecycle.isReady()&&!services.appLifecycle.isSuspended()&&!this.companionOwnership.blocksOrdinary,
+      current:()=>services.database.localDatabase,
+      files:()=>this.app.vault.getFiles().filter(file=>!this.folders.record(file.path)).map(file=>file.path),
+      metadata:async(path:string)=>await services.vault.isTargetFile(path)?services.database.localDatabase.getDBEntryMeta(path as FilePathWithPrefix,{},true):null,
+      apply:(path:string)=>this.core.serviceModules.fileHandler.dbToStorage(path as FilePathWithPrefix,path as FilePath,false),
+      report:(error:any)=>Logger('Не удалось применить ожидающие удаления: '+String(error),LOG_LEVEL_INFO),
+    });
+    services.appLifecycle.onLoaded.addHandler(async()=>{void recoverDeletions();return true;},700);
+    this.registerInterval(window.setInterval(()=>void recoverDeletions(),60000));
     const reconcileVault=()=>{if(!this.companionOwnership.blocksOrdinary)void this.unifiedVault.poll();};
     services.appLifecycle.onLoaded.addHandler(async()=>{reconcileVault();return true;},650);
     this.registerInterval(window.setInterval(reconcileVault,60000));

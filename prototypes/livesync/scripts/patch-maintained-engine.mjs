@@ -1,7 +1,7 @@
 import {readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {patchIdbMemory} from './patch-idb-memory.mjs';
-import {patchPeerFilePolicy,patchPeerIntegrityMetadata} from './patch-peer-file-policy.mjs';
+import {patchPeerFilePolicy,patchPeerIntegrityMetadata,patchVaultTrash} from './patch-peer-file-policy.mjs';
 import {patchLargeContent,patchDecodedBinary,patchBinaryConflictReader} from './patch-large-content.mjs';
 import {patchReplicationBusy} from './patch-replication.mjs';
 import {patchTicketRelayLifecycle,patchFreeChunkRetries,patchTicketedPeerCleanup,patchTicketedRtcRelease,patchTicketedFreshJoin} from './patch-free-relay.mjs';
@@ -111,4 +111,6 @@ const binaryDecoderPath=path.join(source,'node_modules/octagonal-wheels/dist/bin
 await writeFile(binaryDecoderPath,patchDecodedBinary(await readFile(binaryDecoderPath,'utf8')));
 const conflictManagerPath=path.join(source,'node_modules/@vrtmrz/livesync-commonlib/dist/managers/ConflictManager.js');
 await writeFile(conflictManagerPath,patchBinaryConflictReader(await readFile(conflictManagerPath,'utf8')));
+const vaultAdapterPath=path.join(source,'src/serviceModules/FileSystemAdapters/ObsidianVaultAdapter.ts');
+await writeFile(vaultAdapterPath,patchVaultTrash(await readFile(vaultAdapterPath,'utf8')));
 }

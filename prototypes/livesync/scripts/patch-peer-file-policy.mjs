@@ -31,6 +31,14 @@ export function patchPeerFilePolicy(source,revisionImport,integrityImport){
       await verifyActionIntegrity(settings, docEntry, new Uint8Array(verifiedActionData));
       if (isTextDocument(verifiedActionDoc)) verifiedActionData = actionTextFromBytes(verifiedActionData);
     }`)
+  .replace('    const snapshot = { file: readFile, revision: observedProvenance };',`    const snapshot = { file: readFile, revision: observedProvenance };
+    if (!observedProvenance && (incomingEntry.deleted || incomingEntry._deleted) && !incomingEntry._conflicts?.length) {
+      const deletedSnapshot = await this.db.fetchEntryFromMeta(incomingEntry, false, false, true);
+      if (deletedSnapshot && await isDocContentSame(readContent(deletedSnapshot), readFile.body)) {
+        return await this.currentStorageSnapshotMatches(readFile, observedProvenance)
+          ? { preserved: false, snapshot } : { preserved: false };
+      }
+    }`)
   .replace(read,'    const docRead = verifiedActionDoc ?? await this.db.fetchEntryFromMeta(docEntry);')
   .replace(data,'    const docData = verifiedActionData ?? readContent(docRead);')
   .replace(recheck,'    if (!allowExistingConflicts && !effectiveFileSettings(this.setting.currentSettings(), incomingEntry, false, allowExistingConflicts).writeDocumentsIfConflicted && (await this.db.getConflictedRevs(path)).length > 0) {');
@@ -41,4 +49,14 @@ export function patchPeerIntegrityMetadata(source){
  if(source.split(meta).length!==2||source.split(loaded).length!==2)throw Error('Unexpected peer metadata boundary');
  return source.replace(meta,meta+',\n        ...("arcalinkActionIntegrity" in obj ? { arcalinkActionIntegrity: obj.arcalinkActionIntegrity } : {})')
   .replace(loaded,'      eden: meta.eden,\n      ...("arcalinkActionIntegrity" in meta ? { arcalinkActionIntegrity: meta.arcalinkActionIntegrity } : {}),\n      deleted,');
+}
+
+export function patchVaultTrash(source){
+ const original='        return await this.app.fileManager.trashFile(file);';
+ if(source.split(original).length!==3)throw Error('Unexpected Obsidian trash adapter');
+ return source.replaceAll(original,`        const removed = await this.app.fileManager.trashFile(file) as unknown;
+        if (removed === false) await this.app.vault.trash(file, false);
+        if (await this.app.vault.adapter.exists(file.path)) {
+            throw new Error("Storage deletion did not remove the file");
+        }`);
 }
