@@ -108,7 +108,7 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
    if(problem)return {state:'error',code:problem};
    if(progress)return progress;
    const network=engine.getReplicationState?.()||{},incoming=engine.results?.state||{};
-   if(initializing||checking||queued||engine.files?.pending||incoming.pending||incoming.loading||incoming.applying||['STARTED','CONNECTED'].includes(network.syncStatus))return {state:'syncing',phase:'exchange'};
+   if(initializing||checking||queued||engine.files?.pending||incoming.pending||incoming.loading||incoming.applying||network.syncStatus==='STARTED')return {state:'syncing',phase:'exchange'};
    if(network.syncStatus==='ERRORED')return {state:'error',code:'shared2-live-connection-interrupted'};
    return {state:conflicts.size?'conflict':initialized?'idle':'syncing',conflicts:[...conflicts]};
   },

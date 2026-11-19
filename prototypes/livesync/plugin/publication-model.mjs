@@ -3,7 +3,7 @@ export const publicationTypes={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png
 export async function publicationHash(bytes){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(b=>b.toString(16).padStart(2,'0')).join('');}
 export function publicationAttribute(value){return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 export function publicationEmbed(asset,embedded,label){
- const key=publicationAttribute(asset.key),name=publicationAttribute(label||asset.filename),type=publicationTypes[asset.filename.split('.').pop().toLowerCase()];
+ const key=publicationAttribute(asset.key),name=publicationAttribute(label||asset.filename),type=publicationTypes[asset.filename.split('.').pop().toLowerCase()]||'application/octet-stream';
  if(embedded&&type.startsWith('image/'))return `<img src="https://arcalink.ru/pending-publication-assets/${key}" alt="${name}">`;
  if(embedded&&(type.startsWith('video/')||type.startsWith('audio/'))){const tag=type.startsWith('video/')?'video':'audio';return `<${tag} src="https://arcalink.ru/pending-publication-assets/${key}" controls></${tag}>`;}
  return `<a href="https://arcalink.ru/pending-publication-assets/${key}">${name}</a>`;

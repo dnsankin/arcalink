@@ -39,7 +39,7 @@ class Control {
 }
 async function componentFixture({encrypted=false}={}){
  const require=createRequire(new URL('../.cache/source/esbuild.config.mjs',import.meta.url));
- const compiled=require('esbuild').buildSync({entryPoints:[fileURLToPath(new URL('../plugin/publication.ts',import.meta.url))],bundle:true,format:'cjs',platform:'node',write:false,external:['obsidian']}).outputFiles[0].text;
+ const compiled=require('esbuild').buildSync({entryPoints:[fileURLToPath(new URL('../plugin/publication.ts',import.meta.url))],bundle:true,format:'cjs',platform:'node',write:false,external:['obsidian'],nodePaths:[fileURLToPath(new URL('../.cache/source/node_modules',import.meta.url))]}).outputFiles[0].text;
  const settings=[],modals=[],calls=[],writes=new Map(),rendered=[];
  class Setting {
   constructor(parent){this.parent=parent;this.buttons=[];this.descEl=new Element();settings.push(this);}
@@ -58,6 +58,7 @@ async function componentFixture({encrypted=false}={}){
  const module={exports:{}};
  vm.runInNewContext(compiled,{module,exports:module.exports,require:()=>({Modal,Setting,TFile,getLinkpath:s=>s.split('#')[0],Notice:class{},Component:class{load(){}unload(){}},MarkdownRenderer:{render:async(app,md,el)=>{rendered.push(md);el.innerHTML=md;}},requestUrl:()=>{throw Error('Real transport forbidden');}}),crypto:webcrypto,TextEncoder,Uint8Array,document:{createElement:()=>new Element()},URL:{createObjectURL:()=> 'blob:fake',revokeObjectURL:()=>{}},Blob:class{},navigator:{clipboard:{writeText:async()=>{}}},btoa:s=>Buffer.from(s,'binary').toString('base64')});
  const publications=new module.exports.NotePublications(plugin);
+ publications.assetStream=async()=>new ReadableStream({start(controller){controller.enqueue(new Uint8Array([1,2,3]));controller.close();}});
  publications.api=async(action,body)=>{calls.push({action,body});if(action==='limits')return {limit_bytes:1024*1024*1024};if(action==='list')return {publications:[]};if(action==='preview')return {id:'2'.repeat(32),html:body.html};if(action==='check')return {missing:[]};if(action==='save')return {id:'2'.repeat(32),url:'https://arcalink.ru/p/example'};return {};};
  return {publications,settings,modals,calls,writes,rendered,note,events,commands,app,TFile,plugin};
 }
@@ -190,4 +191,23 @@ test('publication indicator stays active until the last confirmed removal',async
  }
  f.publications.published('new');assert.equal(f.publications.hasActivePublications,true);
  f.publications.rememberPublications([]);assert.equal(f.publications.hasActivePublications,false);
+});
+
+test('arbitrary attachment extensions render as download links',()=>{
+ for(const filename of ['archive.zip','drawing.dwg','unknown','active.html']){const html=publicationEmbed({key:'a'.repeat(64),filename},true);assert.match(html,/<a href=/);assert.ok(html.includes(filename));}
+});
+
+test('attachment checkbox removes attachment content and assets from preview and save',async()=>{
+ const f=await componentFixture();await f.publications.prepare(f.note);
+ const toggle=f.settings.find(s=>s.name==='Публиковать вложения').toggle;
+ toggle.change(false);
+ const buttons=f.settings.flatMap(s=>s.buttons);
+ await buttons.find(b=>b.text==='Предпросмотр').click();
+ const preview=f.calls.find(c=>c.action==='preview').body;
+ assert.deepEqual(Array.from(preview.assets),[]);
+ assert.ok(!preview.html.includes('pending-publication-assets'));
+ await buttons.find(b=>b.text==='Опубликовать').click();
+ const save=f.calls.find(c=>c.action==='save').body;
+ assert.equal(save.assets.length,0);
+ assert.ok(!save.html.includes('pending-publication-assets'));
 });

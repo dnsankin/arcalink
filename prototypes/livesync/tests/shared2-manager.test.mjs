@@ -315,3 +315,15 @@ test('companion scope lease blocks every automatic adoption retry until explicit
  await f.manager.refreshBindings();await f.manager.refreshBindings();assert.equal(f.plugin.folders.records[0].shared2BindingWaiting,true);assert.equal(exists,false);
  blocked=false;await f.manager.refreshBindings();assert.equal(f.plugin.folders.records[0].shared2BindingWaiting,false);assert.equal(leases,1);
 });
+
+test('ordinary file conflicts keep a ready shared connection usable while admission failures block it',()=>{
+ const f=setup();
+ f.manager.entries.set(id,{state:{state:'conflict',conflicts:['Team/note.md']},controller:{ready:true}});
+ assert.equal(f.manager.hasBlockingError,false);
+ assert.match(f.manager.errorMessages[0],/Сверить версии/);
+ f.manager.entries.set(id,{state:{state:'conflict',code:'shared2-initial-proof-conflict'},controller:{ready:false}});
+ assert.equal(f.manager.hasBlockingError,true);
+ f.manager.entries.clear();
+ f.record.shared2InitialReview=true;
+ assert.equal(f.manager.hasBlockingError,true);
+});

@@ -220,7 +220,7 @@ export default class ArcaLinkPilot extends LiveSync {
           return {outgoing:sum.outgoing+queue.outgoing,incoming:sum.incoming+queue.incoming};
         },{outgoing:0,incoming:0});
         const sharedActive=!!sharedProgress||!!sharedBacklog.incoming||!!sharedBacklog.outgoing;
-        const sharedBlocked=sharedErrors.length>0&&!sharedProgress;
+        const sharedBlocked=this.shared2.hasBlockingError;
         const sharedReady=!sharedBlocked&&sharedEntries.some(entry=>entry.controller.ready&&entry.state?.state!=='error');
         const sharedStage=sharedProgress?({baseline:'Сверка исходных файлов',local:'Проверка локальных файлов',connection:'Подключение',exchange:'Загрузка в локальную базу',application:'Применение файлов',verification:'Проверка и догрузка изменений',remote:'Проверка серверных версий'} as Record<string,string>)[sharedProgress.phase]:'';
         const sharedCount=sharedProgress?.total?' '+sharedProgress.done+' / '+sharedProgress.total:

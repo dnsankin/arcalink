@@ -131,3 +131,18 @@ test('unverified initial pull resumes without scanning or outgoing events until 
  const next=fixture({saved:first.saved});next.engine.results.reprocessStoredDocuments=async()=>order.push('reprocess');next.engine.results.confirmDrained=async()=>{order.push('drain');if(!drained)throw Error('pending');};drained=true;
  const resumed=make(next);await resumed.wake();assert.equal(resumed.ready,true);assert.equal(verified,true);assert.equal(next.calls.list,0);assert.deepEqual(order,['reprocess','drain','reprocess','drain','verify','persist']);await resumed.close();
 });
+
+test('an established idle connection does not report file transfer after queues drain',async()=>{
+ const f=fixture();
+ await f.controller.wake();
+ f.engine.getReplicationState=()=>({syncStatus:'CONNECTED'});
+ assert.equal(f.controller.state.state,'idle');
+ f.engine.results.state.pending=1;
+ assert.equal(f.controller.state.state,'syncing');
+ f.engine.results.state.pending=0;
+ f.engine.files.pending=1;
+ assert.equal(f.controller.state.state,'syncing');
+ f.engine.files.pending=0;
+ assert.equal(f.controller.state.state,'idle');
+ await f.controller.close();
+});

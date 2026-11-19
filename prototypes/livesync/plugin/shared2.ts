@@ -479,13 +479,16 @@ export class Shared2 {
    controller=createShared2LiveController({profile,engine,baseline,store:runtime,checkLease:checked,isVerified:checkpoint.isVerified,canUpload,
     scan,
     onConnected:async()=>{
-     if(!resumeExisting||record.shared2InitialVerifiedEpoch===profile.cacheEpoch)return;
+     const resumeAuthority=initialVerified&&record.shared2ReconcileAuthority&&await runtime.prepared()&&await baseline.hasBaseline();
+     if(!resumeExisting&&!resumeAuthority)return;
+     if(record.shared2InitialVerifiedEpoch===profile.cacheEpoch&&!record.shared2ReconcileAuthority)return;
      const previousEpoch=record.shared2InitialVerifiedEpoch;
-     const previousReview=record.shared2InitialReview;
+     const previousReview=record.shared2InitialReview,previousAuthority=record.shared2ReconcileAuthority;
+     record.shared2ReconcileAuthority=false;
      record.shared2InitialVerifiedEpoch=profile.cacheEpoch;
      record.shared2InitialReview=false;
      try{await this.plugin.folders.save();}
-     catch(error){record.shared2InitialVerifiedEpoch=previousEpoch;record.shared2InitialReview=previousReview;throw error;}
+     catch(error){record.shared2InitialVerifiedEpoch=previousEpoch;record.shared2InitialReview=previousReview;record.shared2ReconcileAuthority=previousAuthority;throw error;}
     },
     initialProof:{needed:()=>!initialVerified,preflight:async()=>{
      if(record.shared2InitialPull===profile.cacheEpoch)return;
@@ -537,7 +540,11 @@ export class Shared2 {
   }catch(error){await engine?.close();throw error;}
  }
  get activity(){return this.transferCount+[...this.entries.values()].reduce((sum,entry)=>sum+(entry.controller?.activity||0),0);}
- get errorMessages(){const messages=[...this.entries.values()].filter(entry=>entry.state?.state==='error'||entry.state?.state==='conflict').map(entry=>shared2Message({code:entry.state.code||(entry.state.state==='conflict'?'shared2-initial-proof-conflict':undefined)}));for(const record of this.plugin.folders.records)if(record.shared2Scope?.account===this.scope?.account&&record.shared2Scope?.workspace===this.scope?.workspace&&(record.shared2BindingWaiting||record.shared2BindingConflict||record.shared2InitialReview&&!this.entries.get(record.id)?.recoveringPreviousReview))messages.push(record.shared2InitialReview?'Локальные изменения требуют решения. Выберите другую пустую папку, чтобы сохранить прежние файлы.':'Путь занят или пересекается с другой папкой. Выберите другую пустую папку.');return [...new Set(messages)];}
+ get hasBlockingError(){
+  if([...this.entries.values()].some(entry=>entry.state?.state==='error'||entry.state?.code==='shared2-initial-proof-conflict'))return true;
+  return this.plugin.folders.records.some((record:any)=>record.shared2Scope?.account===this.scope?.account&&record.shared2Scope?.workspace===this.scope?.workspace&&(record.shared2BindingWaiting||record.shared2BindingConflict||record.shared2InitialReview&&!this.entries.get(record.id)?.recoveringPreviousReview));
+ }
+ get errorMessages(){const messages=[...this.entries.values()].filter(entry=>entry.state?.state==='error'||entry.state?.state==='conflict').map(entry=>entry.state.state==='conflict'&&!entry.state.code?'В общей папке есть конфликтующие версии. Откройте «Сверить версии» в настройках общей папки.':shared2Message({code:entry.state.code}));for(const record of this.plugin.folders.records)if(record.shared2Scope?.account===this.scope?.account&&record.shared2Scope?.workspace===this.scope?.workspace&&(record.shared2BindingWaiting||record.shared2BindingConflict||record.shared2InitialReview&&!this.entries.get(record.id)?.recoveringPreviousReview))messages.push(record.shared2InitialReview?'Локальные изменения требуют решения. Выберите другую пустую папку, чтобы сохранить прежние файлы.':'Путь занят или пересекается с другой папкой. Выберите другую пустую папку.');return [...new Set(messages)];}
  scopeRow(record:any,includeLocalPause=false){
   if(!record||record.shared2BindingInactive||record.shared2BindingWaiting||(!includeLocalPause&&record.shared2LocalPaused)||record.protocol!==2||record.shared2Left||record.shared2Revoked||record.shared2Creating||record.shared2Unsharing||record.shared2Rekeying||record.shared2Reconciling||record.shared2Scope?.account!==this.scope?.account||record.shared2Scope?.workspace!==this.scope?.workspace)return null;
   const row=this.catalog?.folders.find((row:any)=>row.id===record.id);return row&&!this.retentionPaused(row)?row:null;

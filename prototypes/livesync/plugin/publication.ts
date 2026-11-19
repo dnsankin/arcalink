@@ -1,3 +1,4 @@
+import {hashShared2Stream} from './shared2-stream-hash.mjs';
 import {Component,MarkdownRenderer,Modal,Notice,Setting,TFile,getLinkpath,requestUrl} from 'obsidian';
 import {publicationHash,publicationEmbed,publicationTypes,replacePublicationLinks,MAX_PUBLICATION_BYTES,publicationAttribute} from './publication-model.mjs';
 import {bytesToBase64} from './folder-model.mjs';
@@ -69,7 +70,7 @@ export class NotePublications {
   const workspace=saved?.workspaceId||session.workspaceId;
   if(!workspace)throw Error('Сначала подключите серверное хранилище');
   const source_key=await this.sourceKey(workspace,file.path);
-  const limits=await this.api('limits',{});
+  await this.api('limits',{});
   const list=await this.api('list',{}),old=list.publications.find((p:any)=>p.source_key===source_key);
   const markdown=await app.vault.read(file),cache=app.metadataCache.getFileCache(file);
   if(!cache)throw Error('Дождитесь индексации заметки и повторите публикацию');
@@ -80,14 +81,12 @@ export class NotePublications {
     if(link.embedded){replacements.push({start:link.position.start.offset,end:link.position.end.offset,original:link.original,html:'[Вложенная заметка или внешнее медиа не опубликованы]'});warnings.push(link.link);}
     continue;
    }
-   if(!publicationMimeTypes[target.extension.toLowerCase()]){warnings.push(target.path);replacements.push({start:link.position.start.offset,end:link.position.end.offset,original:link.original,html:'[Неподдерживаемое вложение]'});continue;}
    let asset=byPath.get(target.path);
    if(!asset){
-    if(target.stat.size>limits.limit_bytes)throw Error('Вложение превышает квоту хранилища');
-    const bytes=new Uint8Array(await app.vault.readBinary(target));
-    asset={key:await publicationHash(new TextEncoder().encode(target.path)),hash:await publicationHash(bytes),filename:target.name,size:bytes.length,source:await this.plugin.core.services.path.path2id(target.path),localPath:target.path,bytes:bytes.length<=2*1024*1024?bytes:undefined};
+    const proof=await hashShared2Stream(await this.assetStream(target.path));
+    const bytes=proof.size<=2*1024*1024?new Uint8Array(await app.vault.readBinary(target)):undefined;
+    asset={key:await publicationHash(new TextEncoder().encode(target.path)),hash:proof.sha256,filename:target.name,size:proof.size,source:await this.plugin.core.services.path.path2id(target.path),localPath:target.path,bytes};
     assets.push(asset);byPath.set(target.path,asset);
-    if(assets.reduce((sum,a)=>sum+a.size,0)>limits.limit_bytes)throw Error('Размер публикации превышает квоту хранилища');
    }
    replacements.push({start:link.position.start.offset,end:link.position.end.offset,original:link.original,html:publicationEmbed(asset,link.embedded,link.displayText||target.name)});
   }
@@ -97,7 +96,9 @@ export class NotePublications {
    await MarkdownRenderer.render(app,replacePublicationLinks(markdown,replacements),rendered,file.path,component);
    // The server sanitizes again; local resource URLs and arbitrary plugin HTML are never trusted.
    const payload={source_key,workspace,title:old?.title||file.basename,html:rendered.innerHTML,assets:assets.map(({bytes,localPath,...a})=>a),indexed:!!old?.indexed,mode:this.plugin.core.services.setting.currentSettings().encrypt?'copy':old?.mode||'reference'};
-   new PublicationModal(this,assets,payload,old,warnings,!!this.plugin.core.services.setting.currentSettings().encrypt).open();
+   const withoutAttachments=document.createElement('div');
+   await MarkdownRenderer.render(app,replacePublicationLinks(markdown,replacements.map(link=>({...link,html:''}))),withoutAttachments,file.path,component);
+   new PublicationModal(this,assets,payload,old,warnings,!!this.plugin.core.services.setting.currentSettings().encrypt,withoutAttachments.innerHTML).open();
   }finally{component.unload();}
  }
  render(el:HTMLElement){
@@ -134,20 +135,33 @@ export class NotePublications {
    catch(e){c.setDisabled(false);new Notice((e as Error).message);}
   }));confirm.open();
  }
+ async assetStream(path:string):Promise<ReadableStream<Uint8Array>>{
+  const response=await fetch(this.app.vault.adapter.getResourcePath(path),{cache:'no-store'});
+  if(!response.ok||!response.body)throw Error('Не удалось прочитать вложение');
+  return response.body;
+ }
  async upload(asset:any,workspace:string){
   const start=await this.api('upload-begin',{workspace,hash:asset.hash,size:asset.size});
   if(start.complete)return;
   const file=this.app.vault.getAbstractFileByPath(asset.localPath);
   if(!(file instanceof TFile))throw Error('Исходное вложение не найдено');
-  // Obsidian exposes readBinary on desktop and mobile; only one file is retained.
-  const bytes=new Uint8Array(await this.app.vault.readBinary(file));
-  if(bytes.length!==asset.size||await publicationHash(bytes)!==asset.hash)throw Error('Вложение изменилось. Откройте публикацию заново.');
-  let offset=start.offset;
-  while(offset<bytes.length){
-   const end=Math.min(offset+1024*1024,bytes.length);
-   const result=await this.api('upload-chunk',{upload:start.upload,offset,data:bytesToBase64(bytes.subarray(offset,end))});
-   if(result.offset!==end)throw Error('Сервер вернул неверное смещение загрузки');offset=end;
-  }
+  const reader=(await this.assetStream(file.path)).getReader();
+  let offset=0;
+  try{
+   for(;;){
+    const {done,value}=await reader.read();if(done)break;
+    for(let begin=0;begin<value.length;begin+=1024*1024){
+     const part=value.subarray(begin,Math.min(begin+1024*1024,value.length)),end=offset+part.length;
+     if(end>start.offset){
+      const bytes=part.subarray(Math.max(0,start.offset-offset));
+      const result=await this.api('upload-chunk',{upload:start.upload,offset:Math.max(offset,start.offset),data:bytesToBase64(bytes)});
+      if(result.offset!==end)throw Error('Сервер вернул неверное смещение загрузки');
+     }
+     offset=end;
+    }
+   }
+  }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+  if(offset!==asset.size)throw Error('Вложение изменилось. Откройте публикацию заново.');
   await this.api('upload-finish',{upload:start.upload});
  }
  async manage(){
@@ -161,11 +175,17 @@ export class NotePublications {
 
 class PublicationModal extends Modal {
  private previewVersion=0;
- constructor(private owner:NotePublications,private assets:any[],private payload:any,private old:any,private warnings:string[],private encrypted:boolean){super(owner.app);}
+ private publishAttachments=true;
+ private publicationPayload(){
+  return this.publishAttachments?{...this.payload}:{...this.payload,assets:[],html:this.withoutAttachments};
+ }
+
+ constructor(private owner:NotePublications,private assets:any[],private payload:any,private old:any,private warnings:string[],private encrypted:boolean,private withoutAttachments:string){super(owner.app);}
  override onOpen(){
   this.titleEl.setText(this.old?'Обновить публичную заметку':'Опубликовать заметку');
   this.contentEl.createEl('p',{text:'Содержимое и перечисленные вложения будут доступны всем, у кого есть ссылка. Обновление — только вручную. Для видео нужен поддерживаемый браузером кодек.'});
   new Setting(this.contentEl).setName('Заголовок страницы').addText(t=>t.setValue(this.payload.title).onChange(v=>{this.payload.title=v;this.previewVersion++;publish.setDisabled(true);}));
+  new Setting(this.contentEl).setName('Публиковать вложения').addToggle(t=>t.setValue(this.publishAttachments).onChange(value=>{this.publishAttachments=value;this.previewVersion++;frame.removeAttribute('srcdoc');publish.setDisabled(true);}));
   const info=this.contentEl.createEl('p');
   const explain=()=>info.setText(this.payload.mode==='reference'?'Без отдельной копии. Изменение, удаление исходника или окончание хранения облачной копии сделает вложение недоступным до обновления публикации.':'Отдельный публичный оригинал. Одинаковые файлы в ваших публикациях хранятся один раз. Снятие публикации не удаляет исходники.');
   new Setting(this.contentEl).setName('Хранение вложений').setDesc(this.encrypted?'Зашифрованное хранилище: нужна отдельная открытая копия.':'Выберите зависимость от исходного хранилища.').addDropdown(d=>{if(!this.encrypted)d.addOption('reference','Использовать исходные вложения');d.addOption('copy','Создать независимую копию').setValue(this.payload.mode).onChange(v=>{this.payload.mode=v;explain();this.previewVersion++;frame.removeAttribute('srcdoc');publish.setDisabled(true);});});explain();
@@ -179,15 +199,15 @@ class PublicationModal extends Modal {
   const frame=this.contentEl.createEl('iframe',{cls:'arcalink-publication-preview',attr:{sandbox:'',title:'Предпросмотр публичной заметки'}});
   let publish:any;const controls=new Setting(this.contentEl);
   controls.addButton(b=>b.setButtonText('Предпросмотр').onClick(async()=>{b.setDisabled(true);publish.setDisabled(true);const version=++this.previewVersion;try{
-   const result=await this.owner.api('preview',this.payload);
+   const result=await this.owner.api('preview',this.publicationPayload());
    if(version!==this.previewVersion)return;
    let html=result.html;
-   for(const a of this.assets){if(!a.bytes){html=html.split('/p/'+result.id+'/assets/'+a.key).join('');continue;}const url='data:'+publicationMimeTypes[a.filename.split('.').pop().toLowerCase()]+';base64,'+bytesToBase64(a.bytes);html=html.split('/p/'+result.id+'/assets/'+a.key).join(url);}
+   for(const a of this.assets){if(!a.bytes){html=html.split('/p/'+result.id+'/assets/'+a.key).join('');continue;}const url='data:'+(publicationMimeTypes[a.filename.split('.').pop().toLowerCase()]||'application/octet-stream')+';base64,'+bytesToBase64(a.bytes);html=html.split('/p/'+result.id+'/assets/'+a.key).join(url);}
    frame.srcdoc='<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; media-src data:; style-src \'unsafe-inline\'"><style>body{font:16px system-ui;line-height:1.65;padding:20px;color:#eee;background:#202027}img,video{max-width:100%}pre{white-space:pre-wrap}</style><h1>'+publicationAttribute(this.payload.title)+'</h1>'+html;
    publish.setDisabled(false);
   }catch(e){new Notice((e as Error).message);}finally{b.setDisabled(false);}}));
   controls.addButton(b=>{publish=b;b.setButtonText(this.old?'Обновить публикацию':'Опубликовать').setCta().setDisabled(true).onClick(async()=>{b.setDisabled(true).setButtonText('Публикуется…');const version=this.previewVersion;try{
-   const snapshot={...this.payload};let assets=snapshot.assets;
+   const snapshot=this.publicationPayload();let assets=snapshot.assets;
    if(snapshot.mode==='copy'){const {missing}=await this.owner.api('check',{hashes:assets.map((a:any)=>a.hash)});for(const a of this.assets)if(missing.includes(a.hash))await this.owner.upload(a,snapshot.workspace);}
    const result=await this.owner.api('save',{...snapshot,assets});this.old=result;
    this.owner.published(result.id);
