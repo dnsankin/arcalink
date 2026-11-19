@@ -25,11 +25,15 @@ export class LocalBackups {
   try{await this.restorer.recover();this.enabled=(await this.store.state()).settings.enabled;}catch(e){this.recoveryError=e;this.enabled=true;this.error=friendly(e);}
   this.disposeHooks=installLocalBackupHooks({adapter:a,enabled:()=>this.enabled,accept:(path:string)=>this.accepts(path),capture:(path:string,reason:string)=>{if(this.recoveryError)throw this.recoveryError;return this.store.capture(path,reason,{priority:true});},failed:(e:any)=>{this.error=friendly(e);new Notice(this.error,15000);this.redraw();},changed:()=>{}});
   p.register(()=>{this.disposed=true;this.stop=true;window.clearTimeout(this.refreshTimer);this.disposeHooks?.();this.store.dispose();this.panels.clear();});
-  p.registerEvent(p.app.vault.on('create',(file:any)=>this.observe(file)));
   p.registerEvent(p.app.vault.on('modify',(file:any)=>this.observe(file)));
   p.registerEvent(p.app.vault.on('rename',(file:any)=>this.observe(file)));
   p.registerInterval(window.setInterval(()=>{if(this.enabled&&!this.busy)void this.store.cleanup().catch((e:any)=>{this.error=friendly(e);this.redraw();});},3600000));
-  p.app.workspace.onLayoutReady(()=>{if(this.enabled)void this.snapshot();});
+  p.app.workspace.onLayoutReady(()=>{
+   if(this.disposed)return;
+   // Obsidian emits create for existing files while opening the vault. The snapshot covers those.
+   p.registerEvent(p.app.vault.on('create',(file:any)=>this.observe(file)));
+   if(this.enabled)void this.snapshot();
+  });
  }
  private async readStream(path:string){
   const stat=await this.raw.stat(path);if(!stat||stat.type!=='file')throw Error('backup-source-missing');

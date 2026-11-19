@@ -55,6 +55,7 @@ async function api(path:string, body?:any, token?:string) {
 
 export type { LiveSyncCore } from './upstream-main';
 export default class ArcaLinkPilot extends LiveSync {
+  syncDisplay={label:'',detail:''};
   localBackups=new LocalBackups(this);
   pilotRecovery: any;
   pilotStorageWarning: any;
@@ -192,6 +193,13 @@ export default class ArcaLinkPilot extends LiveSync {
     this.registerDomEvent(lamp,'keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openPilotSettings();}});
     const syncActivity=createSyncActivityTracker();
     let lampBusy=false,lastMessage='',lastTooltip='';
+    const showStatus=(kind:string,label:string,lines:string[]=[])=>{
+      lamp.dataset.state=kind;
+      const title=localizeMessage(label);
+      if(title!==lastTooltip){setTooltip(lamp,title,{placement:'top'});lastTooltip=title;}
+      this.syncDisplay={label:title,detail:lines.filter(Boolean).join('\n')};
+    };
+    showStatus('idle','Синхронизация запускается');
     const refreshLamp=async()=>{
       if(lampBusy)return;lampBusy=true;
       try {
@@ -202,11 +210,9 @@ export default class ArcaLinkPilot extends LiveSync {
           const snapshot={maintenance,maintenanceFailed,errors:maintenanceFailed?
             [this.folderPolicies.error+(reason?' ('+reason+')':'')]:[]};
           const view=mobileSyncState(snapshot);
-          lamp.dataset.state=view.kind;
-          lamp.setText('●'+(maintenance?.done!=null?' '+maintenance.done.toLocaleString():''));
           this.mobileSyncStatus?.update(snapshot);
-          const tooltip=[localizeMessage(view.label),...snapshot.errors].join('\n');
-          if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
+          const progress=maintenance?.done!=null?maintenance.done.toLocaleString():'';
+          showStatus(view.kind,view.label,[progress,...snapshot.errors.map(localizeMessage)]);
           return;
         }
         const sharedErrors=this.shared2.errorMessages;
@@ -223,11 +229,11 @@ export default class ArcaLinkPilot extends LiveSync {
         const sharedBlocked=this.shared2.hasBlockingError;
         const sharedReady=!sharedBlocked&&sharedEntries.some(entry=>entry.controller.ready&&entry.state?.state!=='error');
         const sharedStage=sharedProgress?({baseline:'Сверка исходных файлов',local:'Проверка локальных файлов',connection:'Подключение',exchange:'Загрузка в локальную базу',application:'Применение файлов',verification:'Проверка и догрузка изменений',remote:'Проверка серверных версий'} as Record<string,string>)[sharedProgress.phase]:'';
-        const sharedCount=sharedProgress?.total?' '+sharedProgress.done+' / '+sharedProgress.total:
-          sharedBacklog.outgoing||sharedBacklog.incoming?' '+localizeMessage('Ожидают отправки: события')+': '+sharedBacklog.outgoing+'; '+localizeMessage('Ожидают применения: записи базы')+': '+sharedBacklog.incoming:'';
+        const sharedCount=sharedProgress?.total?' '+sharedProgress.done+' / '+sharedProgress.total:'';
         const sharedDetail=sharedStage?localizeMessage(sharedStage)+sharedCount+(sharedProgress.path?'\n'+sharedProgress.path:''):'';
+        const sharedQueue=sharedEntries.length?[localizeMessage('Ожидают отправки: события')+': '+sharedBacklog.outgoing,
+          localizeMessage('Ожидают применения: записи базы')+': '+sharedBacklog.incoming].join(' · '):'';
         const sharedMetrics=sharedEntries.filter(entry=>entry.metrics).map(entry=>{const m=entry.metrics;return [entry.mount,localizeMessage('Обработано тел ответов за сеанс: декодированные байты')+': '+m.bytes,localizeMessage('Средняя скорость обработки за сеанс: байт/с')+': '+(m.bytesPerSecond===null?localizeMessage('Ожидание'):Math.round(m.bytesPerSecond)),localizeMessage('Подтверждено применений файлов за сеанс')+': '+m.applied,localizeMessage('Последнее продвижение за сеанс')+': '+(m.lastProgress===null?localizeMessage('Ожидание'):new Date(m.lastProgress).toLocaleTimeString())].join(' · ');});
-        lamp.setText('●'+sharedCount);
         const activity=syncActivity({sent:state.sent,arrived:state.arrived,counts:[services.replication.databaseQueueCount.value,services.replication.storageApplyingCount.value,services.replication.replicationResultCount.value,chunkFetchCounts.value.initial,this.folders.transferCount,this.shared2.activity]});
         const editor=this.app.workspace.containerEl.querySelector('.livesync-status');
         const log=editor?.querySelector('.livesync-status-logmessage')?.textContent?.trim();
@@ -241,19 +247,19 @@ export default class ArcaLinkPilot extends LiveSync {
           const personal=localizeMessage(offline?'Free: нет интернета':!connected?'Free: нет подключения':!peers.length?'Free: ожидаем второе устройство':activity?'Синхронизация выполняется':'Free: второе устройство подключено; состояние передачи — в панели устройств');
           const kind=offline?'offline':sharedBlocked?'error':sharedActive?'active':sharedReady||connected&&peers.length?(activity?'active':'ready'):sharedErrors.length?'error':connected?'idle':'offline';
           this.mobileSyncStatus?.update({kind,free:true,sharedActive,sharedReady,offline,configured:settings.isConfigured,connected:!!connected,peers:peers.length,paused:services.appLifecycle.isSuspended(),errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
-          lamp.dataset.state=kind;
-          const tooltip=[!offline&&sharedActive&&(sharedDetail||localizeMessage('Обмен общей папки')+sharedCount),...sharedErrors.map(message=>localizeMessage(message)),...sharedMetrics,sharedActive||sharedErrors.length?localizeMessage('Личное хранилище')+' · '+personal:personal].filter(Boolean).join('\n');
-          if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
+          const label=kind==='error'?'Ошибка синхронизации':kind==='active'?(sharedActive?'Обмен общей папки':'Синхронизация выполняется'):
+            kind==='ready'?'Синхронизация подключена':personal;
+          const personalDetail=sharedEntries.length?localizeMessage('Личное хранилище')+' · '+personal:localizeMessage(label)!==personal?personal:'';
+          showStatus(kind,label,[personalDetail,sharedDetail,sharedQueue,...sharedErrors.map(message=>localizeMessage(message)),...sharedMetrics]);
           return;
         }
         const paused=services.appLifecycle.isSuspended(),automaticOff=settings.isConfigured&&!settings.liveSync;
         const kind=sharedBlocked?'error':syncLampState({errors,status,offline,paused,automaticOff,active:activity,sharedActive,sharedReady});
-        lamp.dataset.state=kind;
         this.mobileSyncStatus?.update({kind,status,offline,configured:settings.isConfigured,ready:services.appLifecycle.isReady(),paused,automaticOff,sharedActive,sharedReady,sent:state.sent,arrived:state.arrived,errors:syncUserMessages(errors,this.folders.syncFeedback.messages)});
         const label=kind==='idle'&&paused?'Синхронизация приостановлена':kind==='idle'&&automaticOff?'Автоматическая синхронизация выключена':{error:'Ошибка синхронизации',offline:offline?'Нет подключения к интернету':'Нет соединения для синхронизации',ready:'Синхронизация подключена',active:'Синхронизация выполняется',idle:'Синхронизация ожидает'}[kind];
-        // setTooltip owns aria-label; resetting it would erase the detailed hover text.
-        const tooltip=[label,localizeMessage('Передано за сеанс: записи базы')+': ↑ '+state.sent+' ↓ '+state.arrived,summary,sharedDetail,...sharedMetrics,...syncUserMessages([...errors,lastMessage].filter(Boolean),this.folders.syncFeedback.messages)].filter(Boolean).map(localizeMessage).join('\n');if(tooltip!==lastTooltip){lastTooltip=tooltip;setTooltip(lamp,tooltip,{placement:'top'});}
-      } catch {this.mobileSyncStatus?.update({ready:false,configured:true});lamp.dataset.state='idle';setTooltip(lamp,localizeMessage('Синхронизация запускается'),{placement:'top'});}
+        showStatus(kind,label,[localizeMessage('Передано за сеанс: записи базы')+': ↑ '+state.sent+' ↓ '+state.arrived,
+          localizeMessage(summary),sharedDetail,sharedQueue,...sharedMetrics,...syncUserMessages([...errors,lastMessage].filter(Boolean),this.folders.syncFeedback.messages).map(localizeMessage)]);
+      } catch {this.mobileSyncStatus?.update({ready:false,configured:true});showStatus('idle','Синхронизация запускается');}
       finally {lampBusy=false;}
     };
     this.app.workspace.onLayoutReady(()=>{void refreshLamp();this.registerInterval(window.setInterval(()=>void refreshLamp(),1000));});
@@ -364,6 +370,16 @@ class PilotTab extends PluginSettingTab {
     const brand=heading.nameEl.createEl('a',{cls:'arcalink-brand-link',href:BASE,attr:{target:'_blank',rel:'noopener noreferrer','aria-label':'ArcaLink — перейти на сайт'}});
     brand.createEl('img',{attr:{src:brandLogo,alt:'',width:'36',height:'36'}});
     brand.createSpan({text:'ArcaLink'});setTooltip(brand,'Открыть сайт ArcaLink',{placement:'top'});
+    const headerStatus=el.createDiv({cls:'arcalink-settings-sync-status'});
+    const statusLabel=headerStatus.createEl('strong');
+    const statusDetail=headerStatus.createDiv({cls:'arcalink-settings-sync-detail'});
+    const updateHeaderStatus=()=>{
+      const {label,detail}=this.pilot.syncDisplay;
+      const title=label||localizeMessage('Синхронизация запускается');
+      if(statusLabel.textContent!==title)statusLabel.setText(title);
+      if(statusDetail.textContent!==detail)statusDetail.setText(detail);
+      statusDetail.hidden=!detail;
+    };
     renderLanguageSetting(el,this.pilot.core.services.setting,()=>this.renderInto(el));
     el.createEl('p',{text:'Синхронизация заметок между устройствами. На всех устройствах используйте один аккаунт. Не включайте одновременно другие плагины синхронизации.'});
     const tabs=[
@@ -413,6 +429,7 @@ class PilotTab extends PluginSettingTab {
     const hints:Record<string,HTMLElement>={};
     for(const id of ['sharing','telegram'])hints[id]=panels[id].createEl('p',{cls:'arcalink-tariff-hint',text:capabilityHint(id==='sharing'?'collaboration':'cloud')});
     updateSectionStates=()=>{
+      updateHeaderStatus();
       const current=this.pilot.core.services.setting.currentSettings();
       const state=settingsState({settings:current,policy:this.pilot.unifiedVault.state,account:accountStatus,signedIn,telegram:this.pilot.telegram.configured,desktop:this.pilot.desktop.settings,shared:!!(this.pilot.collaboration.records.length||this.pilot.folders.records.length),publications:this.pilot.publications.hasActivePublications,backups:this.pilot.localBackups.enabled});
       tabs.forEach((tab,index)=>{

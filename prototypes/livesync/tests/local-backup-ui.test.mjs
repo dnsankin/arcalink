@@ -73,3 +73,22 @@ test('comparison localizes status messages but preserves current user text verba
  t.mock.method(globalThis,'fetch',async()=>({ok:true,body:new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('Файл отсутствует'));c.close();}})}));
  assert.equal(await f.b.comparisonText('a.md'),'Файл отсутствует');f.b.raw.stat=async()=>null;assert.equal(await f.b.comparisonText('a.md'),'translated: Файл отсутствует');
 });
+
+test('existing files enter the startup snapshot once and later creates are observed',async()=>{
+ const events=new Map(),seen=[],callbacks=[];
+ const adapter={exists:async()=>false};
+ for(const method of ['write','writeBinary','appendBinary','rename','remove','mkdir','stat','list','read','readBinary']){
+  adapter[method]=async()=>{throw Error('Unexpected fixture I/O: '+method);};
+ }
+ const vault={adapter,on:(event,fn)=>events.set(event,fn)};
+ const plugin={app:{vault,workspace:{onLayoutReady:fn=>callbacks.push(fn)}},register(){},registerEvent(){},registerInterval:clearInterval};
+ const backups=new LocalBackups(plugin);
+ await backups.init();
+ backups.enabled=true;
+ backups.observe=file=>seen.push(file);
+ backups.snapshot=()=>seen.push('snapshot');
+ events.get('create')?.('existing');
+ callbacks.forEach(fn=>fn());
+ events.get('create')('new');
+ assert.deepEqual(seen,['snapshot','new']);
+});

@@ -181,3 +181,65 @@ test('pre-write capture passes a background backlog only after the active backup
  finally{releaseQueued();await Promise.all([active,queued]);dispose();}
  const saved=(await store.state()).versions.find(v=>v.path==='note.md');assert.equal(saved.sha256,hex(enc('before')));
 });
+
+test('a snapshot scans the object directory once while capturing new and unchanged files',async()=>{
+ const f=fixture();
+ await f.store.configure({enabled:true});
+ const orphan=enc('left over after a crash');
+ f.put(f.root+'/objects/'+hex(orphan),orphan);
+ const store=f.reopen(),list=f.raw.list;
+ let scans=0;
+ f.raw.list=async path=>{
+  if(path===f.root+'/objects')scans++;
+  return list(path);
+ };
+ for(let i=0;i<20;i++){
+  const file='note-'+i+'.md';
+  f.put(file,'saved '+i);
+  const first=await store.capture(file,i%2?'saved':'snapshot');
+  assert.equal((await store.capture(file,'snapshot')).id,first.id);
+  assert.equal((await store.verify(first.id)).sha256,first.sha256);
+ }
+ assert.equal(f.files.has(f.root+'/objects/'+hex(orphan)),false);
+ assert.equal(scans,1);
+});
+
+test('snapshot quota eviction preserves both recoverable slots and deletes obsolete blocks',async()=>{
+ const f=fixture();
+ await f.store.configure({enabled:true,maxBytes:1048576});
+ const list=f.raw.list;
+ let scans=0;
+ f.raw.list=async path=>{scans++;return list(path);};
+ f.put('note.bin',distinctFile(4));
+ await f.store.capture('note.bin','snapshot');
+ f.put('note.bin',distinctFile(5));
+ const latest=await f.store.capture('note.bin','snapshot');
+ assert.equal(physicalBytes(f),700000);
+ assert.equal(scans,0);
+ for(const slot of ['a','b']){
+  const path=f.root+'/index.'+slot+'.json',saved=f.files.get(path);
+  f.put(path,'torn');
+  assert.equal((await f.reopen().verify(latest.id)).sha256,latest.sha256);
+  f.files.set(path,saved);
+ }
+});
+
+test('an interrupted background eviction keeps the previous backup readable and retries collection',async()=>{
+ const f=fixture();
+ await f.store.configure({enabled:true,maxBytes:1048576});
+ f.put('note.bin',distinctFile(4));
+ const first=await f.store.capture('note.bin','snapshot');
+ f.put('note.bin',distinctFile(5));
+ const write=f.raw.write;
+ let writes=0;
+ f.raw.write=async(path,data)=>{
+  if(++writes>=2)throw Error('interrupted slot write');
+  return write(path,data);
+ };
+ await assert.rejects(f.store.capture('note.bin','saved'),/interrupted slot write/);
+ assert.ok(first.chunks.every(h=>f.files.has(f.root+'/objects/'+h)));
+ f.raw.write=write;
+ const current=await f.store.capture('note.bin','snapshot');
+ assert.equal((await f.reopen().verify(current.id)).sha256,current.sha256);
+ assert.equal(physicalBytes(f),700000);
+});
