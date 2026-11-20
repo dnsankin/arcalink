@@ -146,3 +146,42 @@ test('an established idle connection does not report file transfer after queues 
  assert.equal(f.controller.state.state,'idle');
  await f.controller.close();
 });
+
+test('restored delete with no local metadata keeps its place offline and unblocks later events after server confirmation',async()=>{
+ const f=fixture(),path=profile.documentRoot+'/18810640';
+ await f.store.markPrepared();
+ await f.store.append({type:'DELETE',args:{file:stub(path)}});
+ for(const name of ['next','last'])await f.store.append({type:'CHANGED',args:{file:stub(profile.documentRoot+'/'+name)}});
+ f.engine.files.localEvent=async()=>false;
+ f.engine.remoteDeletionState=async()=>{throw Error('offline');};
+ await assert.rejects(f.controller.wake(),/offline/);
+ assert.equal((await f.store.pending()).length,3);
+ assert.equal(f.calls.sync,0);
+ await f.controller.close();
+ const retry=fixture({saved:f.saved});
+ retry.engine.remoteDeletionState=async name=>{assert.equal(name,path);return 'absent';};
+ await retry.controller.wake();
+ assert.deepEqual(retry.calls.events.map(e=>e.args.file.name),['next','last']);
+ assert.equal((await retry.store.pending()).length,0);
+ assert.equal(retry.calls.live,1);
+ await retry.controller.close();
+});
+
+test('a live server version survives a stale delete and the decision stays visible after restarting',async()=>{
+ const f=fixture(),path=profile.documentRoot+'/edited.md';
+ await f.store.markPrepared();
+ const id=await f.store.append({type:'DELETE',args:{file:stub(path)}});
+ f.engine.files.localEvent=async()=>false;
+ f.engine.remoteDeletionState=async()=> 'present';
+ await f.controller.wake();
+ assert.equal(f.calls.live,1);
+ assert.deepEqual(f.controller.deleteReviews,[{id,path}]);
+ await f.controller.close();
+ const retry=fixture({saved:f.saved});
+ await retry.controller.wake();
+ assert.deepEqual(retry.controller.deleteReviews,[{id,path}]);
+ assert.deepEqual(retry.calls.events,[]);
+ await retry.controller.dismissDeleteReview(id);
+ assert.deepEqual(await retry.store.deleteReviews(),[]);
+ await retry.controller.close();
+});

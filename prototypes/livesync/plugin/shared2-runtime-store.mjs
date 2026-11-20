@@ -24,6 +24,18 @@ export function createShared2RuntimeStore({store,profile,mount}){
   })},kv:map('values'),prepared:()=>read(s=>s.prepared===true),markPrepared:()=>change(s=>{s.prepared=true;}),
   pending:()=>read(s=>s.events),
   append:item=>change(s=>{const id=crypto.randomUUID();s.events.push({id,item:structuredClone(item)});return id;}),
+  markDeleteCheck:id=>change(s=>{const event=s.events.find(row=>row.id===id);if(event?.item.type!=='DELETE')throw fail('shared2-delete-check-incomplete');event.needsDeleteCheck=true;}),
+  deleteReviews:()=>read(s=>s.deleteReviews||[]),
+  reviewDelete:id=>change(s=>{
+   const event=s.events.find(row=>row.id===id);
+   if(!event?.needsDeleteCheck)throw fail('shared2-delete-check-incomplete');
+   const path=event.item.args.file.path;
+   s.deleteReviews=(s.deleteReviews||[]).filter(row=>row.path!==path);
+   s.deleteReviews.push({id,path});
+   s.events=s.events.filter(row=>row.id!==id);
+   return s.deleteReviews;
+  }),
+  dismissDeleteReview:id=>change(s=>s.deleteReviews=(s.deleteReviews||[]).filter(row=>row.id!==id)),
   ack:id=>change(s=>{s.events=s.events.filter(event=>event.id!==id);}),
   drain:()=>tail,
  };

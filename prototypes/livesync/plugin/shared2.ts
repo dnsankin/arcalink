@@ -820,6 +820,11 @@ export class Shared2 {
    const row=this.catalog.folders.find((row:any)=>row.id===record.id),card=container.createDiv({cls:'arcalink-shared2-card'});
    const liveEntry=this.entries.get(record.id),liveState=liveEntry?.state,transfer=liveEntry?.engine?.getReplicationState?.();
    const setting=new Setting(card).setName('Папка: '+record.mount).setDesc(row?(row.role==='owner'?'Владелец':row.role==='editor'?'Редактор':'Читатель')+' · '+(record.shared2LocalPaused?'Синхронизация на этом устройстве приостановлена':shared2Phase(this.entries.get(row.id)?.state?.state)):'Доступ приостановлен');
+   for(const review of liveEntry?.controller?.deleteReviews||[]){
+    new Setting(card).setName('Проверьте удаление: '+review.path)
+     .setDesc('На сервере есть версия файла. Чтобы удалить её, дождитесь загрузки и удалите файл в Obsidian.')
+     .addButton(button=>button.setButtonText('Оставить файл').onClick(()=>{void liveEntry.controller.dismissDeleteReview(review.id).catch((error:any)=>new Notice(shared2Message(error)));}));
+   }
    if(liveState?.state==='conflict')new Setting(card).setName('Конфликты версий'+(liveState.conflicts?.length?' ('+liveState.conflicts.length+')':''))
     .addButton(button=>button.setButtonText('Сверить версии').onClick(()=>{void this.showConflicts(record,liveEntry).catch((error:any)=>new Notice(shared2Message(error)));}));
    if(liveState?.state==='syncing'&&liveState.phase)new Setting(card).setName(shared2Phase(liveState.phase));

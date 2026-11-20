@@ -85,6 +85,25 @@ export function createShared2LocalEngineFactory({createPouchDB,settingsFor,names
    ...(lifecycle==='livesync'?{stopLive:()=>transfer.stop()}:{}),
    ...(migrationMode?{migration:createShared2MigrationView(local,{readOnly:profile.role==='viewer',pathId:name=>path.path2id(name),chunkId:async piece=>'h:'+await local.managers.hashManager.computeHash(piece)})}:{}),
    synchronize(){if(closed||retiring)return Promise.reject(fail('shared2-engine-closed'));if(!transfer)return Promise.reject(fail('shared2-remote-not-configured'));return transfer.synchronize();},
+   async remoteDeletionState(name){
+    checked(name);
+    if(profile.kind!=='shared'||!name.startsWith(profile.documentRoot+'/')||!openRemote||await accessCheck(profile,'read')!==true)throw fail('shared2-replication-access-denied');
+    const id=await path.path2id(name);
+    const remote=await openRemote(profile);
+    try{
+     // A missing row in a successful keyed query is document-level proof.
+     // A 404 on the database/gateway itself must leave the event pending.
+     const response=await remote.database.allDocs({keys:[id],include_docs:true,conflicts:true});
+     const row=response.rows?.[0];
+     if(response.rows?.length!==1||row.key!==id)throw fail('shared2-delete-check-incomplete');
+     if(row.error==='not_found')return 'absent';
+     if(row.id!==id||!row.value?.rev)throw fail('shared2-delete-check-incomplete');
+     if(row.value.deleted===true)return 'deleted';
+     const doc=row.doc;
+     if(doc?._id!==id||doc._rev!==row.value.rev||!['plain','newnote'].includes(doc.type))throw fail('shared2-delete-check-incomplete');
+     return doc.deleted===true&&!doc._conflicts?.length?'deleted':'present';
+    }finally{await remote.close();}
+   },
    async metadata(name,revision=undefined){checked(name);const doc=await local.getDBEntryMeta(name,{conflicts:true,...(revision?{rev:revision}:{})},true);return doc?structuredClone(doc):null;},
    async metadataFiles(){checked('metadata');const files=[];for await(const doc of local.findAllNormalDocs({include_docs:true,conflicts:true})){if(['plain','newnote'].includes(doc.type))files.push(structuredClone(doc));}return files;},
    async inspect(){

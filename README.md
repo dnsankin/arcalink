@@ -12,6 +12,8 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
+**1.0.51** от 20.11.2026 — если при удалении файла из общей папки в локальной базе отсутствует запись, ArcaLink сверяет удаление с сервером. Подтверждённое удаление освобождает очередь. При обрыве связи проверка возобновится, а сохранившуюся серверную версию можно проверить в разделе «Общие папки».
+
 **1.0.50** от 19.11.2026 — в строке состояния рабочего стола остаётся цветная точка. Этап синхронизации, очереди и сообщения видны в шапке настроек ArcaLink. При запуске локальные резервные копии обрабатывают существующие файлы один раз, а фоновый снимок больше не перечитывает весь каталог блоков для каждой заметки.
 
 **1.0.49** от 19.11.2026 — галка «Публиковать вложения», скачивание ZIP и произвольных типов файлов, потоковая загрузка в пределах общей квоты аккаунта. Исправлены завершение восстановления общей папки и голубой индикатор при пустой очереди. Конфликт отдельного файла отображается предупреждением при работающем подключении.
@@ -186,6 +188,8 @@ ArcaLink Sync synchronizes Obsidian notes between devices through the ArcaLink s
 The [Android companion](https://arcalink.ru/android) provides note and task-list widgets, quick entries, photos and voice. Mobile assistant settings can add its APK from any device to the shared exchange folder; devices syncing that folder receive the file. Android installation remains manual. In version 1.0.30, a compatible companion can transfer ordinary files itself after connection approval in both apps. The plugin continues to handle shared folders and collaborative notes; Free requires an available second device.
 
 ## Version history
+
+**1.0.51**, 2026-11-20 — when a shared-folder deletion has no local database record, ArcaLink checks the server. A confirmed deletion clears the queue entry. The check survives disconnection and restart. If a version still exists on the server, review it in Shared folders.
 
 **1.0.50**, 2026-11-19 — the desktop status bar shows a single colored dot. Open ArcaLink settings to see sync progress, queue counts and messages. Local backups process existing files once at startup and avoid scanning the entire block directory for each note during a background snapshot.
 

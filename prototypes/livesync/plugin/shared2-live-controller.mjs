@@ -7,6 +7,7 @@ const fail=code=>Object.assign(Error(code),{code});
  */
 export function createShared2LiveController({profile,engine,baseline,store,scan,checkLease,canUpload=()=>true,onReady=async(_result)=>{},onConnected=async()=>{},onState=()=>{},isVerified=async(_meta)=>false,prepareEmptyMount=async()=>false,initialProof}){
  let closed=false,ready=false,applyingResults=false,initialized=false,initializing,pumping,checking,live,initialReprocessed=false,localPrepared=false,problem='',localProblem='',progress=null,queued=0,displayLocalPending=0;
+ let deleteReviews=[];
  const conflicts=new Set(),submissions=new Set();
  const valid=path=>safeRelative(path)&&path.startsWith(profile.documentRoot+'/');
  const healthy=async()=>{if(closed||await checkLease()!==true||closed)throw fail('shared2-vault-lease-rejected');};
@@ -21,11 +22,28 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
     await healthy();
     const item={...event.item,restoredFromPreviousRuntime:true};
     const path=item.args.file.path;
-    const redundant=startup&&['CREATE','DELETE'].includes(item.type)&&item.args.renameTarget===undefined&&
+    let checkDeletion=event.needsDeleteCheck===true;
+    const redundant=!checkDeletion&&startup&&['CREATE','DELETE'].includes(item.type)&&item.args.renameTarget===undefined&&
      await isVerified(await engine.metadata(path));
-    if(!redundant){
+    if(!checkDeletion&&!redundant){
      const result=await engine.files.localEvent(item);
-     if(result!==true){const meta=await engine.metadata(path);if(item.type!=='DELETE'||!meta?.deleted)throw fail('shared2-file-event-incomplete');}
+     if(result!==true){
+      if(item.type!=='DELETE')throw fail('shared2-file-event-incomplete');
+      const meta=await engine.metadata(path);
+      if(meta&&!meta.deleted&&!meta._deleted)throw fail('shared2-file-event-incomplete');
+      if(!meta){
+       await store.markDeleteCheck(event.id);checkDeletion=true;
+      }
+     }
+    }
+    if(checkDeletion){
+     const status=await engine.remoteDeletionState(path);
+     await healthy();
+     if(!canUpload())throw fail('shared2-read-only');
+     if(status==='present'){
+      deleteReviews=await store.reviewDelete(event.id);displayLocalPending--;continue;
+     }
+     if(status!=='absent'&&status!=='deleted')throw fail('shared2-delete-check-incomplete');
     }
     await store.ack(event.id);displayLocalPending=Math.max(0,displayLocalPending-1);
     }
@@ -67,6 +85,7 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
   applyingResults=true;ready=true;initialized=true;problem='';progress=null;engine.results.resume();await applyPending(true);startLive();notify();
  }
  async function prepare(){
+  deleteReviews=await store.deleteReviews();
   if(initialProof?.needed()){
    if(!await store.prepared())await store.markPrepared();
    localPrepared=true;return connect();
@@ -112,6 +131,8 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
    if(network.syncStatus==='ERRORED')return {state:'error',code:'shared2-live-connection-interrupted'};
    return {state:conflicts.size?'conflict':initialized?'idle':'syncing',conflicts:[...conflicts]};
   },
+  get deleteReviews(){return deleteReviews;},
+  async dismissDeleteReview(id){await healthy();deleteReviews=await store.dismissDeleteReview(id);notify();},
   get displayBacklog(){return {outgoing:displayLocalPending,incoming:engine.results.state.pending||0};},
   get activity(){return api.state.state==='syncing'?1:0;},
   reportError:failed,

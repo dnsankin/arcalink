@@ -162,3 +162,32 @@ test('reverse personal target uses original arbitrary private passphrase and pat
  await assert.rejects(make({...config,encrypt:false})(p),/private-cipher-settings/);
  await assert.rejects(make(config)(profile({folder:'f'.repeat(32),encrypted:true,keyEpoch:1})),/encrypted-engine-not-ready/,'personal adapter cannot replace shared folder keys');
 });
+
+test('scoped remote deletion check distinguishes missing rows, tombstones, live files and conflicting edits',async()=>{
+ const remote=createDB('delete-probe-'+crypto.randomUUID(),{});
+ let opens=0,closes=0,offline=false;
+ const factory=createShared2LocalEngineFactory({namespace:'shared2-delete-proof',createPouchDB:createDB,
+  settingsFor:async p=>({database:p.database,generation:p.generation,settings:{}}),accessCheck:async()=>true,
+  openRemote:async()=>{if(offline)throw Error('offline');opens++;return {database:remote,close:async()=>{closes++;}};}});
+ const engine=await factory(profile({documentRoot:'Team'}));
+ try{
+  const path='Team/18810640';
+  await assert.rejects(engine.remoteDeletionState('Outside/note'),/denied/);
+  assert.equal(opens,0);
+  assert.equal(await engine.remoteDeletionState(path),'absent');
+  await engine.write(path,{bytes:new Uint8Array([1])});
+  const id=(await engine.metadata(path))._id;
+  const live=await remote.put({_id:id,path,type:'newnote',children:[]});
+  assert.equal(await engine.remoteDeletionState(path),'present');
+  const soft=await remote.put({_id:id,_rev:live.rev,path,type:'newnote',children:[],deleted:true});
+  assert.equal(await engine.remoteDeletionState(path),'deleted');
+  await remote.bulkDocs([{_id:id,_rev:'1-other',path,type:'newnote',children:[]}],{new_edits:false});
+  assert.equal(await engine.remoteDeletionState(path),'present');
+  await remote.remove(id,'1-other');
+  await remote.remove(id,soft.rev);
+  assert.equal(await engine.remoteDeletionState(path),'deleted');
+  offline=true;
+  await assert.rejects(engine.remoteDeletionState(path),/offline/);
+  assert.equal(opens,closes);
+ }finally{await engine.close();await remote.destroy();}
+});
