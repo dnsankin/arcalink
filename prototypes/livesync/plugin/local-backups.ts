@@ -32,7 +32,7 @@ export class LocalBackups {
    if(this.disposed)return;
    // Obsidian emits create for existing files while opening the vault. The snapshot covers those.
    p.registerEvent(p.app.vault.on('create',(file:any)=>this.observe(file)));
-   if(this.enabled)void this.snapshot();
+   if(this.enabled)void this.snapshot(true);
   });
  }
  private async readStream(path:string){
@@ -45,11 +45,65 @@ export class LocalBackups {
  }
  private observe(file:any){if(this.enabled&&!this.disposed&&file instanceof TFile&&this.accepts(file.path))void this.store.capture(file.path,'saved').catch((e:any)=>{this.error=friendly(e);this.redraw();});}
  async configure(patch:any){if(this.recoveryError)throw this.recoveryError;this.configurationRevision++;if(patch.enabled===false)this.stop=true;const settings=await this.store.configure(patch);this.enabled=settings.enabled;if(!this.enabled)this.stop=true;this.error='';this.redraw();}
- async snapshot(){
-  if(this.busy||!this.enabled||this.disposed)return;this.busy=true;this.stop=false;let done=0;
-  try{const files=this.plugin.app.vault.getFiles().filter((f:any)=>this.accepts(f.path));
-   for(const f of files){if(this.stop||this.disposed)break;this.progress=`Сохранено ${done} из ${files.length}: ${f.path}`;this.redraw();await this.store.capture(f.path,'snapshot');done++;await new Promise(resolve=>window.setTimeout(resolve,0));}
-   this.progress=this.stop?`Остановлено. Проверено файлов: ${done}`:`Снимок завершён. Проверено файлов: ${done}`;await this.store.cleanup();this.error='';
+ private nativeVolumeTypes=new Map<string,boolean>();
+ private async changeStamp(path:string):Promise<string|null>{
+  const adapter=this.plugin.app.vault.adapter,load=(window as any).require;
+  if(!adapter.getFullPath||!load)return null;
+  const process=load('process');
+  if(process.platform!=='darwin')return null;
+  // Darwin stat change time changes on an in-place write even if an editor restores mtime.
+  // Coarse timestamps and adapters without native identity require a content check.
+  const fs=load('fs').promises,absolutePath=adapter.getFullPath(path);
+  const stat=await fs.stat(absolutePath,{bigint:true});
+  if(!stat.isFile()||!stat.ino||!(stat.ctimeNs%BigInt(1000000)))return null;
+  const device=String(stat.dev);
+  if(!this.nativeVolumeTypes.has(device)){
+   // The macOS Data volume uses APFS. Other mounts may expose unreliable change times.
+   const [system,mount]=await Promise.all([fs.statfs('/System/Volumes/Data'),fs.statfs(absolutePath)]);
+   this.nativeVolumeTypes.set(device,system.type===mount.type);
+  }
+  if(!this.nativeVolumeTypes.get(device))return null;
+  return [stat.dev,stat.ino,stat.size,stat.mtimeNs,stat.ctimeNs].join(':');
+ }
+ async snapshot(incremental=false){
+  if(this.busy||!this.enabled||this.disposed)return;
+  this.busy=true;this.stop=false;let done=0;
+  const updates=new Map<string,any>(),checked=new Map<string,string>();
+  const flush=async(paths?:Set<string>)=>{
+   await this.store.saveSnapshotProgress(updates,checked,paths);
+   updates.clear();checked.clear();
+  };
+  try{
+   const files=this.plugin.app.vault.getFiles().filter((f:any)=>this.accepts(f.path));
+   const {observed,latest}=await this.store.snapshotIndex();
+   for(const file of files){
+    if(this.stop||this.disposed)break;
+    const path=file.path,prior=observed.get(path);
+    this.progress=`Сохранено ${done} из ${files.length}: ${path}`;this.redraw();
+    const stamp=await this.changeStamp(path).catch(()=>null);
+    let unchanged=false;
+    if(incremental&&prior&&(!latest.has(path)||latest.get(path)===prior.sha256)){
+     unchanged=stamp!==null&&prior.stamp===stamp;
+     if(!unchanged&&stamp===null){
+      if(await this.raw.exists(path))unchanged=(await hashShared2Stream(await this.readStream(path))).sha256===prior.sha256;
+     }
+    }
+    if(unchanged)checked.set(path,prior.sha256);
+    else{
+     const version=await this.store.capture(path,'snapshot');
+     if(version){
+      const after=stamp===null?null:await this.changeStamp(path).catch(()=>null);
+      updates.set(path,{stamp:stamp===after?stamp:null,sha256:version.sha256});
+     }
+    }
+    done++;
+    if(updates.size>=64)await flush();
+    if(done%64===0)await new Promise(resolve=>window.setTimeout(resolve,0));
+   }
+   if(this.disposed)return;
+   await flush(this.stop?undefined:new Set<string>(files.map((f:any)=>f.path)));
+   this.progress=this.stop?`Остановлено. Проверено файлов: ${done}`:`Снимок завершён. Проверено файлов: ${done}`;
+   await this.store.cleanup();this.error='';
   }catch(e){this.error=friendly(e);}finally{this.busy=false;this.redraw();}
  }
  private async ensureParents(path:string){let current='';for(const part of path.split('/').slice(0,-1)){current+=(current?'/':'')+part;if(!await this.raw.exists(current))await this.raw.mkdir(current);}}

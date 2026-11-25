@@ -134,7 +134,7 @@ await writeFile(configSyncPath,configSyncSource.replace(configSyncRibbon,''));
 
 const shared2Sources=(await readdir(path.join(root,'plugin'))).filter(name=>/^shared2.*\.(?:ts|mjs)$/.test(name)).sort();
 const actionSources=(await readdir(path.join(root,'plugin'))).filter(name=>/^companion-(?:actions?[^/]*|peer-action-[^/]*)\.(?:ts|mjs)$/.test(name));
-for (const name of [...shared2Sources,...actionSources,'shared-folder-provider.ts','shared-folder-blobs.mjs','large-content-gate.mjs','local-backups.ts','local-backup-store.mjs','local-backup-hooks.mjs','local-backup-restore.mjs','main.ts','companion-sync.ts','companion-ownership.ts','companion-ownership-model.mjs','companion-local-snapshot.mjs','companion-key-transfer.mjs','companion-automatic.mjs','companion-peer-proof.mjs','companion-bridge.ts','companion-proof.mjs','mobile-assistant.ts','assistant-download.mjs','publication.ts','publication-model.mjs','content-retry.mjs','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','folder-exclusions.mjs','folder-exclusions.ts','folder-rules-ui.ts','folder-rules-tree.mjs','folder-policy.mjs','folder-policy-store.mjs','folder-policies.ts','folder-local-database.mjs','folder-cleanup.mjs','folder-crypto.mjs','folder-mode-proof.mjs','environment.mjs','sync-parameters.mjs','sync-feedback.mjs','mobile-sync-state.mjs','mobile-sync-status.ts','startup-notices.mjs','folders.ts','shared-folder-picker.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
+for (const name of [...shared2Sources,...actionSources,'shared-folder-provider.ts','shared-folder-blobs.mjs','large-content-gate.mjs','local-backups.ts','display-log-queue.mjs','local-backup-store.mjs','local-backup-hooks.mjs','local-backup-restore.mjs','main.ts','companion-sync.ts','companion-ownership.ts','companion-ownership-model.mjs','companion-local-snapshot.mjs','companion-key-transfer.mjs','companion-automatic.mjs','companion-peer-proof.mjs','companion-bridge.ts','companion-proof.mjs','mobile-assistant.ts','assistant-download.mjs','publication.ts','publication-model.mjs','content-retry.mjs','language-settings.ts','settings-state.mjs','vault-controls.ts','unified-vault.ts','free-relay.ts','free-relay-settings.mjs','desktop.ts','pilot-http.mjs','client-version.mjs','workspaces.ts','replication-drain.mjs','file-encoding.mjs','plugin-sync.mjs','folder-exclusions.mjs','folder-exclusions.ts','folder-rules-ui.ts','folder-rules-tree.mjs','folder-policy.mjs','folder-policy-store.mjs','folder-policies.ts','folder-local-database.mjs','folder-cleanup.mjs','folder-crypto.mjs','folder-mode-proof.mjs','environment.mjs','sync-parameters.mjs','sync-feedback.mjs','mobile-sync-state.mjs','mobile-sync-status.ts','startup-notices.mjs','folders.ts','shared-folder-picker.ts','folder-model.mjs','telegram.ts','telegram-users.mjs','remote-deletion.mjs', 'recovery.mjs', 'storage-warning.mjs', 'collaboration.ts', 'collab-diff.mjs','diagnostic.mjs','localized-obsidian.ts','message-language.mjs','message-catalog.mjs','notice-message.mjs']) {
   const input = path.join(root, 'plugin', name), output = path.join(source, 'src', name);
   if (communityRelease && ['free-relay.ts', 'workspaces.ts'].includes(name)) {
     await writeFile(output, patchCommunityOnboarding(await readFile(input, 'utf8'), name));
@@ -164,13 +164,30 @@ await writeFile(buildConfigPath,"import {shared2ProductionPlugin} from '../../sc
         },
 ${uiAliasMarker}`));
 const logPath=path.join(source,'src/modules/features/ModuleLog.ts'),logSource=await readFile(logPath,'utf8');
+const queueDeclaration='const recentLogEntries = reactiveSource<LogEntry[]>([]);';
+const queueAppend='recentLogEntries.value = [...recentLogEntries.value, entry];';
+const queueListener=`recentLogEntries.onChanged((entries) => {
+            if (entries.value.length === 0) return;
+            const newEntries = [...entries.value];
+            recentLogEntries.value = [];
+            newEntries.forEach((e) => this.__addLog(e.message, e.level, e.key));
+        });`;
+const logUnload='private _allStartOnUnload(): Promise<boolean> {';
+for(const marker of [queueDeclaration,queueAppend,queueListener,logUnload]){
+  if(logSource.split(marker).length!==2)throw Error('Unexpected upstream log queue');
+}
+const queuedLogSource="import {createDisplayLogQueue} from '@/display-log-queue.mjs';\n"+logSource
+  .replace(queueDeclaration,'const recentLogEntries = createDisplayLogQueue();')
+  .replace(queueAppend,'recentLogEntries.append(entry);')
+  .replace(queueListener,'recentLogEntries.listen((e: LogEntry) => this.__addLog(e.message, e.level, e.key));')
+  .replace(logUnload,logUnload+'\n        recentLogEntries.close();');
 const displayMarker='        addDisplayLog(newMessage);',statusMarker='this.statusLog.value = messageContent;',activityMarker='message: `${networkActivity}Sync: ${w}';
 const logRibbon=`        this.addRibbonIcon("view-log", $msg("moduleLog.showLog"), () => {
             void this.services.API.showWindow(VIEW_TYPE_LOG);
         }).addClass("livesync-ribbon-showlog");`;
 const noticeMarker='        if (level >= LOG_LEVEL_NOTICE) {';
 if(logSource.split(displayMarker).length!==2||logSource.split(statusMarker).length!==2||logSource.split(activityMarker).length!==2||logSource.split(logRibbon).length!==2||logSource.split(noticeMarker).length!==2)throw Error('Unexpected upstream display log renderer');
-await writeFile(logPath,"import {localizeMessage,deferStartupSyncNotice} from '@/localized-obsidian';\n"+logSource.replace(logRibbon,'').replace(displayMarker,'        addDisplayLog(timestamp + "->" + localizeMessage(messageContent));').replace(statusMarker,'this.statusLog.value = localizeMessage(messageContent);').replace('message: newMessage });','message: timestamp + "->" + localizeMessage(messageContent) });').replace(activityMarker,'message: `${networkActivity}${localizeMessage("Sync: ")}${w}').replace(noticeMarker,'        if (level >= LOG_LEVEL_NOTICE && !deferStartupSyncNotice(messageContent)) {'));
+await writeFile(logPath,"import {localizeMessage,deferStartupSyncNotice} from '@/localized-obsidian';\n"+queuedLogSource.replace(logRibbon,'').replace(displayMarker,'        addDisplayLog(timestamp + "->" + localizeMessage(messageContent));').replace(statusMarker,'this.statusLog.value = localizeMessage(messageContent);').replace('message: newMessage });','message: timestamp + "->" + localizeMessage(messageContent) });').replace(activityMarker,'message: `${networkActivity}${localizeMessage("Sync: ")}${w}').replace(noticeMarker,'        if (level >= LOG_LEVEL_NOTICE && !deferStartupSyncNotice(messageContent)) {'));
 // Modal translation must never translate the user's diff fragments or filename.
 const conflictPath=path.join(source,'src/modules/features/InteractiveConflictResolving/ConflictResolveModal.ts');
 let conflictSource=await readFile(conflictPath,'utf8');

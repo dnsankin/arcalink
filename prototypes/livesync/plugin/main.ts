@@ -1,4 +1,5 @@
 import type {FilePath,FilePathWithPrefix} from '@vrtmrz/livesync-commonlib/compat/common/types';
+import {eventHub, EVENT_ON_UNRESOLVED_ERROR} from './common/events';
 import {LocalBackups} from './local-backups';
 import {Shared2} from './shared2';
 import {shared2Message} from './shared2-messages.mjs';
@@ -200,6 +201,13 @@ export default class ArcaLinkPilot extends LiveSync {
       this.syncDisplay={label:title,detail:lines.filter(Boolean).join('\n')};
     };
     showStatus('idle','Синхронизация запускается');
+    // Conflict lookup can read the active note's database. Progress still updates every second.
+    let diagnosticRevision=0, displayedRevision=-1, diagnosticKey='', checkedAt=0;
+    let diagnosticMessages:string[]=[];
+    const invalidateDiagnostics=()=>{diagnosticRevision++;};
+    eventHub.onEvent(EVENT_ON_UNRESOLVED_ERROR,invalidateDiagnostics);
+    this.register(()=>eventHub.off(EVENT_ON_UNRESOLVED_ERROR,invalidateDiagnostics));
+    this.registerEvent(this.app.workspace.on('file-open',invalidateDiagnostics));
     const refreshLamp=async()=>{
       if(lampBusy)return;lampBusy=true;
       try {
@@ -216,7 +224,15 @@ export default class ArcaLinkPilot extends LiveSync {
           return;
         }
         const sharedErrors=this.shared2.errorMessages;
-        const errors=[...(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean).map(String),...sharedErrors];
+        const key=JSON.stringify([this.app.workspace.getActiveFile()?.path,this.pilotSyncFeedback.messages,
+          this.folders.syncFeedback.messages,this.shared2.warning,this.shared2.enabled]);
+        if(displayedRevision!==diagnosticRevision||key!==diagnosticKey||Date.now()-checkedAt>=30000){
+          const revision=diagnosticRevision;
+          diagnosticMessages=(await services.appLifecycle.getUnresolvedMessages()).flat().filter(Boolean).map(String);
+          displayedRevision=revision;diagnosticKey=key;checkedAt=Date.now();
+          if(revision!==diagnosticRevision)return;
+        }
+        const errors=[...diagnosticMessages,...sharedErrors];
         const state=services.replicator.replicationStatics.value;
         const status=String(state.syncStatus||'');
         const sharedEntries=[...this.shared2.entries.values()];

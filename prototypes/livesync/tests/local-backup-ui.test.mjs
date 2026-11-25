@@ -92,3 +92,52 @@ test('existing files enter the startup snapshot once and later creates are obser
  events.get('create')('new');
  assert.deepEqual(seen,['snapshot','new']);
 });
+
+test('startup resumes after eviction and verifies content when change stamps are unavailable',async()=>{
+ const entries=new Map([['old.md','aaaa'],['new.md','data']]);
+ const vault={getFiles:()=>[...entries.keys()].map(path=>({path})),configDir:'.obsidian'};
+ const b=new LocalBackups({app:{vault}}),captures=[];
+ b.enabled=true;b.redraw=()=>{};b.changeStamp=async()=>null;
+ b.raw={exists:async path=>entries.has(path)};
+ b.readStream=async path=>[new TextEncoder().encode(entries.get(path))];
+ const sha=path=>require('node:crypto').createHash('sha256').update(entries.get(path)).digest('hex');
+ const observed=new Map([['old.md',{sha256:sha('old.md'),stamp:null}]]),latest=new Map();
+ b.store={
+  snapshotIndex:async()=>({observed,latest}),
+  capture:async path=>{captures.push(path);return {sha256:sha(path)};},
+  saveSnapshotProgress:async updates=>{for(const [path,v] of updates)observed.set(path,v);},
+  cleanup:async()=>{},
+ };
+ await b.snapshot(true);assert.equal(b.error,'');assert.deepEqual(captures,['new.md']);
+ captures.length=0;await b.snapshot(true);assert.deepEqual(captures,[]);
+ entries.set('old.md','bbbb');
+ await b.snapshot(true);assert.deepEqual(captures,['old.md']);
+ captures.length=0;await b.snapshot();assert.deepEqual(captures,['old.md','new.md']);
+});
+
+test('interrupted startup retries only the files beyond the last durable checkpoint',async()=>{
+ const files=Array.from({length:70},(_,i)=>({path:'file-'+i+'.md'}));
+ const vault={getFiles:()=>files,configDir:'.obsidian'};
+ const observed=new Map(),captured=[];
+ let interrupt=true;
+ function open(){
+  const b=new LocalBackups({app:{vault}});
+  b.enabled=true;b.redraw=()=>{};b.changeStamp=async path=>'stamp-'+path;
+  b.store={
+   snapshotIndex:async()=>({observed:new Map(observed),latest:new Map()}),
+   capture:async path=>{
+    if(interrupt&&path===files[65].path)throw Error('interrupted');
+    captured.push(path);return {sha256:'digest-'+path};
+   },
+   saveSnapshotProgress:async updates=>{for(const [path,record] of updates)observed.set(path,record);},
+   cleanup:async()=>{},
+  };
+  return b;
+ }
+ const first=open();await first.snapshot(true);
+ assert.ok(first.error);assert.equal(captured.length,65);assert.equal(observed.size,64);
+ captured.length=0;interrupt=false;
+ const second=open();await second.snapshot(true);
+ assert.equal(second.error,'');assert.deepEqual(captured,files.slice(64).map(file=>file.path));
+ assert.equal(observed.size,70);
+});

@@ -243,3 +243,18 @@ test('an interrupted background eviction keeps the previous backup readable and 
  assert.equal((await f.reopen().verify(current.id)).sha256,current.sha256);
  assert.equal(physicalBytes(f),700000);
 });
+
+test('scan checkpoints survive reopening and refresh only the current matching version',async()=>{
+ const f=fixture();await f.store.configure({enabled:true});
+ f.put('note.md','one');const old=await f.store.capture('note.md','snapshot');
+ const updates=new Map([['note.md',{stamp:'native-signature',sha256:old.sha256}]]);
+ await f.store.saveSnapshotProgress(updates,new Map());
+ const store=f.reopen();assert.deepEqual((await store.snapshotIndex()).observed,updates);
+ f.put('note.md','two');const newer=await store.capture('note.md','saved');
+ f.time(newer.time+3600001);
+ await store.saveSnapshotProgress(new Map(),new Map([['note.md',old.sha256]]));
+ assert.equal((await store.version(newer.id)).lastSeen,newer.lastSeen);
+ await store.saveSnapshotProgress(new Map(),new Map([['note.md',newer.sha256]]),new Set());
+ assert.ok((await store.version(newer.id)).lastSeen>newer.lastSeen);
+ assert.equal((await store.snapshotIndex()).observed.size,0);
+});

@@ -74,6 +74,24 @@ export function createLocalBackupStore({adapter,root,readStream,now=Date.now,acc
  }
  return {
   state:({priority=false}={})=>serial(async()=>{const s=await load();await used(s.versions);return {...s,usedBytes:await physicalBytes()};},priority),
+  snapshotIndex:()=>serial(async()=>{
+   const s=await load();
+   return {observed:new Map(Object.entries(s.observed||{})),latest:new Map(s.versions.map(v=>[v.path,v.sha256]))};
+  }),
+  saveSnapshotProgress:(updates,checked,paths)=>serial(async()=>{
+   if(!updates.size&&!checked.size&&!paths)return;
+   const s=await load(),observed=new Map(Object.entries(s.observed||{}));
+   let changed=false;
+   for(const [path,record] of updates){observed.set(path,record);changed=true;}
+   if(paths)for(const path of observed.keys())if(!paths.has(path)){observed.delete(path);changed=true;}
+   // Refresh only the matching latest version, even if a protected write raced the scan.
+   const latest=new Map(s.versions.map(v=>[v.path,v]));
+   for(const [path,sha] of checked){
+    const v=latest.get(path);
+    if(v&&v.sha256===sha&&now()-(v.lastSeen??v.time)>=3600000){v.lastSeen=now();changed=true;}
+   }
+   if(changed){s.observed=Object.fromEntries(observed);await save(s);}
+  }),
   configure:patch=>serial(async()=>{const s=await load();s.settings={...s.settings,...patch};check(s);await prune(s);await collect(s);return s.settings;},true),
   capture:(path,reason='change',{priority=false}={})=>serial(async()=>{try{return await capture(path,reason);}catch(error){
    // Reload authority: a failed slot write may already have committed one valid slot.
