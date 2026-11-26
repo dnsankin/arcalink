@@ -7,12 +7,35 @@ const fail=code=>Object.assign(Error(code),{code});
  */
 export function createShared2LiveController({profile,engine,baseline,store,scan,checkLease,canUpload=()=>true,onReady=async(_result)=>{},onConnected=async()=>{},onState=()=>{},isVerified=async(_meta)=>false,prepareEmptyMount=async()=>false,initialProof}){
  let closed=false,ready=false,applyingResults=false,initialized=false,initializing,pumping,checking,live,initialReprocessed=false,localPrepared=false,problem='',localProblem='',progress=null,queued=0,displayLocalPending=0;
- let deleteReviews=[];
+ let deleteReviews=[],initialConflict=null;
+ const conflictKey='initial-proof-conflict';
+ const authority=JSON.stringify([profile.authorityEpoch,profile.membershipEpoch,profile.bindingRevision,profile.role]);
+ async function rememberStop(next){
+  next={...next,authority};
+  if(JSON.stringify(initialConflict)!==JSON.stringify(next))await store.kv.set(conflictKey,next);
+  initialConflict=next;
+ }
+ async function waitForConflict(doc){
+  const revisions=[doc._rev,...doc._conflicts].sort();
+  if(initialConflict?.path!==doc.path||JSON.stringify(revisions)!==JSON.stringify(initialConflict.revisions)||!initialConflict.versions){
+   const versions=[];
+   for(const revision of revisions){
+    const leaf=await engine.metadata(doc.path,revision);
+    if(leaf?.path===doc.path&&leaf._rev===revision)versions.push({revision,deleted:!!(leaf.deleted||leaf._deleted),mtime:leaf.mtime});
+   }
+   await rememberStop({path:doc.path,revisions,versions});
+  }
+  throw fail('shared2-initial-proof-conflict');
+ }
  const conflicts=new Set(),submissions=new Set();
  const valid=path=>safeRelative(path)&&path.startsWith(profile.documentRoot+'/');
  const healthy=async()=>{if(closed||await checkLease()!==true||closed)throw fail('shared2-vault-lease-rejected');};
  function notify(){onState(api.state);}
  function failed(error){if(!closed){problem=error.code||error.message||'shared2-vault-sync-failed';if(initialProof?.needed())initialReprocessed=false;notify();}}
+ async function requireReplay(){
+  if(!initialConflict||initialConflict.replay)return;
+  const next={...initialConflict,replay:true};await store.kv.set(conflictKey,next);initialConflict=next;
+ }
  async function applyPending(startup=false){
   if(pumping)return pumping;
   const task=(async()=>{
@@ -64,22 +87,52 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
  }
  async function connect(){
   progress={state:'syncing',phase:'connection'};notify();await healthy();
-  if(initialProof?.needed())await initialProof.preflight?.();
+  if(initialProof?.needed()&&(!initialConflict||initialConflict.kind==='preflight')){
+   try{await initialProof.preflight?.(initialConflict);}catch(error){
+    if(error.blocker&&valid(error.blocker.path))await rememberStop({kind:'preflight',...error.blocker});
+    throw error;
+   }
+   if(initialConflict?.kind==='preflight'){await store.kv.delete(conflictKey);initialConflict=null;}
+  }
   await engine.results.restore();
   progress={state:'syncing',phase:'exchange'};notify();await engine.synchronize();await healthy();
   if(initialProof?.needed()){
    progress={state:'syncing',phase:'application'};notify();
-   if(!initialReprocessed){await engine.results.reprocessStoredDocuments();initialReprocessed=true;}
+   if(initialConflict?.revisions){
+    const latest=await engine.metadata(initialConflict.path);
+    if(latest?._conflicts?.length){
+     applyingResults=true;engine.results.resume();
+     await waitForConflict(latest);
+    }
+   }
+   if(!initialReprocessed&&(!initialConflict||initialConflict.replay)){await engine.results.reprocessStoredDocuments();initialReprocessed=true;}
    applyingResults=true;engine.results.resume();
    for(;;){
     try{await engine.results.confirmDrained();break;}catch(error){
-     if(error?.code!=='shared2-results-pending'||initialProof.singleAttempt)throw error;
+     if(error?.code!=='shared2-results-pending'){await requireReplay();throw error;}
+     if(initialProof.singleAttempt)throw error;
      await new Promise(resolve=>setTimeout(resolve,100));await healthy();
     }
    }
    await healthy();
-   progress={state:'syncing',phase:'verification'};notify();await initialProof.verify();await healthy();
+   progress={state:'syncing',phase:'verification'};notify();
+   if(!initialConflict||initialConflict.replay)await rememberStop({kind:'drained'});
+   try{
+    if(initialConflict.path)await initialProof.resumePath?.(initialConflict.path,initialConflict);
+    await initialProof.verify();
+   }catch(error){
+    if(error.blocker&&valid(error.blocker.path))await rememberStop({kind:'local',...error.blocker});
+    if(error.code==='shared2-initial-proof-conflict'&&error.document&&valid(error.document.path))await waitForConflict(error.document);
+    // A durable conflict proves that a full replay previously drained. If later
+    // verification finds missing coverage, allow the ordinary repair pass.
+    if(error.message==='shared2-initial-proof-incomplete')await requireReplay();
+    throw error;
+   }
+   await healthy();
+   // Keep the verified blocker if saving the final epoch fails.
    await initialProof.complete();
+   if(initialConflict)await store.kv.delete(conflictKey);
+   initialConflict=null;
   }
   await healthy();await onConnected();
   applyingResults=true;ready=true;initialized=true;problem='';progress=null;engine.results.resume();await applyPending(true);startLive();notify();
@@ -87,6 +140,10 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
  async function prepare(){
   deleteReviews=await store.deleteReviews();
   if(initialProof?.needed()){
+   if(!initialConflict){
+    const saved=await store.kv.get(conflictKey);
+    if(saved?.authority===authority&&(saved.kind==='drained'||valid(saved.path)&&(['local','preflight'].includes(saved.kind)&&Array.isArray(saved.eventIds)||Array.isArray(saved.revisions)&&saved.revisions.length>=2)))initialConflict=saved;
+   }
    if(!await store.prepared())await store.markPrepared();
    localPrepared=true;return connect();
   }
@@ -120,10 +177,17 @@ export function createShared2LiveController({profile,engine,baseline,store,scan,
   await connect();
  }
  const api={
+  get initialConflict(){return initialConflict;},
+  async approveProjection(path,revisions,keep,diskState){
+   await healthy();
+   if(initialConflict?.path!==path||JSON.stringify(initialConflict.revisions)!==JSON.stringify([...revisions].sort()))throw fail('shared2-conflict-changed');
+   await rememberStop({...initialConflict,selection:{keep,hash:diskState.hash,diskState}});
+  },
   get ready(){return ready&&!closed;},get applyingResults(){return applyingResults&&!closed;},get closed(){return closed;},
   baselineProgress(state){progress=state;notify();},
   get state(){
-   if(problem==='shared2-initial-proof-conflict')return {state:'conflict',code:problem};
+   if(problem==='shared2-initial-review-required')return {state:'review',code:problem,path:initialConflict?.path};
+   if(problem==='shared2-initial-proof-conflict')return {state:'conflict',code:problem,path:initialConflict?.path};
    if(problem)return {state:'error',code:problem};
    if(progress)return progress;
    const network=engine.getReplicationState?.()||{},incoming=engine.results?.state||{};

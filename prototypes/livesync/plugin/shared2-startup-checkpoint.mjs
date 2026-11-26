@@ -20,23 +20,23 @@ export function createShared2StartupCheckpoint({documentRoot,provenance,stat,fin
    return record?.revision===doc._rev&&!!record.verifiedStat&&same(record.verifiedStat,fileStat(await stat(doc.path)));
   }catch{return false;}
  }
- async function remember(doc,establishProvenance=false){
+ async function remember(doc,establishProvenance=false,replaceAfterProof=false){
   if(!live(doc))return;
   try{
    const {path,_rev:revision}=doc,current=await metadata(path);
    if(!live(current)||current._rev!==revision||await isVerified(current))return;
    const previous=await provenance.get(path);
-   if(previous?previous.revision!==revision:!establishProvenance)return;
+   if(previous?previous.revision!==revision&&!replaceAfterProof:!establishProvenance)return;
    const before=fileStat(await stat(path));
    if(!before||before.size!==current.size)return;
    const remote=await revisionProof(path,revision);
    const local=await fingerprint(path);
    if(remote.size!==before.size||remote.sha256!==local||!same(before,fileStat(await stat(path))))return;
-   if(!previous){
+   if(!previous||previous.revision!==revision){
     const latest=await metadata(path);
     if(!live(latest)||latest._rev!==revision)return;
    }
-   await provenance.verify(path,revision,before,establishProvenance);
+   await provenance.verify(path,revision,before,establishProvenance,replaceAfterProof?previous?.revision:undefined);
   }catch{
    // An optional checkpoint must never block reflection or replace a retry.
   }

@@ -27,7 +27,7 @@ const {Shared2,createShared2LocalEngineFactory,createDB}=mod.exports;
 async function waitFor(fn){const deadline=Date.now()+12000;while(!await fn()){if(Date.now()>deadline)throw Error('host scope did not converge');await new Promise(resolve=>setTimeout(resolve,10));}}
 const textIfPresent=file=>{try{return syncFS.readFileSync(file,'utf8');}catch(error){if(error.code==='ENOENT')return null;throw error;}};
 
-test('actual host scopes use continuous LiveSync on physical files, preserve recovery copies and do not repeat a full scan',async t=>{
+async function hostFixture(t){
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'arcalink-host-live-')),remote=createDB('host-server-'+crypto.randomUUID()),clients=[],errors=[];
  await remote.put({_id:'_design/arcalink_shared2_access',filters:{files:"function(doc,req){return doc._id.charAt(0)!=='_';}"}});
  const originalFetch=globalThis.fetch;
@@ -65,6 +65,11 @@ test('actual host scopes use continuous LiveSync on physical files, preserve rec
   const result={id,root,reads,manager,row,mount,background,record,submitted:[]};clients.push(result);
   await fs.mkdir(full(plugin.pilotDirectory),{recursive:true});await fs.mkdir(full(mount),{recursive:true});return result;
  }
+ return {client,remote,errors};
+}
+
+test('actual host scopes use continuous LiveSync on physical files, preserve recovery copies and do not repeat a full scan',async t=>{
+ const {client,remote,errors}=await hostFixture(t);
  const a=await client('a','Local'),b=await client('b','Elsewhere');
  b.record.shared2InitialPull=b.record.shared2CacheEpoch;
  await fs.writeFile(path.join(a.root,a.mount,'note.md'),'Original');await fs.writeFile(path.join(a.root,a.mount,'untouched.md'),'Untouched');
@@ -115,6 +120,13 @@ test('actual host scopes use continuous LiveSync on physical files, preserve rec
  assert.deepEqual(unsafeRuntime.events.map(event=>event.item.type),['CREATE','CHANGED']);assert.equal(unsafe.record.shared2InitialVerifiedEpoch,undefined);
  assert.equal(await fs.readFile(path.join(unsafe.root,unsafe.mount,'note.md'),'utf8'),'Local unsynced bytes');
  await unsafeEntry.controller.close();await unsafeEntry.engine.close();unsafe.manager.entries.delete(unsafe.row.id);
+ const waitingLocal=await unsafe.manager.ensure(unsafe.row,unsafe.mount);
+ waitingLocal.engine.results.reprocessStoredDocuments=()=>assert.fail('stable local event replayed the database');
+ waitingLocal.engine.metadataFiles=()=>assert.fail('stable local event repeated the entire proof');
+ await assert.rejects(waitingLocal.controller.wake(),/initial-review-required/);
+ assert.equal(waitingLocal.controller.state.path,unsafeFile.path);
+ assert.deepEqual(waitingLocal.controller.initialConflict.eventIds,unsafeRuntime.events.map(event=>event.id));
+ await waitingLocal.controller.close();await waitingLocal.engine.close();unsafe.manager.entries.delete(unsafe.row.id);
  const legacy=await client('legacy','Legacy');
  legacy.record.shared2InitialPull=legacy.record.shared2CacheEpoch;
  let legacyEntry=await legacy.manager.ensure(legacy.row,legacy.mount);await legacyEntry.controller.wake();
@@ -170,4 +182,165 @@ test('actual host scopes use continuous LiveSync on physical files, preserve rec
  assert.equal((await unchanged.engine.metadata('Owner/Shared/untouched.md'))._rev,revision);
  await Promise.allSettled([...a.background,...b.background]);assert.deepEqual(errors,[]);
  assert.equal(ae.engine.getReplicationState().syncStatus==='ERRORED',false);
+});
+
+
+test('initial deletion review survives reopening, preserves local work and resumes only after proof',async t=>{
+ const {client,remote}=await hostFixture(t);
+ const name='report.xls',file='Owner/Shared/'+name;
+ const writer=await client('writer','Live');
+ await fs.writeFile(path.join(writer.root,writer.mount,name),Buffer.from([1,2,3]));
+ const author=await writer.manager.ensure(writer.row,writer.mount);await author.controller.wake();
+ const id=(await author.engine.metadata(file))._id;
+ await waitFor(async()=>!!await remote.get(id).catch(()=>null));
+ const original=await remote.get(id);
+ await author.controller.close();await author.engine.close();writer.manager.entries.delete(writer.row.id);
+ const [generation,parent]=original._rev.split('-');
+ const start=Number(generation)+1;
+ await remote.bulkDocs(['a','b'].map(c=>({...original,_rev:start+'-'+c.repeat(32),deleted:true,
+  _revisions:{start,ids:[c.repeat(32),parent]}})),{new_edits:false});
+ async function waiting(id){
+  const c=await client(id,'Mount');
+  c.record.shared2InitialPull=c.record.shared2CacheEpoch;
+  c.manager.catalog.capabilities={confirmDeletion:1};
+  const open=()=>c.manager.ensure(c.row,c.mount);
+  const entry=await open();
+  await assert.rejects(entry.controller.wake(),/shared2-initial-proof-conflict/);
+  assert.equal(entry.controller.state.path,file);
+  return {c,entry,open};
+ }
+ const clean=await waiting('clean'),dirty=await waiting('dirty'),restored=await waiting('restored'),renamed=await waiting('renamed');
+ await clean.entry.controller.close();await clean.entry.engine.close();clean.c.manager.entries.delete(clean.c.row.id);
+ clean.entry=await clean.open();
+ clean.entry.engine.results.reprocessStoredDocuments=()=>assert.fail('stable conflict replayed the database');
+ for(let i=0;i<3;i++)await assert.rejects(clean.entry.controller.wake(),/shared2-initial-proof-conflict/);
+ const entry=dirty.entry,c=dirty.c;
+ const meta=await entry.engine.metadata(file);
+ const review=c.manager.initialDeletionReview(c.record,entry,meta,async()=>assert.ok(await entry.checked()));
+ // The local session adapter is stubbed; PouchDB still operates on real revision trees.
+ let submissions=0;
+ c.manager.request=async(route,options)=>{
+  await options.beforeSend();
+  assert.equal(route,'/shared2/confirm-deletion');
+  const action=JSON.parse(options.body);
+  assert.deepEqual(Object.keys(action).sort(),['database','discard','document','keep','operation']);
+  submissions++;
+  await remote.remove(action.document,action.discard);
+  return {status:200,json:{revision:action.keep,operation:action.operation}};
+ };
+ const moved={path:'Owner/Shared/archive/report.xls',name,stat:{type:'file',size:3,ctime:1,mtime:1}};
+ await renamed.entry.controller.enqueue({type:'RENAME',args:{file:moved,oldPath:file}});
+ const movedReview=renamed.c.manager.initialDeletionReview(renamed.c.record,renamed.entry,meta,async()=>assert.ok(await renamed.entry.checked()));
+ assert.equal(await movedReview.available(),false);
+ assert.equal(await review.available(),true);
+ delete c.manager.catalog.capabilities.confirmDeletion;
+ assert.equal(await review.available(),false);
+ c.manager.catalog.capabilities.confirmDeletion=1;
+ c.record.shared2LocalPaused=true;await assert.rejects(review.confirm(),/conflict-changed/);delete c.record.shared2LocalPaused;
+ await fs.writeFile(path.join(c.root,c.mount,name),'recreated before submission');
+ await assert.rejects(review.confirm(),/conflict-changed/);assert.equal(submissions,0);
+ await fs.unlink(path.join(c.root,c.mount,name));
+ const pendingFile={path:'Owner/Shared/draft.md',name:'draft.md',stat:{type:'file',size:7,ctime:1,mtime:1}};
+ await fs.writeFile(path.join(c.root,c.mount,'draft.md'),'private');
+ await entry.controller.enqueue({type:'CREATE',args:{file:pendingFile}});
+ await review.confirm();
+ await fs.writeFile(path.join(restored.c.root,restored.c.mount,name),'recreated after submission');
+ await assert.rejects(restored.entry.controller.wake(),/initial-review-required/);
+ assert.equal(await fs.readFile(path.join(restored.c.root,restored.c.mount,name),'utf8'),'recreated after submission');
+ await assert.rejects(entry.controller.wake(),/initial-review-required/);
+ assert.equal(entry.controller.ready,false);
+ assert.equal(await fs.readFile(path.join(c.root,c.mount,'draft.md'),'utf8'),'private');
+ assert.equal((await c.manager.store('livesync-'+c.row.id+'-1-'+c.record.shared2CacheEpoch).load()).events[0].item.args.file.path,pendingFile.path);
+ assert.equal((await remote.allDocs({include_docs:true})).rows.some(row=>row.doc?.path===pendingFile.path),false);
+ assert.equal((await remote.get(id,{conflicts:true}))._conflicts,undefined);
+ await clean.entry.controller.wake();assert.equal(clean.entry.controller.ready,true);
+ assert.equal(clean.c.record.shared2InitialVerifiedEpoch,clean.c.record.shared2CacheEpoch);
+});
+
+test('initial recovery reconciles 16 durable events on 14 exact paths without writing to the server',async t=>{
+ const {client,remote}=await hostFixture(t);
+ const names=Array.from({length:13},(_,i)=>i===0?'archive/old.bin':'note-'+i+'.bin');
+ const source=await client('source','Publish'),target=await client('target','Receive');
+ const data=name=>Buffer.from('independent bytes of '+name+'\0','utf8');
+ for(const c of [source,target])await fs.mkdir(path.join(c.root,c.mount,'archive'));
+ for(const name of names)for(const c of [source,target])await fs.writeFile(path.join(c.root,c.mount,name),data(name));
+ await fs.writeFile(path.join(source.root,source.mount,'old.bin'),'historical bytes');
+ const writer=await source.manager.ensure(source.row,source.mount);await writer.controller.wake();
+ const canonical=name=>'Owner/Shared/'+name;
+ const old=await writer.engine.metadata(canonical('old.bin'));
+ await waitFor(async()=>!!await remote.get(old._id).catch(()=>null));
+ await writer.controller.close();await writer.engine.close();source.manager.entries.delete(source.row.id);
+ const parent=await remote.get(old._id);
+ await remote.put({...parent,deleted:true,mtime:Date.now()});
+ const before=(await remote.info()).update_seq;
+ target.record.shared2InitialPull=target.record.shared2CacheEpoch;
+ const recipient=await target.manager.ensure(target.row,target.mount);
+ const event=(name,type)=>recipient.controller.enqueue({type,args:{file:{name,path:canonical(name),stat:{type:'file',mtime:1,ctime:1,size:data(name).length}}}});
+ for(const name of names.slice(0,11))await event(name,'CREATE');
+ await event('old.bin','CREATE');
+ for(const name of names.slice(11)){await event(name,'DELETE');await event(name,'CREATE');}
+ const store=target.manager.store('livesync-'+target.row.id+'-1-'+target.record.shared2CacheEpoch);
+ assert.equal((await store.load()).events.length,16);
+ await recipient.controller.wake();
+ assert.equal(target.record.shared2InitialVerifiedEpoch,target.record.shared2CacheEpoch);
+ for(const name of names){
+  const bytes=await fs.readFile(path.join(target.root,target.mount,name));
+  assert.deepEqual(await crypto.subtle.digest('SHA-256',bytes),await crypto.subtle.digest('SHA-256',data(name)));
+ }
+ assert.equal(syncFS.existsSync(path.join(target.root,target.mount,'old.bin')),false);
+ assert.deepEqual((await store.load()).events,[]);
+ for(let i=0;i<3;i++)await recipient.controller.wake();
+ assert.equal((await remote.info()).update_seq,before);
+ await recipient.controller.close();await recipient.engine.close();target.manager.entries.delete(target.row.id);
+ const reopened=await target.manager.ensure(target.row,target.mount);await reopened.controller.wake();
+ assert.equal(reopened.controller.ready,true);assert.deepEqual((await store.load()).events,[]);
+ assert.equal((await remote.info()).update_seq,before);
+});
+
+test('early selection preserves a binary branch and applies exactly the reviewed decision before upload',async t=>{
+ const {client,remote}=await hostFixture(t);
+ const source=await client('publisher','Pub'),receiver=await client('editor','Local');
+ const name='sample.xls',logical='Owner/Shared/'+name;
+ const original=Buffer.from([0,255,70,1]);
+ await fs.writeFile(path.join(source.root,source.mount,name),original);
+ const author=await source.manager.ensure(source.row,source.mount);await author.controller.wake();
+ const id=(await author.engine.metadata(logical))._id;
+ await waitFor(()=>remote.get(id).then(()=>true,()=>false));
+ await author.controller.close();await author.engine.close();source.manager.entries.delete(source.row.id);
+ const base=await remote.get(id),n=Number(base._rev.split('-')[0])+1;
+ const leaves=['a','b'].map(c=>({...base,deleted:c==='b',_rev:n+'-'+c.repeat(32),_revisions:{start:n,ids:[c.repeat(32),base._rev.split('-')[1]]}}));
+ await remote.bulkDocs(leaves,{new_edits:false});
+ receiver.record.shared2InitialPull=receiver.record.shared2CacheEpoch;
+ receiver.manager.catalog.capabilities={resolveConflict:1};
+ const e=await receiver.manager.ensure(receiver.row,receiver.mount);
+ await assert.rejects(e.controller.wake(),/initial-proof-conflict/);
+ const meta=await e.engine.metadata(logical),keep=leaves[0]._rev;
+ const diskPath=path.join(receiver.root,receiver.mount,name);
+ await fs.writeFile(diskPath,'local version seen by the user');
+ const hash=await e.disk.fingerprint(name),current=async()=>{if(!await e.checked())throw Error('shared2-conflict-changed');};
+ const compare=async()=>receiver.manager.initialVersionReview(receiver.record,e,meta,current,await receiver.manager.reviewFileState(e,name),[]);
+ const review=await compare();
+ const download=await e.engine.readRevision(logical,keep);assert.deepEqual(Buffer.from(download.bytes),original);
+ const backup=await e.disk.backup(name,hash);
+ let requests=0;
+ receiver.manager.request=async(route,options)=>{
+  await options.beforeSend();requests++;
+  assert.equal(route,'/shared2/resolve-conflict');const action=JSON.parse(options.body);
+  assert.deepEqual(action.revisions,leaves.map(l=>l._rev));
+  assert.equal(e.canUpload(),false);
+  for(const rev of action.revisions)if(rev!==action.keep)await remote.remove(action.document,rev);
+  return {status:200,json:{revision:action.keep,operation:action.operation}};
+ };
+ await fs.writeFile(diskPath,'concurrent edit');
+ await assert.rejects(review.confirm(keep),/conflict-changed/);
+ assert.equal(requests,0);
+ await fs.writeFile(diskPath,'local version seen by the user');
+ await assert.rejects(review.confirm(keep),/conflict-changed/);
+ await (await compare()).confirm(keep);assert.equal(requests,1);
+ await e.controller.close();await e.engine.close();receiver.manager.entries.delete(receiver.row.id);
+ const restored=await receiver.manager.ensure(receiver.row,receiver.mount);
+ await restored.controller.wake();
+ assert.equal(restored.controller.ready,true);
+ assert.deepEqual(await fs.readFile(diskPath),original);
+ assert.equal(await fs.readFile(path.join(receiver.root,backup),'utf8'),'local version seen by the user');
 });

@@ -1,8 +1,15 @@
+import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';import {dirname,join} from 'node:path';import {readFile} from 'node:fs/promises';import {createHash} from 'node:crypto';
 import {patchShared2PouchProgress} from './shared2-pouch-progress.mjs';
 import {patchScopedLiveSync} from './patch-scoped-livesync.mjs';
 /** Production alias only: never onLoad/patch the personal replication module. */
 export function shared2ProductionPlugin(){return {name:'arcalink-shared2-isolated-engine',setup(build){
+ // A native alias uses the same TypeScript options as the personal engine's import
+ // of this class, regardless of which import esbuild resolves first.
+ build.initialOptions.alias = {
+  ...build.initialOptions.alias,
+  '@arcalink/shared2-result-processor': fileURLToPath(new URL('../.cache/source/src/serviceFeatures/replication/ReplicateResultProcessor.ts', import.meta.url)),
+ };
  // DirectFileManipulator and BrowserServices both install the non-configurable
  // replication getter. Keep the HTTP codec's unmodified core separate from the
  // ordinary browser constructor, just as their adapter sets are separate.
@@ -12,10 +19,6 @@ export function shared2ProductionPlugin(){return {name:'arcalink-shared2-isolate
  });
  build.onLoad({filter:/.*/,namespace:'companion-http-core'},async args=>({contents:await readFile(args.pluginData.entry,'utf8'),loader:'js',resolveDir:dirname(args.pluginData.entry)}));
  build.onResolve({filter:/.*/,namespace:'companion-http-core'},args=>build.resolve(args.path,{resolveDir:args.resolveDir,kind:args.kind,namespace:'file'}));
- build.onResolve({filter:/^@arcalink\/shared2-result-processor$/},args=>{
-  const require=createRequire(join(args.resolveDir,'shared2-resolver.cjs')),entry=require.resolve('@vrtmrz/livesync-commonlib/context',{paths:[args.resolveDir,join(args.resolveDir,'../.cache/source/node_modules')]});
-  return {path:join(dirname(entry),'../../../../src/serviceFeatures/replication/ReplicateResultProcessor.ts')};
- });
  build.onResolve({filter:/^@arcalink\/shared2-offline-scanner$/},args=>{
   const require=createRequire(join(args.resolveDir,'shared2-resolver.cjs')),entry=require.resolve('@vrtmrz/livesync-commonlib/context',{paths:[args.resolveDir,join(args.resolveDir,'../.cache/source/node_modules')]});
   return {path:'OfflineScanner',namespace:'shared2-offline-scanner',pluginData:{entry:join(dirname(entry),'serviceFeatures/offlineScanner.js')}};
