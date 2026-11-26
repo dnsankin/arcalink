@@ -6,18 +6,35 @@ const fail=code=>Object.assign(Error(code),{code});
  * by the host. It owns chunk readiness, retries and persisted pending results.
  * This scope owns only admission, lifecycle and the destination file handler.
  */
-export function createShared2ResultRuntime({ResultProcessor,services,files,keyValueDB,documentRoot,assertCurrent,isReady=()=>true,isOnline=()=>true,retire,onError}){
+export function createShared2ResultRuntime({ResultProcessor,services,files,keyValueDB,documentRoot,assertCurrent,isReady=()=>true,persistAdmission=()=>false,isOnline=()=>true,retire,onError}){
  const scope=services?.database?.localDatabase?.localDatabase?.name;
  if(typeof ResultProcessor!=='function'||!services?.database?.localDatabase||!files?.incoming||!keyValueDB?.get||!keyValueDB?.set||!safeRelative(documentRoot)
   ||typeof scope!=='string'||!scope||scope.length>512||typeof assertCurrent!=='function'||typeof retire!=='function'||typeof onError!=='function')throw fail('invalid-shared2-result-runtime');
  let closing=false,retired=false,closingTask,lastWriteError,applicationError,writeTail=Promise.resolve();const active=new Set();
  // A retired processor can still have a throttled snapshot callback scheduled
  // by upstream. Fence it so it cannot overwrite a replacement scope's state.
+ const snapshotName='replicationResultProcessorSnapshot';
+ let durableEmpty,admissions=0,receiving=0;
+ function emptySnapshot(value){
+  if(!Array.isArray(value?.queued)||!Array.isArray(value?.processing))throw fail('shared2-invalid-result-snapshot');
+  return !value.queued.length&&!value.processing.length;
+ }
  const snapshotStore={
-  async get(key){await writeTail;if(lastWriteError)throw lastWriteError;return keyValueDB.get('shared2:'+scope+':'+key);},
+  async get(key){
+   await writeTail;
+   if(lastWriteError)throw lastWriteError;
+   const value=await keyValueDB.get('shared2:'+scope+':'+key);
+   if(key===snapshotName)durableEmpty=value==null||emptySnapshot(value);
+   return value;
+  },
   set(key,value){
    if(retired)return Promise.resolve();
-   const snapshot=structuredClone(value),task=writeTail.then(()=>{if(!retired)return keyValueDB.set('shared2:'+scope+':'+key,snapshot);});
+   const snapshot=structuredClone(value),empty=key===snapshotName&&emptySnapshot(snapshot);
+   const task=writeTail.then(async()=>{
+    if(retired||empty&&durableEmpty===true&&!lastWriteError)return;
+    await keyValueDB.set('shared2:'+scope+':'+key,snapshot);
+    if(key===snapshotName)durableEmpty=empty;
+   });
    writeTail=task.then(()=>{lastWriteError=undefined;},error=>{lastWriteError=error;});return task;
   }
  };
@@ -46,23 +63,42 @@ export function createShared2ResultRuntime({ResultProcessor,services,files,keyVa
   snapshotKey:'shared2:'+scope+':replicationResultProcessorSnapshot',
   async receive(docs){
    if(closing)throw fail('shared2-result-runtime-closed');
-   if(await assertCurrent()!==true)throw fail('shared2-result-runtime-access-denied');
-   if(closing)throw fail('shared2-result-runtime-closed');
-   if(!Array.isArray(docs)||docs.some(doc=>!doc||typeof doc._id!=='string'||['plain','newnote'].includes(doc.type)&&!inside(doc.path)))throw fail('invalid-shared2-replicated-documents');
-   processor.enqueueAll(structuredClone(docs));return true;
+   admissions++;receiving++;
+   try{
+    if(await assertCurrent()!==true)throw fail('shared2-result-runtime-access-denied');
+    if(closing)throw fail('shared2-result-runtime-closed');
+    if(!Array.isArray(docs)||docs.some(doc=>!doc||typeof doc._id!=='string'||['plain','newnote'].includes(doc.type)&&!inside(doc.path)))throw fail('invalid-shared2-replicated-documents');
+    processor.enqueueAll(structuredClone(docs));
+    // The replication checkpoint may advance when receive returns. Before
+    // that, persist queued file work even if upstream throttled its snapshot.
+    if(persistAdmission()&&processor.reportStatus&&docs.some(doc=>['plain','newnote'].includes(doc.type))){
+     await processor._takeSnapshot();
+    }
+    return true;
+   }finally{receiving--;}
   },
   async restore(){if(closing)throw fail('shared2-result-runtime-closed');await processor.restoreFromSnapshotOnce();},
-  async reprocessStoredDocuments(){if(closing)throw fail('shared2-result-runtime-closed');applicationError=undefined;return processor.reprocessStoredDocuments();},
+  async reprocessStoredDocuments(){if(closing)throw fail('shared2-result-runtime-closed');applicationError=undefined;admissions++;return processor.reprocessStoredDocuments();},
   resume(){if(!closing)processor.resume();},
   pause(){processor.suspend();},
   async confirmDrained(){
    if(closing||applicationError)throw applicationError||fail('shared2-result-runtime-closed');
-   await Promise.resolve();
-   if(typeof processor._takeSnapshot!=='function')throw fail('shared2-result-proof-unavailable');
-   await processor._takeSnapshot();await writeTail;
+   const epoch=admissions;
+   const check=()=>{
+    processor.reportStatus?.();
+    if(closing||applicationError)throw applicationError||fail('shared2-result-runtime-closed');
+    if(epoch!==admissions||receiving||active.size||files.pending||replication.replicationResultCount.value||replication.databaseQueueCount.value||replication.storageApplyingCount.value)throw fail('shared2-results-pending');
+   };
+   check();await files.drain?.();await writeTail;check();
    if(lastWriteError)throw lastWriteError;
-   const snapshot=await snapshotStore.get('replicationResultProcessorSnapshot');
-   if(applicationError||active.size||!snapshot||!Array.isArray(snapshot.queued)||!Array.isArray(snapshot.processing)||snapshot.queued.length||snapshot.processing.length||Object.values(replication).slice(0,3).some(count=>count.value))throw applicationError||fail('shared2-results-pending');
+   // A real processor reports its queue including content retries. Finalise a
+   // previously non-empty recovery record once, after the file writes drain.
+   if(!processor.reportStatus||durableEmpty!==true){
+    if(typeof processor._takeSnapshot!=='function')throw fail('shared2-result-proof-unavailable');
+    await processor._takeSnapshot();await writeTail;check();
+    if(lastWriteError)throw lastWriteError;
+    if(!durableEmpty)throw fail('shared2-results-pending');
+   }
    return true;
   },
   get state(){return {pending:replication.replicationResultCount.value,loading:replication.databaseQueueCount.value,applying:replication.storageApplyingCount.value};},

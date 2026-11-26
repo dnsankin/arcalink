@@ -185,3 +185,25 @@ test('a live server version survives a stale delete and the decision stays visib
  assert.deepEqual(await retry.store.deleteReviews(),[]);
  await retry.controller.close();
 });
+
+test('pause, network loss and a second initial conflict preserve the drained application checkpoint',async()=>{
+ const files=['one','two'].map(name=>({_rev:'2-a',_conflicts:['2-b'],path:profile.documentRoot+'/'+name}));
+ const f=fixture({metadata:files});
+ let online=true,allowed=true,verified=false,replays=0,scans=0;
+ f.engine.synchronize=async()=>{if(!online)throw Error('network-offline');};
+ f.engine.results.reprocessStoredDocuments=async()=>{replays++;};
+ f.engine.results.confirmDrained=async()=>true;
+ const c=createShared2LiveController({profile,engine:f.engine,store:f.store,baseline:{close:async()=>{}},
+  checkLease:async()=>allowed,canUpload:()=>verified,initialProof:{needed:()=>!verified,verify:async()=>{
+   scans++;const doc=files.find(file=>file._conflicts.length);
+   if(doc)throw Object.assign(Error('conflict'),{code:'shared2-initial-proof-conflict',document:doc});
+  },complete:async()=>{verified=true;}}});
+ await assert.rejects(c.wake(),/initial-proof-conflict/);assert.equal(c.state.path,files[0].path);
+ allowed=false;await assert.rejects(c.wake(),/lease-rejected/);allowed=true;
+ online=false;await assert.rejects(c.wake(),/network-offline/);online=true;
+ await assert.rejects(c.wake(),/initial-proof-conflict/);assert.equal(scans,1);
+ files[0]._conflicts=[];await assert.rejects(c.wake(),/initial-proof-conflict/);
+ assert.equal(c.state.path,files[1].path);assert.equal(c.ready,false);
+ files[1]._conflicts=[];await c.wake();assert.equal(replays,1);assert.equal(c.ready,true);
+ await c.close();
+});

@@ -85,6 +85,28 @@ export function createShared2LocalEngineFactory({createPouchDB,settingsFor,names
    ...(lifecycle==='livesync'?{stopLive:()=>transfer.stop()}:{}),
    ...(migrationMode?{migration:createShared2MigrationView(local,{readOnly:profile.role==='viewer',pathId:name=>path.path2id(name),chunkId:async piece=>'h:'+await local.managers.hashManager.computeHash(piece)})}:{}),
    synchronize(){if(closed||retiring)return Promise.reject(fail('shared2-engine-closed'));if(!transfer)return Promise.reject(fail('shared2-remote-not-configured'));return transfer.synchronize();},
+   async remoteEventHead(name,createdAt){
+    checked(name);
+    if(profile.kind!=='shared'||!name.startsWith(profile.documentRoot+'/')||!openRemote||await accessCheck(profile,'read')!==true)throw fail('shared2-replication-access-denied');
+    const id=await path.path2id(name),remote=await openRemote(profile);
+    const file=doc=>doc?._id===id&&doc.path===name&&['plain','newnote'].includes(doc.type)&&!doc._deleted;
+    try{
+     const head=await remote.database.get(id,{conflicts:true,revs:true});
+     if(!file(head)||head._conflicts?.length)return null;
+     if(!head.deleted)return {revision:head._rev,deleted:false};
+     // Only a live ancestor of this exact tombstone establishes a deletion
+     // history. Compaction or an unavailable event timestamp leaves it pending.
+     if(!Number.isFinite(createdAt)||createdAt<=0||!(head.mtime>=createdAt))return null;
+     const history=head._revisions;
+     if(!history||head._rev!==history.start+'-'+history.ids?.[0])return null;
+     for(let i=1;i<history.ids.length;i++){
+      const rev=(history.start-i)+'-'+history.ids[i],ancestor=await remote.database.get(id,{rev});
+      if(!file(ancestor)||ancestor._rev!==rev)return null;
+      if(!ancestor.deleted)return {revision:head._rev,deleted:true};
+     }
+     return null;
+    }catch(error){if(error.status===404)return null;throw error;}finally{await remote.close();}
+   },
    async remoteDeletionState(name){
     checked(name);
     if(profile.kind!=='shared'||!name.startsWith(profile.documentRoot+'/')||!openRemote||await accessCheck(profile,'read')!==true)throw fail('shared2-replication-access-denied');

@@ -20,8 +20,8 @@ export function createShared2VaultDisk({adapter,mount,privateRoot,listFiles,read
   if(await fingerprint(relative)!==hash)throw fail('shared2-local-file-changed');
   return destination;
  }
- async function conditional(relative,expected,fn){
-  return beforeCommit(relative,async()=>{if(await fingerprint(relative)!==expected)throw fail('shared2-local-file-changed');return fn();});
+ async function conditional(relative,expected,fn,approval){
+  return beforeCommit(relative,async()=>{if(await fingerprint(relative)!==expected)throw fail('shared2-local-file-changed');return fn();},approval);
  }
  async function writeJournal(file,value){await adapter.writeBinary(file,new TextEncoder().encode(JSON.stringify(value)).buffer);}
  async function recover(){
@@ -49,7 +49,7 @@ export function createShared2VaultDisk({adapter,mount,privateRoot,listFiles,read
   fingerprint,
   async blob(relative){return readBlob(path(relative));},
   async backup(relative,expected){return stableCopy(relative,expected,'local');},
-  async replace(relative,stream,{expectedHash,sha256,size}){
+  async replace(relative,stream,{expectedHash,sha256,size,approval}){
    if(typeof sha256!=='string'||!/^[a-f0-9]{64}$/.test(sha256)||!Number.isSafeInteger(size)||size<0)throw fail('shared2-invalid-projection-proof');
    path(relative);await mkdirs(privateRoot+'/staging');const temporary=privateRoot+'/staging/'+crypto.randomUUID();
    await adapter.writeBinary(temporary,new ArrayBuffer(0));
@@ -69,9 +69,9 @@ export function createShared2VaultDisk({adapter,mount,privateRoot,listFiles,read
      catch(error){if(expectedHash&&!await adapter.exists(path(relative)))await adapter.rename(previous,path(relative));throw error;}
      if(await fingerprint(relative)!==sha256)throw fail('shared2-projection-proof-mismatch');
      if(expectedHash)await adapter.remove(previous);await adapter.remove(journal);
-    });
+    },approval);
    }finally{const journal=privateRoot+'/commits/'+temporary.split('/').at(-1)+'.json';if(!await adapter.exists(journal)&&await adapter.exists(temporary))await adapter.remove(temporary).catch(()=>{});}
   },
-  async remove(relative,{expectedHash}){await conditional(relative,expectedHash,async()=>{if(expectedHash){await stableCopy(relative,expectedHash,'deleted');if(await fingerprint(relative)!==expectedHash)throw fail('shared2-local-file-changed');await adapter.remove(path(relative));}});},
+  async remove(relative,{expectedHash,approval}){await conditional(relative,expectedHash,async()=>{if(expectedHash){await stableCopy(relative,expectedHash,'deleted');if(await fingerprint(relative)!==expectedHash)throw fail('shared2-local-file-changed');await adapter.remove(path(relative));}},approval);},
  };
 }
