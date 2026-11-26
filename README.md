@@ -12,7 +12,9 @@ ArcaLink Sync синхронизирует заметки Obsidian между у
 
 ### История версий
 
-**1.0.53** от 26.11.2026 — если первоначальная синхронизация общей папки остановилась на конфликте, в настройках видны путь и версии файла. Владелец или редактор может сохранить копию и выбрать версию. Проверка продолжится и после решения на другом устройстве. Совпадающие локальные изменения подтверждаются без повторной отправки, а опрос неизменной очереди больше не переписывает её снимок.
+**1.0.54** от 26.11.2026 — опубликовано восстановление первоначальной синхронизации общих папок. Можно сохранить копии конфликтующих версий и выбрать нужную в карточке папки. Подтверждённые изменения переживают перезапуск. Сборка для каталога воспроизводится из публичных исходников.
+
+**1.0.53** (предрелизная сборка) от 26.11.2026 — если первоначальная синхронизация общей папки остановилась на конфликте, в настройках видны путь и версии файла. Владелец или редактор может сохранить копию и выбрать версию. Проверка продолжится и после решения на другом устройстве. Совпадающие локальные изменения подтверждаются без повторной отправки, а опрос неизменной очереди больше не переписывает её снимок.
 
 **1.0.52** от 25.11.2026 — при повторном открытии хранилища на Mac локальные резервные копии пропускают уже проверенные неизменившиеся файлы. Первый запуск после обновления выполняет полный обход. Индикатор проверяет конфликты при смене заметки и состояния ошибок, а журнал обрабатывает новые сообщения пакетами. Это снижает фоновую нагрузку при открытой заметке.
 
@@ -193,7 +195,9 @@ The [Android companion](https://arcalink.ru/android) provides note and task-list
 
 ## Version history
 
-**1.0.53**, 2026-11-26 — when a shared folder’s initial sync encounters a conflict, its settings show the file path and available revisions. Owners and editors can save a copy and select a revision. Verification resumes when another device resolves the conflict. Matching local events clear without uploading the file again, and polling an unchanged queue no longer rewrites its snapshot.
+**1.0.54**, 2026-11-26 — shared-folder initial sync recovery is available in the directory release. Save copies of conflicting revisions and select one in folder settings. Verified progress survives a restart. The directory build is reproducible from the public source.
+
+**1.0.53** (release candidate), 2026-11-26 — when a shared folder’s initial sync encounters a conflict, its settings show the file path and available revisions. Owners and editors can save a copy and select a revision. Verification resumes when another device resolves the conflict. Matching local events clear without uploading the file again, and polling an unchanged queue no longer rewrites its snapshot.
 
 **1.0.52**, 2026-11-25 — local backups on Mac skip previously checked, unchanged files when reopening a vault. The first launch after updating runs a full scan. The status indicator checks for conflicts when the active note or error state changes, and log messages are processed in batches. This reduces background work while a note is open.
 

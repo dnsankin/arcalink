@@ -2,6 +2,7 @@ import {eventTouches} from './shared2-runtime-store.mjs';
 
 // The store owns ordering. The last guard executes inside its writer, so it
 // must use only the disk, remote and lease, never another read of the store.
+/** @returns {Promise<{path: string, eventIds: string[]} | undefined>} */
 export async function reconcileInitialEvents({runtime,engine,checkpoint,stat,exists,checked},onlyPath){
  const pending=await runtime.pending();
  const paths=onlyPath?[onlyPath]:[...new Set(pending.map(event=>event.item.args.file.path))];
